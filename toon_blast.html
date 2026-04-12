@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>トゥーンブラスト風ゲーム</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; min-height: 100vh;
+    font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
+    overflow: hidden;
+  }
+  #game-container {
+    position: relative;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 12px;
+  }
+  #header {
+    display: flex; gap: 20px; align-items: center;
+    background: rgba(255,255,255,0.1);
+    padding: 10px 24px; border-radius: 30px;
+    backdrop-filter: blur(10px);
+    border: 2px solid rgba(255,255,255,0.2);
+  }
+  .stat-box {
+    text-align: center;
+  }
+  .stat-label {
+    color: #aaa; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+  }
+  .stat-value {
+    color: #fff; font-size: 22px; font-weight: bold;
+    text-shadow: 0 0 10px rgba(255,220,0,0.8);
+  }
+  #level-display { color: #FFD700; font-size: 18px; font-weight: bold; }
+  #canvas-wrapper {
+    position: relative;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 0 40px rgba(0,150,255,0.4), 0 0 80px rgba(0,100,200,0.2);
+    border: 3px solid rgba(255,255,255,0.3);
+  }
+  canvas { display: block; }
+  #bottom-bar {
+    display: flex; gap: 16px; align-items: center;
+    background: rgba(255,255,255,0.1);
+    padding: 10px 24px; border-radius: 30px;
+    backdrop-filter: blur(10px);
+    border: 2px solid rgba(255,255,255,0.2);
+  }
+  button {
+    background: linear-gradient(135deg, #FF6B6B, #FF8E53);
+    color: white; border: none; padding: 10px 22px;
+    border-radius: 20px; font-size: 14px; font-weight: bold;
+    cursor: pointer; transition: all 0.2s;
+    box-shadow: 0 4px 15px rgba(255,100,100,0.4);
+  }
+  button:hover { transform: scale(1.05); box-shadow: 0 6px 20px rgba(255,100,100,0.6); }
+  button:active { transform: scale(0.95); }
+  #message {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.85); color: white;
+    padding: 20px 40px; border-radius: 20px;
+    font-size: 24px; font-weight: bold; text-align: center;
+    display: none; z-index: 10; min-width: 260px;
+    border: 2px solid rgba(255,255,255,0.3);
+    backdrop-filter: blur(10px);
+  }
+  #message h2 { margin-bottom: 10px; }
+  #message p { font-size: 16px; color: #ccc; margin-bottom: 14px; }
+  #message button { width: 100%; }
+  #moves-bar {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .move-dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #FFD700; box-shadow: 0 0 6px rgba(255,215,0,0.6);
+    transition: all 0.3s;
+  }
+  .move-dot.used { background: #555; box-shadow: none; }
+  #combo-display {
+    position: absolute; top: 10px; right: -80px;
+    color: #FFD700; font-size: 20px; font-weight: bold;
+    text-shadow: 0 0 10px rgba(255,215,0,0.8);
+    opacity: 0; transition: opacity 0.3s;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="game-container">
+  <div id="header">
+    <div class="stat-box">
+      <div class="stat-label">レベル</div>
+      <div class="stat-value" id="level-val">1</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">スコア</div>
+      <div class="stat-value" id="score-val">0</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">ターゲット</div>
+      <div class="stat-value" id="target-val">500</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">手数</div>
+      <div class="stat-value" id="moves-val">20</div>
+    </div>
+  </div>
+
+  <div id="canvas-wrapper">
+    <canvas id="gameCanvas"></canvas>
+    <div id="combo-display"></div>
+    <div id="message">
+      <h2 id="msg-title">クリア!</h2>
+      <p id="msg-body">素晴らしい!</p>
+      <button id="msg-btn" onclick="nextLevel()">次のレベル</button>
+    </div>
+  </div>
+
+  <div id="bottom-bar">
+    <button onclick="restartGame()">リスタート</button>
+    <div id="moves-bar"></div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const COLS = 8, ROWS = 9;
+const CELL = 58;
+canvas.width = COLS * CELL;
+canvas.height = ROWS * CELL;
+
+// Colors: red, blue, green, yellow, purple, orange
+const COLORS = ['#FF4444','#4488FF','#44CC44','#FFD700','#AA44FF','#FF8800'];
+const DARK   = ['#CC2222','#2266CC','#229922','#CC9900','#7722CC','#CC5500'];
+const LIGHT  = ['#FF8888','#88BBFF','#88EE88','#FFE866','#CC88FF','#FFBB55'];
+const EMOJI  = ['🔴','🔵','🟢','🟡','🟣','🟠'];
+
+// Special tile types
+const NORMAL = 0, ROCKET_H = 1, ROCKET_V = 2, BOMB = 3, DISCO = 4;
+
+let grid = [], particles = [], floatingTexts = [], animations = [];
+let score = 0, moves = 0, maxMoves = 20, level = 1, targetScore = 500;
+let gameOver = false, animating = false;
+let comboCount = 0;
+
+function initGrid() {
+  grid = [];
+  for (let r = 0; r < ROWS; r++) {
+    grid[r] = [];
+    for (let c = 0; c < COLS; c++) {
+      grid[r][c] = { color: Math.floor(Math.random() * COLORS.length), type: NORMAL, scale: 1, alpha: 1, shake: 0 };
+    }
+  }
+}
+
+function startLevel() {
+  score = 0;
+  moves = maxMoves;
+  gameOver = false;
+  particles = []; floatingTexts = []; animations = [];
+  comboCount = 0;
+  document.getElementById('message').style.display = 'none';
+  initGrid();
+  updateUI();
+  updateMovesBar();
+}
+
+function restartGame() {
+  level = 1; targetScore = 500; maxMoves = 20;
+  startLevel();
+}
+
+function nextLevel() {
+  level++;
+  targetScore = Math.floor(targetScore * 1.8);
+  maxMoves = Math.max(12, 20 - level);
+  startLevel();
+}
+
+function updateUI() {
+  document.getElementById('score-val').textContent = score.toLocaleString();
+  document.getElementById('target-val').textContent = targetScore.toLocaleString();
+  document.getElementById('moves-val').textContent = moves;
+  document.getElementById('level-val').textContent = level;
+}
+
+function updateMovesBar() {
+  const bar = document.getElementById('moves-bar');
+  bar.innerHTML = '';
+  for (let i = 0; i < Math.min(maxMoves, 20); i++) {
+    const dot = document.createElement('div');
+    dot.className = 'move-dot' + (i >= moves ? ' used' : '');
+    bar.appendChild(dot);
+  }
+}
+
+// Find connected same-color cells (flood fill)
+function findGroup(r, c) {
+  const color = grid[r][c]?.color;
+  if (color === undefined) return [];
+  const visited = new Set();
+  const queue = [[r, c]];
+  const group = [];
+  while (queue.length) {
+    const [cr, cc] = queue.shift();
+    const key = cr * COLS + cc;
+    if (visited.has(key)) continue;
+    if (!grid[cr] || !grid[cr][cc] || grid[cr][cc].color !== color) continue;
+    visited.add(key);
+    group.push([cr, cc]);
+    queue.push([cr-1,cc],[cr+1,cc],[cr,cc-1],[cr,cc+1]);
+  }
+  return group;
+}
+
+function blast(r, c) {
+  if (animating || gameOver) return;
+  if (!grid[r] || !grid[r][c]) return;
+
+  const cell = grid[r][c];
+
+  // Handle special tiles
+  if (cell.type === ROCKET_H) { activateRocketH(r, c); return; }
+  if (cell.type === ROCKET_V) { activateRocketV(r, c); return; }
+  if (cell.type === BOMB) { activateBomb(r, c); return; }
+  if (cell.type === DISCO) { activateDisco(r, c); return; }
+
+  const group = findGroup(r, c);
+  if (group.length < 2) {
+    // Shake animation
+    grid[r][c].shake = 8;
+    return;
+  }
+
+  // Determine special tile to create
+  let newType = NORMAL;
+  if (group.length >= 9) newType = DISCO;
+  else if (group.length >= 7) newType = BOMB;
+  else if (group.length >= 5) newType = Math.random() > 0.5 ? ROCKET_H : ROCKET_V;
+
+  const pts = group.length * group.length * 10 * (comboCount + 1);
+  score += pts;
+  moves--;
+  comboCount++;
+
+  // Spawn particles
+  group.forEach(([gr, gc]) => {
+    spawnParticles(gc * CELL + CELL/2, gr * CELL + CELL/2, COLORS[cell.color], group.length > 5 ? 8 : 5);
+    grid[gr][gc] = null;
+  });
+
+  // Place special tile at tap position if earned
+  if (newType !== NORMAL) {
+    grid[r][c] = { color: cell.color, type: newType, scale: 1.3, alpha: 1, shake: 0 };
+    addFloatingText(c * CELL + CELL/2, r * CELL, getSpecialName(newType), '#FFD700');
+  }
+
+  addFloatingText(c * CELL + CELL/2, r * CELL + CELL/2, '+' + pts, '#fff');
+  if (comboCount > 1) addFloatingText(c * CELL + CELL/2, r * CELL - 20, 'COMBO x' + comboCount + '!', '#FFD700');
+
+  applyGravity();
+  fillEmpty();
+  updateUI();
+  updateMovesBar();
+  checkEndConditions();
+}
+
+function getSpecialName(type) {
+  return type === ROCKET_H ? '→ロケット!' : type === ROCKET_V ? '↑ロケット!' : type === BOMB ? '💣ボム!' : '🌈ディスコ!';
+}
+
+function activateRocketH(r, c) {
+  moves--;
+  const color = grid[r][c].color;
+  let pts = 0;
+  for (let cc = 0; cc < COLS; cc++) {
+    if (grid[r][cc]) {
+      spawnParticles(cc * CELL + CELL/2, r * CELL + CELL/2, COLORS[color], 4);
+      pts += 50;
+      grid[r][cc] = null;
+    }
+  }
+  score += pts;
+  addFloatingText(c * CELL + CELL/2, r * CELL, '→ロケット! +' + pts, '#FF8800');
+  applyGravity(); fillEmpty(); updateUI(); updateMovesBar(); checkEndConditions();
+}
+
+function activateRocketV(r, c) {
+  moves--;
+  const color = grid[r][c].color;
+  let pts = 0;
+  for (let rr = 0; rr < ROWS; rr++) {
+    if (grid[rr][c]) {
+      spawnParticles(c * CELL + CELL/2, rr * CELL + CELL/2, COLORS[color], 4);
+      pts += 50;
+      grid[rr][c] = null;
+    }
+  }
+  score += pts;
+  addFloatingText(c * CELL + CELL/2, r * CELL, '↑ロケット! +' + pts, '#FF8800');
+  applyGravity(); fillEmpty(); updateUI(); updateMovesBar(); checkEndConditions();
+}
+
+function activateBomb(r, c) {
+  moves--;
+  const color = grid[r][c].color;
+  let pts = 0;
+  for (let dr = -2; dr <= 2; dr++) {
+    for (let dc = -2; dc <= 2; dc++) {
+      const rr = r + dr, cc = c + dc;
+      if (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS && grid[rr][cc]) {
+        spawnParticles(cc * CELL + CELL/2, rr * CELL + CELL/2, COLORS[color], 4);
+        pts += 30;
+        grid[rr][cc] = null;
+      }
+    }
+  }
+  score += pts;
+  addFloatingText(c * CELL + CELL/2, r * CELL, '💣ボム! +' + pts, '#FF4400');
+  applyGravity(); fillEmpty(); updateUI(); updateMovesBar(); checkEndConditions();
+}
+
+function activateDisco(r, c) {
+  moves--;
+  // Clear a random color from the board
+  const targetColor = Math.floor(Math.random() * COLORS.length);
+  let pts = 0;
+  for (let rr = 0; rr < ROWS; rr++) {
+    for (let cc = 0; cc < COLS; cc++) {
+      if (grid[rr][cc] && grid[rr][cc].color === targetColor) {
+        spawnParticles(cc * CELL + CELL/2, rr * CELL + CELL/2, COLORS[targetColor], 6);
+        pts += 40;
+        grid[rr][cc] = null;
+      }
+    }
+  }
+  grid[r][c] = null;
+  score += pts;
+  addFloatingText(c * CELL + CELL/2, r * CELL, '🌈ディスコ! +' + pts, '#AA44FF');
+  applyGravity(); fillEmpty(); updateUI(); updateMovesBar(); checkEndConditions();
+}
+
+function applyGravity() {
+  for (let c = 0; c < COLS; c++) {
+    let writeRow = ROWS - 1;
+    for (let r = ROWS - 1; r >= 0; r--) {
+      if (grid[r][c] !== null) {
+        grid[writeRow][c] = grid[r][c];
+        if (writeRow !== r) grid[r][c] = null;
+        writeRow--;
+      }
+    }
+    while (writeRow >= 0) {
+      grid[writeRow][c] = null;
+      writeRow--;
+    }
+  }
+}
+
+function fillEmpty() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (!grid[r][c]) {
+        grid[r][c] = { color: Math.floor(Math.random() * COLORS.length), type: NORMAL, scale: 0.1, alpha: 0, shake: 0 };
+      }
+    }
+  }
+  comboCount = 0;
+}
+
+function checkEndConditions() {
+  if (score >= targetScore) {
+    gameOver = true;
+    setTimeout(() => showMessage('🎉 クリア!', 'スコア: ' + score.toLocaleString(), '次のレベル', 'nextLevel'), 600);
+    return;
+  }
+  if (moves <= 0) {
+    gameOver = true;
+    setTimeout(() => showMessage('😢 ゲームオーバー', 'スコア: ' + score.toLocaleString() + '\n目標: ' + targetScore.toLocaleString(), 'もう一度', 'restartGame'), 600);
+  }
+}
+
+function showMessage(title, body, btnText, btnAction) {
+  document.getElementById('msg-title').textContent = title;
+  document.getElementById('msg-body').textContent = body;
+  document.getElementById('msg-btn').textContent = btnText;
+  document.getElementById('msg-btn').onclick = window[btnAction];
+  document.getElementById('message').style.display = 'block';
+}
+
+// Particles
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 / count) * i + Math.random() * 0.5;
+    const speed = 2 + Math.random() * 4;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2,
+      color, size: 6 + Math.random() * 6,
+      life: 1, decay: 0.025 + Math.random() * 0.02
+    });
+  }
+}
+
+function addFloatingText(x, y, text, color) {
+  floatingTexts.push({ x, y, text, color, life: 1, vy: -1.5 });
+}
+
+// Drawing
+function drawRoundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+function drawCell(r, c, cell) {
+  if (!cell) return;
+  const pad = 4;
+  const cx = c * CELL + CELL / 2;
+  const cy = r * CELL + CELL / 2;
+  const size = (CELL - pad * 2) * Math.min(cell.scale, 1.0);
+
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, cell.alpha));
+  ctx.translate(cx + (cell.shake || 0), cy);
+  ctx.scale(cell.scale, cell.scale);
+
+  const x = -size / 2, y = -size / 2, w = size, h = size;
+  const radius = 12;
+
+  // Shadow
+  ctx.shadowColor = 'rgba(0,0,0,0.3)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 3;
+
+  // Main block
+  const col = cell.color;
+  const grad = ctx.createLinearGradient(x, y, x, y + h);
+  grad.addColorStop(0, LIGHT[col]);
+  grad.addColorStop(0.5, COLORS[col]);
+  grad.addColorStop(1, DARK[col]);
+  ctx.fillStyle = grad;
+  drawRoundRect(x, y, w, h, radius);
+  ctx.fill();
+
+  ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+
+  // Shine
+  const shine = ctx.createLinearGradient(x, y, x, y + h * 0.5);
+  shine.addColorStop(0, 'rgba(255,255,255,0.45)');
+  shine.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = shine;
+  drawRoundRect(x + 4, y + 4, w - 8, h * 0.45, radius - 2);
+  ctx.fill();
+
+  // Special tile indicators
+  ctx.shadowBlur = 0;
+  if (cell.type !== NORMAL) {
+    ctx.font = `bold ${size * 0.45}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillText(getTypeIcon(cell.type), 1, 1);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(getTypeIcon(cell.type), 0, 0);
+  } else {
+    // Emoji face
+    ctx.font = `${size * 0.5}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(EMOJI[col], 0, 1);
+  }
+
+  // Outline
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 2;
+  drawRoundRect(x, y, w, h, radius);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function getTypeIcon(type) {
+  return type === ROCKET_H ? '→' : type === ROCKET_V ? '↑' : type === BOMB ? '💣' : '🌈';
+}
+
+function drawBackground() {
+  ctx.fillStyle = '#1a1a3e';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.lineWidth = 1;
+  for (let r = 0; r <= ROWS; r++) {
+    ctx.beginPath(); ctx.moveTo(0, r * CELL); ctx.lineTo(canvas.width, r * CELL); ctx.stroke();
+  }
+  for (let c = 0; c <= COLS; c++) {
+    ctx.beginPath(); ctx.moveTo(c * CELL, 0); ctx.lineTo(c * CELL, canvas.height); ctx.stroke();
+  }
+}
+
+function drawHover() {
+  if (!hoverCell) return;
+  const group = findGroup(hoverCell.r, hoverCell.c);
+  if (group.length < 2) return;
+  group.forEach(([r, c]) => {
+    if (!grid[r][c]) return;
+    ctx.save();
+    ctx.globalAlpha = 0.2 + 0.1 * Math.sin(Date.now() / 200);
+    ctx.fillStyle = '#fff';
+    drawRoundRect(c * CELL + 4, r * CELL + 4, CELL - 8, CELL - 8, 10);
+    ctx.fill();
+    ctx.restore();
+  });
+  // Show count badge
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.beginPath();
+  ctx.arc(hoverCell.c * CELL + CELL/2, hoverCell.r * CELL + CELL/2, 16, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 14px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(group.length, hoverCell.c * CELL + CELL/2, hoverCell.r * CELL + CELL/2);
+  ctx.restore();
+}
+
+let hoverCell = null;
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
+  if (r >= 0 && r < ROWS && c >= 0 && c < COLS) hoverCell = { r, c };
+  else hoverCell = null;
+});
+canvas.addEventListener('mouseleave', () => { hoverCell = null; });
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
+  if (r >= 0 && r < ROWS && c >= 0 && c < COLS) blast(r, c);
+});
+
+// Animation loop
+let lastTime = 0;
+function gameLoop(ts) {
+  const dt = ts - lastTime;
+  lastTime = ts;
+
+  drawBackground();
+
+  // Update and draw cells
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const cell = grid[r][c];
+      if (!cell) continue;
+      // Scale spring animation for new cells
+      if (cell.scale < 1) { cell.scale = Math.min(1, cell.scale + 0.08); }
+      if (cell.alpha < 1) { cell.alpha = Math.min(1, cell.alpha + 0.1); }
+      // Shake damping
+      if (cell.shake) { cell.shake *= 0.7; if (Math.abs(cell.shake) < 0.5) cell.shake = 0; }
+      drawCell(r, c, cell);
+    }
+  }
+
+  drawHover();
+
+  // Particles
+  particles = particles.filter(p => p.life > 0);
+  particles.forEach(p => {
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.15;
+    p.life -= p.decay;
+    p.size *= 0.97;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+
+  // Floating texts
+  floatingTexts = floatingTexts.filter(t => t.life > 0);
+  floatingTexts.forEach(t => {
+    t.y += t.vy;
+    t.life -= 0.018;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, t.life * 2);
+    ctx.fillStyle = t.color;
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+    ctx.lineWidth = 3;
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeText(t.text, t.x, t.y);
+    ctx.fillText(t.text, t.x, t.y);
+    ctx.restore();
+  });
+
+  requestAnimationFrame(gameLoop);
+}
+
+// Touch support
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  const touch = e.changedTouches[0];
+  const rect = canvas.getBoundingClientRect();
+  const x = touch.clientX - rect.left, y = touch.clientY - rect.top;
+  const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
+  if (r >= 0 && r < ROWS && c >= 0 && c < COLS) blast(r, c);
+}, { passive: false });
+
+// Start
+startLevel();
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>

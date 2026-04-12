@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLB Baseball Game</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a1628;
+    font-family: 'Arial Black', Arial, sans-serif;
+    color: white;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-x: hidden;
+  }
+  .header {
+    background: linear-gradient(135deg, #002D72, #D50032);
+    width: 100%;
+    padding: 10px 20px;
+    text-align: center;
+    border-bottom: 4px solid #FFD700;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  .header h1 { font-size: 1.8rem; letter-spacing: 4px; color: #FFD700; text-shadow: 2px 2px 4px rgba(0,0,0,0.8); }
+  .header p { font-size: 0.75rem; color: #ccc; letter-spacing: 2px; }
+
+  .scoreboard {
+    background: #111;
+    border: 3px solid #333;
+    border-radius: 8px;
+    margin: 10px auto;
+    padding: 8px 16px;
+    width: 95%;
+    max-width: 720px;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    box-shadow: 0 0 30px rgba(255,215,0,0.2);
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .score-label { font-size: 0.6rem; color: #aaa; letter-spacing: 2px; }
+  .score-value { font-size: 2rem; color: #FFD700; text-shadow: 0 0 10px rgba(255,215,0,0.5); display: block; min-width: 44px; text-align: center; }
+  .score-teams { display: flex; gap: 24px; align-items: center; }
+  .team-score { text-align: center; }
+  .team-name { font-size: 0.65rem; color: #aaa; letter-spacing: 1px; }
+  .team-runs { font-size: 2.2rem; color: #fff; font-weight: bold; }
+  .score-divider { color: #555; font-size: 1.3rem; }
+  .count-display { display: flex; gap: 16px; justify-content: center; }
+  .count-item { text-align: center; }
+  .count-dots { display: flex; gap: 4px; justify-content: center; margin-top: 3px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #555; background: transparent; transition: background 0.2s; }
+  .dot.active-ball   { background: #4CAF50; border-color: #4CAF50; box-shadow: 0 0 5px #4CAF50; }
+  .dot.active-strike { background: #FF5722; border-color: #FF5722; box-shadow: 0 0 5px #FF5722; }
+  .dot.active-out    { background: #FF9800; border-color: #FF9800; box-shadow: 0 0 5px #FF9800; }
+
+  .status-bar {
+    width: 95%;
+    max-width: 720px;
+    display: flex;
+    gap: 10px;
+    margin: 4px auto;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .status-card {
+    background: #111;
+    border: 2px solid #222;
+    border-radius: 8px;
+    padding: 8px 12px;
+    flex: 1;
+    min-width: 100px;
+    text-align: center;
+  }
+  .status-card-title { font-size: 0.6rem; color: #888; letter-spacing: 2px; margin-bottom: 5px; }
+  .bases-display { position: relative; width: 60px; height: 60px; margin: 0 auto; }
+  .base { position: absolute; width: 14px; height: 14px; border: 2px solid #555; transform: rotate(45deg); background: transparent; transition: background 0.2s; }
+  .base.occupied { background: #FFD700; border-color: #FFD700; box-shadow: 0 0 8px #FFD700; }
+  .base-1 { right: 0; top: 50%; transform: translateY(-50%) rotate(45deg); }
+  .base-2 { left: 50%; top: 0; transform: translateX(-50%) rotate(45deg); }
+  .base-3 { left: 0; top: 50%; transform: translateY(-50%) rotate(45deg); }
+  .home-base { bottom: 0; left: 50%; transform: translateX(-50%) rotate(45deg); background: #888; border-color: #888; }
+  .inning-grid { display: flex; gap: 2px; margin-top: 3px; flex-wrap: wrap; justify-content: center; }
+  .inning-cell { width: 26px; height: 26px; border: 1px solid #333; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; border-radius: 3px; background: #111; }
+  .inning-cell.current { border-color: #FFD700; background: #1a1500; }
+  .inning-cell span { color: #FFD700; font-weight: bold; font-size: 0.65rem; }
+
+  /* Pitch selector */
+  .pitch-select {
+    background: #0d1a2a;
+    border: 2px solid #1a2a3a;
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin: 4px auto;
+    max-width: 720px;
+    width: 95%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .pitch-select label { font-size: 0.75rem; color: #888; letter-spacing: 1px; white-space: nowrap; }
+  .pitch-btn { padding: 5px 12px; border-radius: 20px; border: 2px solid #334; background: transparent; color: #888; font-size: 0.7rem; cursor: pointer; transition: all 0.2s; font-family: Arial, sans-serif; letter-spacing: 1px; }
+  .pitch-btn.selected { background: #FFD700; color: #000; border-color: #FFD700; font-weight: bold; }
+
+  /* Canvas wrapper */
+  .field-container { width: 95%; max-width: 720px; position: relative; margin: 4px auto; cursor: none; }
+  #gameCanvas { width: 100%; border-radius: 10px; border: 3px solid #1a3a1a; box-shadow: 0 0 40px rgba(0,100,0,0.3); }
+
+  /* PCI hint */
+  .pci-hint {
+    text-align: center;
+    font-size: 0.7rem;
+    color: #888;
+    margin: 2px auto;
+    letter-spacing: 1px;
+  }
+  .pci-hint span { color: #FFD700; }
+
+  /* Controls */
+  .controls { display: flex; gap: 12px; justify-content: center; margin: 8px; flex-wrap: wrap; }
+  .btn { padding: 12px 30px; font-size: 1rem; font-family: 'Arial Black', Arial, sans-serif; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; letter-spacing: 2px; text-transform: uppercase; transition: all 0.15s; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
+  .btn:active { transform: scale(0.95); }
+  .btn-pitch { background: linear-gradient(135deg, #002D72, #0044aa); color: #FFD700; border: 2px solid #FFD700; }
+  .btn-pitch:hover { background: linear-gradient(135deg, #0044aa, #0066cc); }
+  .btn-swing { background: linear-gradient(135deg, #D50032, #ff0040); color: white; border: 2px solid #ff4466; font-size: 1.1rem; min-width: 180px; }
+  .btn-swing:hover { background: linear-gradient(135deg, #ff0040, #ff3366); }
+  .btn-new { background: linear-gradient(135deg, #1a3a00, #2d6600); color: #88ff44; border: 2px solid #4CAF50; }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+
+  /* Hit log */
+  .hit-log { width: 95%; max-width: 720px; margin: 4px auto 16px; background: #0d1f0d; border: 2px solid #1a3a1a; border-radius: 8px; padding: 8px 12px; max-height: 90px; overflow-y: auto; }
+  .hit-log-title { font-size: 0.65rem; color: #4CAF50; letter-spacing: 2px; margin-bottom: 4px; }
+  .hit-entry { font-size: 0.72rem; color: #ccc; padding: 2px 0; border-bottom: 1px solid #1a2a1a; display: flex; justify-content: space-between; }
+  .hit-result { font-weight: bold; }
+  .hr { color: #FFD700; } .triple { color: #FF9800; } .double { color: #4CAF50; }
+  .single { color: #8BC34A; } .out-text { color: #777; } .walk { color: #2196F3; }
+
+  @media (max-width: 500px) {
+    .header h1 { font-size: 1.3rem; }
+    .team-runs { font-size: 1.6rem; }
+    .btn { padding: 10px 20px; font-size: 0.85rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>⚾ MLB BASEBALL ⚾</h1>
+  <p>MAJOR LEAGUE BASEBALL — BATTER'S EYE VIEW</p>
+</div>
+
+<!-- Scoreboard -->
+<div class="scoreboard">
+  <div class="score-teams">
+    <div class="team-score">
+      <div class="team-name">HOME</div>
+      <div class="team-runs" id="homeScore">0</div>
+    </div>
+    <div class="score-divider">—</div>
+    <div class="team-score">
+      <div class="team-name">AWAY</div>
+      <div class="team-runs" id="awayScore">0</div>
+    </div>
+  </div>
+  <div style="width:1px;height:50px;background:#333;"></div>
+  <div>
+    <div class="score-label">INNING</div>
+    <div class="score-value" id="inningDisplay">1</div>
+    <div style="font-size:0.6rem;color:#aaa;text-align:center;" id="halfDisplay">▲ TOP</div>
+  </div>
+  <div style="width:1px;height:50px;background:#333;"></div>
+  <div class="count-display">
+    <div class="count-item">
+      <div class="score-label">BALLS</div>
+      <div class="count-dots"><div class="dot" id="b0"></div><div class="dot" id="b1"></div><div class="dot" id="b2"></div></div>
+    </div>
+    <div class="count-item">
+      <div class="score-label">STRIKES</div>
+      <div class="count-dots"><div class="dot" id="s0"></div><div class="dot" id="s1"></div></div>
+    </div>
+    <div class="count-item">
+      <div class="score-label">OUTS</div>
+      <div class="count-dots"><div class="dot" id="o0"></div><div class="dot" id="o1"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Status bar -->
+<div class="status-bar">
+  <div class="status-card">
+    <div class="status-card-title">BASES</div>
+    <div class="bases-display">
+      <div class="base base-1" id="base1"></div>
+      <div class="base base-2" id="base2"></div>
+      <div class="base base-3" id="base3"></div>
+      <div class="base home-base"></div>
+    </div>
+  </div>
+  <div class="status-card" style="flex:2;">
+    <div class="status-card-title">INNINGS</div>
+    <div class="inning-grid" id="inningGrid"></div>
+  </div>
+  <div class="status-card">
+    <div class="status-card-title">AVG / OPS</div>
+    <div style="font-size:1.2rem;color:#4CAF50;" id="avgDisplay">.000</div>
+    <div style="font-size:0.7rem;color:#888;" id="opsDisplay">OPS: .000</div>
+  </div>
+</div>
+
+<!-- Pitch selector -->
+<div class="pitch-select">
+  <label>PITCH:</label>
+  <button class="pitch-btn selected" data-pitch="fastball"  onclick="selectPitch(this)">FASTBALL</button>
+  <button class="pitch-btn"          data-pitch="curveball" onclick="selectPitch(this)">CURVEBALL</button>
+  <button class="pitch-btn"          data-pitch="slider"    onclick="selectPitch(this)">SLIDER</button>
+  <button class="pitch-btn"          data-pitch="changeup"  onclick="selectPitch(this)">CHANGE-UP</button>
+  <button class="pitch-btn"          data-pitch="splitter"  onclick="selectPitch(this)">SPLITTER</button>
+</div>
+
+<!-- Canvas -->
+<div class="field-container" id="fieldContainer">
+  <canvas id="gameCanvas" width="720" height="460"></canvas>
+</div>
+<div class="pci-hint">マウスで <span>PCI（照準）</span> を動かし、ボールが大きくなったら <span>SWING</span> またはスペースキー</div>
+
+<!-- Controls -->
+<div class="controls">
+  <button class="btn btn-pitch" id="pitchBtn" onclick="doPitch()">⚾ PITCH</button>
+  <button class="btn btn-swing" id="swingBtn" onclick="doSwing()" disabled>🏏 SWING!</button>
+  <button class="btn btn-new"   id="newGameBtn" onclick="newGame()" style="display:none;">🔄 NEW GAME</button>
+</div>
+
+<!-- Hit log -->
+<div class="hit-log">
+  <div class="hit-log-title">📋 PLAY LOG</div>
+  <div id="hitLog"></div>
+</div>
+
+<script>
+// =============================================
+// CONSTANTS
+// =============================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width;   // 720
+const H = canvas.height;  // 460
+
+// Strike zone (from batter's eye / catcher's view)
+// 3 columns × 3 rows
+const SZ = {
+  cx: W / 2,    // center x = 360
+  cy: 245,      // center y
+  w:  168,      // total width
+  h:  198,      // total height
+  get l()  { return this.cx - this.w / 2; }, // 276
+  get r()  { return this.cx + this.w / 2; }, // 444
+  get t()  { return this.cy - this.h / 2; }, // 146
+  get b()  { return this.cy + this.h / 2; }, // 344
+  get cw() { return this.w / 3; },            // 56
+  get ch() { return this.h / 3; },            // 66
+};
+
+const PCI_OUTER = 52;
+const PCI_INNER = 20;
+
+// Pitcher origin point on canvas
+const PITCH_X = W / 2;
+const PITCH_Y = 52;
+
+// =============================================
+// PITCH TYPES
+// =============================================
+const pitchTypes = {
+  fastball:  {
+    speed: 680, name: 'FASTBALL',  mph: '97 MPH', color: '#FF5722',
+    breakStart: 1.0, earlyOffX: 0,   earlyOffY: 0,
+    hitWinL: 0.76, hitWinR: 0.96, perfWinL: 0.85, perfWinR: 0.93,
+  },
+  curveball: {
+    speed: 500, name: 'CURVEBALL', mph: '78 MPH', color: '#2196F3',
+    breakStart: 0.62, earlyOffX: 18,  earlyOffY: -42,
+    hitWinL: 0.72, hitWinR: 0.97, perfWinL: 0.82, perfWinR: 0.94,
+  },
+  slider:    {
+    speed: 570, name: 'SLIDER',    mph: '87 MPH', color: '#9C27B0',
+    breakStart: 0.65, earlyOffX: -32, earlyOffY: -14,
+    hitWinL: 0.74, hitWinR: 0.96, perfWinL: 0.83, perfWinR: 0.93,
+  },
+  changeup:  {
+    speed: 480, name: 'CHANGE-UP', mph: '83 MPH', color: '#4CAF50',
+    breakStart: 0.68, earlyOffX: 6,   earlyOffY: -26,
+    hitWinL: 0.70, hitWinR: 0.97, perfWinL: 0.81, perfWinR: 0.94,
+  },
+  splitter:  {
+    speed: 550, name: 'SPLITTER',  mph: '88 MPH', color: '#FF9800',
+    breakStart: 0.58, earlyOffX: 2,   earlyOffY: -50,
+    hitWinL: 0.73, hitWinR: 0.96, perfWinL: 0.83, perfWinR: 0.92,
+  },
+};
+
+// =============================================
+// GAME STATE
+// =============================================
+let selectedPitch = 'fastball';
+
+function freshState() {
+  return {
+    inning: 1, half: 0,  // 0=top(away bat), 1=bottom(home bat)
+    outs: 0, balls: 0, strikes: 0,
+    homeScore: 0, awayScore: 0,
+    bases: [false, false, false],
+    atBats: 0, hits: 0, walks: 0, totalBases: 0, pa: 0,
+    pitching: false, swung: false, gameOver: false,
+    inningScores: Array(9).fill(null).map(() => [null, null]),
+    pitchTarget: null,   // { x, y, isStrike }
+    pitchStartTime: 0,
+    pitchDuration: 0,
+    swingTime: 0,
+    pci: { x: W / 2, y: SZ.cy }, // PCI position (mouse)
+    feedback: null,      // post-pitch feedback
+    feedbackTimer: 0,
+    hitFlash: 0,         // flash counter after hit
+    animFrame: null,
+    lastTs: 0,
+  };
+}
+let G = freshState();
+
+// =============================================
+// PITCH SELECT
+// =============================================
+function selectPitch(btn) {
+  document.querySelectorAll('.pitch-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  selectedPitch = btn.dataset.pitch;
+}
+
+// =============================================
+// BALL POSITION (perspective + break)
+// =============================================
+function getBallPos(t) {
+  const pt = pitchTypes[selectedPitch];
+  const fx = G.pitchTarget.x;
+  const fy = G.pitchTarget.y;
+  const { breakStart, earlyOffX, earlyOffY } = pt;
+
+  let x, y;
+  if (t <= breakStart) {
+    const p = breakStart >= 1.0 ? t : t / breakStart;
+    x = PITCH_X + (fx + earlyOffX - PITCH_X) * p;
+    y = PITCH_Y + (fy + earlyOffY - PITCH_Y) * p;
+  } else {
+    const etx = fx + earlyOffX;
+    const ety = fy + earlyOffY;
+    const p = (t - breakStart) / (1 - breakStart);
+    const e = p < 0.5 ? 2 * p * p : -1 + (4 - 2 * p) * p;
+    x = etx + (fx - etx) * e;
+    y = ety + (fy - ety) * e;
+  }
+
+  // Perspective size: 3px at pitcher → 15px at plate
+  const size = 3 + t * 12;
+  return { x, y, size };
+}
+
+// =============================================
+// DRAWING
+// =============================================
+function drawBackground() {
+  // Sky gradient
+  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.45);
+  sky.addColorStop(0, '#050e1c');
+  sky.addColorStop(1, '#0f2847');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stadium roof silhouette
+  ctx.fillStyle = '#0a1a2e';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, 80);
+  ctx.lineTo(W * 0.12, 55);
+  ctx.lineTo(W * 0.25, 68);
+  ctx.lineTo(W * 0.38, 40);
+  ctx.lineTo(W * 0.5, 52);
+  ctx.lineTo(W * 0.62, 40);
+  ctx.lineTo(W * 0.75, 68);
+  ctx.lineTo(W * 0.88, 55);
+  ctx.lineTo(W, 80);
+  ctx.lineTo(W, 0);
+  ctx.closePath();
+  ctx.fill();
+
+  // Crowd bands (stadium seats in perspective)
+  const bandColors = [
+    'rgba(160,40,40,0.55)', 'rgba(40,60,140,0.55)', 'rgba(200,200,200,0.15)',
+    'rgba(160,40,40,0.45)', 'rgba(40,60,140,0.45)',
+  ];
+  for (let i = 0; i < bandColors.length; i++) {
+    const y0 = 60 + i * 18;
+    const y1 = y0 + 16;
+    const squeeze = i * 0.04;
+    ctx.fillStyle = bandColors[i];
+    ctx.beginPath();
+    ctx.moveTo(W * squeeze, y0);
+    ctx.lineTo(W * (1 - squeeze), y0);
+    ctx.lineTo(W * (1 - squeeze - 0.03), y1);
+    ctx.lineTo(W * (squeeze + 0.03), y1);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Crowd dots
+  ctx.save();
+  for (let row = 0; row < 4; row++) {
+    const yBase = 64 + row * 18;
+    const xStart = W * (0.04 + row * 0.02);
+    const xEnd = W * (0.96 - row * 0.02);
+    const count = Math.floor((xEnd - xStart) / 16);
+    for (let c = 0; c < count; c++) {
+      const x = xStart + c * 16 + (row % 2) * 8;
+      const colors = ['#cc3333','#3366cc','#eeeeee','#cc8800','#336633','#993399'];
+      ctx.fillStyle = colors[(row * 7 + c * 3) % colors.length];
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.arc(x, yBase + 5, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // Perspective field (trapezoid)
+  const hy = 148; // horizon y
+  const fieldGrad = ctx.createLinearGradient(0, hy, 0, H);
+  fieldGrad.addColorStop(0, '#1a4a0a');
+  fieldGrad.addColorStop(0.4, '#1f4f0d');
+  fieldGrad.addColorStop(1, '#2a6610');
+  ctx.fillStyle = fieldGrad;
+  ctx.beginPath();
+  ctx.moveTo(W * 0.18, hy);
+  ctx.lineTo(W * 0.82, hy);
+  ctx.lineTo(W, H);
+  ctx.lineTo(0, H);
+  ctx.closePath();
+  ctx.fill();
+
+  // Grass stripes (perspective)
+  for (let i = 0; i < 12; i++) {
+    if (i % 2 !== 0) continue;
+    const t0 = i / 12, t1 = (i + 1) / 12;
+    const lx0 = W * 0.18 + (0 - W * 0.18) * t0 / 1;
+    ctx.fillStyle = 'rgba(0,0,0,0.08)';
+    ctx.save();
+    ctx.translate(W / 2, hy);
+    const angle = (i - 5.5) * 0.12;
+    ctx.rotate(angle);
+    ctx.fillRect(-30, 0, 60, H - hy + 50);
+    ctx.restore();
+  }
+
+  // Infield dirt (perspective ellipse)
+  ctx.fillStyle = '#8B5E3C';
+  ctx.beginPath();
+  ctx.ellipse(W / 2, H * 0.78, W * 0.22, H * 0.13, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#9a6a47';
+  ctx.beginPath();
+  ctx.ellipse(W / 2, H * 0.78, W * 0.20, H * 0.11, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Foul lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(W / 2, H);
+  ctx.lineTo(W * 0.12, hy + 5);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(W / 2, H);
+  ctx.lineTo(W * 0.88, hy + 5);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Pitcher's mound (distance)
+  ctx.fillStyle = '#9a6a47';
+  ctx.beginPath();
+  ctx.ellipse(W / 2, PITCH_Y + 22, 26, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'white';
+  ctx.fillRect(W / 2 - 8, PITCH_Y + 20, 16, 4);
+}
+
+function drawPitcher() {
+  const px = PITCH_X, py = PITCH_Y;
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.scale(0.65, 0.65); // small (distance)
+
+  // Legs
+  ctx.fillStyle = '#eee';
+  ctx.fillRect(-5, 10, 4, 18);
+  ctx.fillRect(1, 10, 4, 18);
+
+  // Jersey
+  ctx.fillStyle = G.half === 0 ? '#D50032' : '#002D72';
+  ctx.fillRect(-8, -6, 16, 18);
+
+  // Head
+  ctx.fillStyle = '#f5c5a0';
+  ctx.beginPath();
+  ctx.arc(0, -13, 7, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Cap
+  ctx.fillStyle = G.half === 0 ? '#8B0000' : '#001a4a';
+  ctx.beginPath();
+  ctx.arc(0, -16, 7, Math.PI, 0);
+  ctx.fill();
+  ctx.fillRect(-8, -16, 16, 4);
+
+  // Glove
+  ctx.fillStyle = '#7a3a10';
+  ctx.beginPath();
+  ctx.arc(-10, -2, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawStrikeZone() {
+  const { l, r, t, b, w, h, cw, ch } = SZ;
+
+  // Outer glow
+  ctx.shadowColor = 'rgba(255,255,255,0.15)';
+  ctx.shadowBlur = 18;
+
+  // Zone background (subtle)
+  ctx.fillStyle = 'rgba(255,255,255,0.04)';
+  ctx.fillRect(l, t, w, h);
+  ctx.shadowBlur = 0;
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1;
+  // Horizontals
+  for (let row = 1; row < 3; row++) {
+    const y = t + row * ch;
+    ctx.beginPath();
+    ctx.moveTo(l, y);
+    ctx.lineTo(r, y);
+    ctx.stroke();
+  }
+  // Verticals
+  for (let col = 1; col < 3; col++) {
+    const x = l + col * cw;
+    ctx.beginPath();
+    ctx.moveTo(x, t);
+    ctx.lineTo(x, b);
+    ctx.stroke();
+  }
+
+  // Zone labels
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.font = '10px Arial';
+  ctx.textAlign = 'center';
+  const rowLabels = ['HIGH', 'MID', 'LOW'];
+  const colLabels = ['IN', 'CTR', 'OUT'];
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 3; col++) {
+      const zx = l + (col + 0.5) * cw;
+      const zy = t + (row + 0.5) * ch;
+      ctx.fillText(colLabels[col], zx, zy - 6);
+      ctx.fillText(rowLabels[row], zx, zy + 8);
+    }
+  }
+
+  // Strike zone border
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(l, t, w, h);
+
+  // "STRIKE ZONE" label
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.font = 'bold 9px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('STRIKE ZONE', SZ.cx, t - 8);
+}
+
+function drawPCI() {
+  if (G.gameOver) return;
+  const { x, y } = G.pci;
+
+  // Check if ball is in sweet timing window (glow effect)
+  let inWindow = false;
+  if (G.pitching && !G.swung) {
+    const t = (performance.now() - G.pitchStartTime) / G.pitchDuration;
+    const pt = pitchTypes[selectedPitch];
+    inWindow = t >= pt.hitWinL && t <= pt.hitWinR;
+  }
+
+  // Outer ring
+  ctx.beginPath();
+  ctx.arc(x, y, PCI_OUTER, 0, Math.PI * 2);
+  if (inWindow) {
+    ctx.fillStyle = 'rgba(255,220,0,0.12)';
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = 18;
+  } else {
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.shadowBlur = 0;
+  }
+  ctx.fill();
+  ctx.strokeStyle = inWindow ? 'rgba(255,220,0,0.85)' : 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = inWindow ? 2 : 1.5;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Inner ring (sweet spot)
+  ctx.beginPath();
+  ctx.arc(x, y, PCI_INNER, 0, Math.PI * 2);
+  ctx.fillStyle = inWindow ? 'rgba(255,220,0,0.2)' : 'rgba(255,255,255,0.12)';
+  ctx.fill();
+  ctx.strokeStyle = inWindow ? 'rgba(255,220,0,0.9)' : 'rgba(255,255,255,0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Crosshair
+  ctx.strokeStyle = inWindow ? 'rgba(255,220,0,0.7)' : 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 1;
+  const cs = 8;
+  ctx.beginPath();
+  ctx.moveTo(x - PCI_OUTER - cs, y); ctx.lineTo(x - PCI_INNER + 2, y);
+  ctx.moveTo(x + PCI_INNER - 2, y); ctx.lineTo(x + PCI_OUTER + cs, y);
+  ctx.moveTo(x, y - PCI_OUTER - cs); ctx.lineTo(x, y - PCI_INNER + 2);
+  ctx.moveTo(x, y + PCI_INNER - 2); ctx.lineTo(x, y + PCI_OUTER + cs);
+  ctx.stroke();
+
+  // Center dot
+  ctx.fillStyle = inWindow ? '#FFD700' : 'white';
+  ctx.beginPath();
+  ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawBall(t) {
+  const { x, y, size } = getBallPos(t);
+
+  // Shadow (on field, not accurate but looks nice)
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + size * 1.5, size * 0.9, size * 0.35, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ball body
+  ctx.shadowColor = 'rgba(255,255,255,0.5)';
+  ctx.shadowBlur = size * 0.8;
+  const ballGrad = ctx.createRadialGradient(x - size * 0.3, y - size * 0.3, 0, x, y, size);
+  ballGrad.addColorStop(0, '#ffffff');
+  ballGrad.addColorStop(0.6, '#f0f0f0');
+  ballGrad.addColorStop(1, '#d0d0d0');
+  ctx.fillStyle = ballGrad;
+  ctx.beginPath();
+  ctx.arc(x, y, size, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Seams
+  if (size > 5) {
+    ctx.strokeStyle = '#cc2200';
+    ctx.lineWidth = Math.max(0.8, size * 0.1);
+    ctx.beginPath();
+    ctx.arc(x + size * 0.25, y, size * 0.72, Math.PI * 0.25, Math.PI * 1.05);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x - size * 0.25, y, size * 0.72, Math.PI * 1.25, Math.PI * 2.05);
+    ctx.stroke();
+  }
+
+  // Pitch type color glow (faint trail)
+  const ptColor = pitchTypes[selectedPitch].color;
+  ctx.strokeStyle = ptColor;
+  ctx.globalAlpha = 0.25;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, size + 3, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawBatter() {
+  // Right-handed batter silhouette on right side
+  const bx = SZ.r + 42, by = SZ.b - 10;
+  ctx.save();
+  ctx.translate(bx, by);
+
+  // Legs
+  ctx.fillStyle = '#ddd';
+  ctx.fillRect(-8, 0, 7, 30);
+  ctx.fillRect(2, 0, 7, 30);
+
+  // Body
+  ctx.fillStyle = G.half === 1 ? '#D50032' : '#002D72';
+  ctx.fillRect(-12, -28, 24, 30);
+
+  // Helmet
+  ctx.fillStyle = '#111';
+  ctx.beginPath();
+  ctx.arc(-2, -36, 14, Math.PI, 0);
+  ctx.fill();
+  ctx.fillRect(-2, -36, 14, 12);
+  // Earflap
+  ctx.beginPath();
+  ctx.arc(-2, -34, 8, Math.PI * 0.5, Math.PI * 1.5);
+  ctx.fill();
+
+  // Arms
+  ctx.fillStyle = '#f0c090';
+  ctx.beginPath();
+  ctx.arc(-12, -18, 7, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bat
+  const swingAng = G.swung ? -0.2 : -0.85;
+  ctx.save();
+  ctx.translate(-12, -18);
+  ctx.rotate(swingAng);
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(-2, -42, 4, 42);
+  ctx.fillStyle = '#a0522d';
+  ctx.beginPath();
+  ctx.arc(0, -44, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function drawPitchInfo() {
+  if (!G.pitching && !G.feedback) return;
+  const pt = pitchTypes[selectedPitch];
+
+  // Pitch type badge
+  ctx.fillStyle = pt.color;
+  ctx.font = 'bold 12px Arial';
+  ctx.textAlign = 'left';
+  ctx.shadowColor = 'rgba(0,0,0,0.8)';
+  ctx.shadowBlur = 4;
+  ctx.fillText(`${pt.name}  ${pt.mph}`, 12, 22);
+  ctx.shadowBlur = 0;
+
+  // Speed indicator bar
+  const barW = 80;
+  const speedPct = (pt.speed - 400) / 350;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(12, 28, barW, 5);
+  ctx.fillStyle = pt.color;
+  ctx.fillRect(12, 28, barW * speedPct, 5);
+}
+
+function drawFeedback() {
+  const fb = G.feedback;
+  if (!fb || G.feedbackTimer <= 0) return;
+
+  const alpha = Math.min(G.feedbackTimer / 60, 1);
+
+  // Ball landing spot
+  ctx.globalAlpha = alpha * 0.9;
+  ctx.strokeStyle = fb.isStrike ? '#FF5722' : '#2196F3';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(fb.ballX, fb.ballY, 14, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = fb.isStrike ? 'rgba(255,87,34,0.25)' : 'rgba(33,150,243,0.25)';
+  ctx.fill();
+
+  // PCI center at time of swing
+  if (fb.pciX !== null) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(fb.pciX, fb.pciY);
+    ctx.lineTo(fb.ballX, fb.ballY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(fb.pciX, fb.pciY, 6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // Feedback text
+  if (fb.pciX !== null) {
+    const timingColor = fb.timingQ === 'perfect' ? '#FFD700' : fb.timingQ === 'good' ? '#8BC34A' : '#FF5722';
+    const locColor    = fb.locQ    === 'perfect' ? '#FFD700' : fb.locQ    === 'good' ? '#8BC34A' : '#FF5722';
+
+    ctx.globalAlpha = alpha;
+    ctx.font = 'bold 11px Arial';
+    ctx.textAlign = 'left';
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur = 5;
+    ctx.fillStyle = timingColor;
+    const timingLabel = fb.timingQ === 'perfect' ? 'TIMING: PERFECT!' : fb.timingQ === 'good' ? 'TIMING: GOOD' : 'TIMING: MISS';
+    ctx.fillText(timingLabel, SZ.l, SZ.b + 22);
+    ctx.fillStyle = locColor;
+    const locLabel = fb.locQ === 'perfect' ? 'CONTACT: PERFECT!' : fb.locQ === 'good' ? 'CONTACT: GOOD' : 'CONTACT: MISS';
+    ctx.fillText(locLabel, SZ.l, SZ.b + 36);
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+
+  // Called ball/strike label
+  if (fb.pciX === null) {
+    ctx.globalAlpha = alpha;
+    ctx.font = 'bold 13px Arial';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur = 5;
+    ctx.fillStyle = fb.isStrike ? '#FF5722' : '#2196F3';
+    ctx.fillText(fb.isStrike ? 'CALLED STRIKE' : 'BALL', SZ.cx, SZ.b + 25);
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawHitFlash() {
+  if (G.hitFlash <= 0) return;
+  const alpha = (G.hitFlash / 20) * 0.3;
+  ctx.fillStyle = `rgba(255,215,0,${alpha})`;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawMessage(msg, sub, color) {
+  const cx = W / 2, cy = H / 2 - 20;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.beginPath();
+  ctx.roundRect(cx - 160, cy - 38, 320, 80, 12);
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.roundRect(cx - 160, cy - 38, 320, 80, 12);
+  ctx.stroke();
+
+  ctx.font = 'bold 28px Arial Black';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = color;
+  ctx.shadowColor = 'rgba(0,0,0,0.8)';
+  ctx.shadowBlur = 6;
+  ctx.fillText(msg, cx, cy + 4);
+  ctx.font = '13px Arial';
+  ctx.fillStyle = '#ccc';
+  ctx.shadowBlur = 3;
+  ctx.fillText(sub, cx, cy + 26);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+// Current on-canvas message (overlay)
+let canvasMsg = null;
+let canvasMsgTimer = 0;
+
+function showCanvasMsg(title, sub, color) {
+  canvasMsg = { title, sub, color };
+  canvasMsgTimer = 90; // frames
+}
+
+function render(ts) {
+  ctx.clearRect(0, 0, W, H);
+
+  drawBackground();
+  drawPitcher();
+  drawStrikeZone();
+  drawBatter();
+
+  // Draw ball if pitch in flight
+  if (G.pitching) {
+    const t = Math.min((ts - G.pitchStartTime) / G.pitchDuration, 1.0);
+    drawBall(t);
+  }
+
+  drawPCI();
+  drawFeedback();
+  drawHitFlash();
+  drawPitchInfo();
+
+  // Canvas message overlay
+  if (canvasMsgTimer > 0 && canvasMsg) {
+    const alpha = Math.min(canvasMsgTimer / 15, 1);
+    ctx.globalAlpha = alpha;
+    drawMessage(canvasMsg.title, canvasMsg.sub, canvasMsg.color);
+    ctx.globalAlpha = 1;
+    canvasMsgTimer--;
+  }
+}
+
+// =============================================
+// ANIMATION LOOP
+// =============================================
+function animate(ts) {
+  if (G.gameOver) { render(ts); return; }
+
+  const dt = Math.min(ts - G.lastTs, 50);
+  G.lastTs = ts;
+
+  // Tick feedback timer
+  if (G.feedbackTimer > 0) G.feedbackTimer -= dt / 16.7;
+  if (G.hitFlash > 0) G.hitFlash -= dt / 16.7;
+
+  // Check pitch arrived
+  if (G.pitching && !G.swung) {
+    const t = (ts - G.pitchStartTime) / G.pitchDuration;
+    if (t >= 1.0) onBallArrived(ts);
+  } else if (G.pitching && G.swung) {
+    const t = (ts - G.pitchStartTime) / G.pitchDuration;
+    if (t >= 1.0) onBallArrived(ts);
+  }
+
+  render(ts);
+  G.animFrame = requestAnimationFrame(animate);
+}
+
+function startAnimation() {
+  if (G.animFrame) cancelAnimationFrame(G.animFrame);
+  G.animFrame = requestAnimationFrame((ts) => {
+    G.lastTs = ts;
+    G.animFrame = requestAnimationFrame(animate);
+  });
+}
+
+// =============================================
+// GAME LOGIC
+// =============================================
+function doPitch() {
+  if (G.pitching || G.gameOver) return;
+
+  const pt = pitchTypes[selectedPitch];
+  G.pitching = true;
+  G.swung = false;
+  G.feedback = null;
+  G.feedbackTimer = 0;
+  G.pitchDuration = (720 / pt.speed) * 1000; // ms
+
+  // Determine pitch location
+  const isStrikePitch = Math.random() < 0.62;
+  let tx, ty;
+
+  if (isStrikePitch) {
+    tx = SZ.l + Math.random() * SZ.w;
+    ty = SZ.t + Math.random() * SZ.h;
+  } else {
+    const side = Math.random();
+    if (side < 0.28)      { tx = SZ.l - 18 - Math.random() * 32; ty = SZ.t + Math.random() * SZ.h; }
+    else if (side < 0.56) { tx = SZ.r + 18 + Math.random() * 32; ty = SZ.t + Math.random() * SZ.h; }
+    else if (side < 0.78) { tx = SZ.l + Math.random() * SZ.w;    ty = SZ.t - 18 - Math.random() * 28; }
+    else                  { tx = SZ.l + Math.random() * SZ.w;    ty = SZ.b + 18 + Math.random() * 28; }
+  }
+
+  const isStrike = tx >= SZ.l && tx <= SZ.r && ty >= SZ.t && ty <= SZ.b;
+  G.pitchTarget = { x: tx, y: ty, isStrike };
+  G.pitchStartTime = performance.now();
+
+  document.getElementById('pitchBtn').disabled = true;
+  document.getElementById('swingBtn').disabled = false;
+}
+
+function doSwing() {
+  if (!G.pitching || G.swung) return;
+  G.swung = true;
+  G.swingTime = performance.now();
+  document.getElementById('swingBtn').disabled = true;
+}
+
+function onBallArrived(ts) {
+  G.pitching = false;
+  document.getElementById('swingBtn').disabled = true;
+
+  const pt = pitchTypes[selectedPitch];
+  const { x: bx, y: by, isStrike } = G.pitchTarget;
+
+  // Store feedback (ball landing)
+  G.feedback = { ballX: bx, ballY: by, isStrike, pciX: null, pciY: null, timingQ: null, locQ: null };
+  G.feedbackTimer = 150; // frames
+
+  if (!G.swung) {
+    // No swing
+    if (isStrike) addStrike('CALLED STRIKE');
+    else          addBall();
+  } else {
+    // Evaluate swing: timing + location
+    const swingT = (G.swingTime - G.pitchStartTime) / G.pitchDuration;
+
+    // Timing quality
+    let timingQ;
+    if      (swingT >= pt.perfWinL && swingT <= pt.perfWinR) timingQ = 'perfect';
+    else if (swingT >= pt.hitWinL  && swingT <= pt.hitWinR)  timingQ = 'good';
+    else                                                       timingQ = 'miss';
+
+    // Location quality (PCI vs actual ball position)
+    const dx = G.pci.x - bx;
+    const dy = G.pci.y - by;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    let locQ;
+    if      (dist < PCI_INNER) locQ = 'perfect';
+    else if (dist < PCI_OUTER) locQ = 'good';
+    else                        locQ = 'miss';
+
+    // Store for feedback overlay
+    G.feedback.pciX = G.pci.x;
+    G.feedback.pciY = G.pci.y;
+    G.feedback.timingQ = timingQ;
+    G.feedback.locQ = locQ;
+
+    if (timingQ === 'miss' || locQ === 'miss') {
+      // Miss — but if ball outside zone and close, count as ball not strike
+      if (!isStrike && locQ === 'miss' && timingQ !== 'miss') {
+        addBall(); // chased and missed but outside
+      } else {
+        addStrike('SWING AND MISS');
+      }
+    } else {
+      // Hit contact
+      let quality;
+      if      (timingQ === 'perfect' && locQ === 'perfect') quality = 'perfect';
+      else if (timingQ === 'perfect' || locQ === 'perfect') quality = 'good';
+      else                                                   quality = 'weak';
+
+      // Penalty: bad ball + weak contact
+      if (!isStrike && quality === 'weak' && Math.random() < 0.6) {
+        addStrike('SWING AND MISS');
+      } else {
+        G.hitFlash = 20;
+        resolveHit(quality);
+      }
+    }
+  }
+
+  if (!G.gameOver) {
+    setTimeout(() => {
+      document.getElementById('pitchBtn').disabled = false;
+    }, 500);
+  }
+}
+
+function resolveHit(quality) {
+  state_hit();
+  const rand = Math.random();
+  let result, bases, color, message;
+
+  if (quality === 'perfect') {
+    if      (rand < 0.20) { result = 'HOME RUN';  bases = 4; color = '#FFD700'; message = '💥 HOME RUN!'; }
+    else if (rand < 0.35) { result = 'TRIPLE';    bases = 3; color = '#FF9800'; message = '🚀 TRIPLE!'; }
+    else if (rand < 0.55) { result = 'DOUBLE';    bases = 2; color = '#4CAF50'; message = '⚡ DOUBLE!'; }
+    else if (rand < 0.78) { result = 'SINGLE';    bases = 1; color = '#8BC34A'; message = '✅ SINGLE!'; }
+    else if (rand < 0.90) { result = 'FLYOUT';    bases = 0; color = '#888';   message = '🔵 FLYOUT'; }
+    else                  { result = 'GROUNDOUT'; bases = 0; color = '#888';   message = '⬇️ GROUNDOUT'; }
+  } else if (quality === 'good') {
+    if      (rand < 0.05) { result = 'HOME RUN';  bases = 4; color = '#FFD700'; message = '💥 HOME RUN!'; }
+    else if (rand < 0.12) { result = 'TRIPLE';    bases = 3; color = '#FF9800'; message = '🚀 TRIPLE!'; }
+    else if (rand < 0.28) { result = 'DOUBLE';    bases = 2; color = '#4CAF50'; message = '⚡ DOUBLE!'; }
+    else if (rand < 0.55) { result = 'SINGLE';    bases = 1; color = '#8BC34A'; message = '✅ SINGLE!'; }
+    else if (rand < 0.78) { result = 'FLYOUT';    bases = 0; color = '#888';   message = '🔵 FLYOUT'; }
+    else                  { result = 'GROUNDOUT'; bases = 0; color = '#888';   message = '⬇️ GROUNDOUT'; }
+  } else { // weak
+    if      (rand < 0.55) { result = 'GROUNDOUT'; bases = 0; color = '#888';   message = '⬇️ GROUNDOUT'; }
+    else if (rand < 0.90) { result = 'FLYOUT';    bases = 0; color = '#888';   message = '🔵 FLYOUT'; }
+    else                  { result = 'SINGLE';    bases = 1; color = '#8BC34A'; message = '✅ SINGLE!'; }
+  }
+
+  if (bases === 0) {
+    state_unhit(); // undo hit registration
+    addOut(result);
+  } else {
+    G.totalBases += bases;
+    const runs = advanceRunners(bases);
+    updateScore(runs);
+    G.balls = 0; G.strikes = 0;
+    addToLog(result, color, runs > 0 ? `+${runs} RUN${runs > 1 ? 'S' : ''}` : '');
+    showCanvasMsg(message, runs > 0 ? `${runs} RUN${runs > 1 ? 'S' : ''}!` : '', color);
+    updateCountDots();
+    updateUI();
+  }
+}
+
+function state_hit() {
+  G.atBats++;
+  G.hits++;
+  G.pa++;
+}
+function state_unhit() {
+  G.hits--;
+}
+
+function advanceRunners(basesHit) {
+  let runs = 0;
+  if (basesHit >= 4) {
+    runs = G.bases.filter(Boolean).length + 1;
+    G.bases = [false, false, false];
+    return runs;
+  }
+  const nb = [false, false, false];
+  for (let i = 2; i >= 0; i--) {
+    if (!G.bases[i]) continue;
+    const np = i + basesHit;
+    if (np >= 3) runs++;
+    else nb[np] = true;
+  }
+  if (basesHit - 1 >= 3) runs++;
+  else nb[basesHit - 1] = true;
+  G.bases = nb;
+  return runs;
+}
+
+function addBall() {
+  G.balls++;
+  if (G.balls >= 4) {
+    G.walks++; G.pa++;
+    const runs = walkAdvance();
+    updateScore(runs);
+    addToLog('WALK', '#2196F3', runs > 0 ? `+${runs} RUN${runs > 1 ? 'S' : ''}` : '');
+    showCanvasMsg('WALK!', 'Take your base', '#2196F3');
+    G.balls = 0; G.strikes = 0;
+    updateCountDots(); updateUI();
+  } else {
+    showCanvasMsg(`BALL ${G.balls}`, 'Outside', '#2196F3');
+    updateCountDots();
+  }
+}
+
+function walkAdvance() {
+  let runs = 0;
+  if (G.bases[2] && G.bases[1] && G.bases[0]) { runs = 1; G.bases[2] = false; }
+  if (G.bases[0]) {
+    if (G.bases[1]) {
+      if (!G.bases[2]) G.bases[2] = true;
+    }
+    G.bases[1] = true;
+  }
+  G.bases[0] = true;
+  return runs;
+}
+
+function addStrike(type) {
+  G.strikes++;
+  if (G.strikes >= 3) {
+    G.atBats++; G.pa++;
+    addOut('STRIKEOUT');
+  } else {
+    showCanvasMsg(type, `Strike ${G.strikes}`, '#FF5722');
+    updateCountDots();
+  }
+}
+
+function addOut(type) {
+  G.outs++;
+  G.balls = 0; G.strikes = 0;
+  const icon = type === 'STRIKEOUT' ? '⚾ STRIKEOUT!' : type === 'FLYOUT' ? '🔵 FLYOUT' : `⬇️ ${type}`;
+  addToLog(type, '#888', '');
+  showCanvasMsg(icon, `Out ${G.outs}`, '#aaa');
+  updateCountDots(); updateUI();
+  if (G.outs >= 3) setTimeout(() => endHalf(), 1400);
+}
+
+function updateScore(runs) {
+  if (runs <= 0) return;
+  if (G.half === 0) {
+    G.awayScore += runs;
+    G.inningScores[G.inning - 1][0] = (G.inningScores[G.inning - 1][0] || 0) + runs;
+  } else {
+    G.homeScore += runs;
+    G.inningScores[G.inning - 1][1] = (G.inningScores[G.inning - 1][1] || 0) + runs;
+  }
+  document.getElementById('homeScore').textContent = G.homeScore;
+  document.getElementById('awayScore').textContent = G.awayScore;
+}
+
+function endHalf() {
+  G.outs = 0; G.balls = 0; G.strikes = 0;
+  G.bases = [false, false, false];
+  updateCountDots(); updateUI();
+
+  if (G.half === 0) {
+    G.half = 1;
+    document.getElementById('halfDisplay').textContent = '▼ BOT';
+    showCanvasMsg(`${G.inning}回 裏`, '▼ BOTTOM', '#FFD700');
+  } else {
+    G.half = 0;
+    G.inning++;
+    document.getElementById('halfDisplay').textContent = '▲ TOP';
+    if (G.inning > 9) { endGame(); return; }
+    document.getElementById('inningDisplay').textContent = G.inning;
+    showCanvasMsg(`${G.inning}回 表`, '▲ TOP', '#FFD700');
+    buildInningGrid();
+  }
+
+  document.getElementById('pitchBtn').disabled = false;
+  document.getElementById('swingBtn').disabled = true;
+}
+
+function endGame() {
+  G.gameOver = true;
+  const winner = G.homeScore > G.awayScore ? 'HOME WINS!' : G.awayScore > G.homeScore ? 'AWAY WINS!' : 'TIE GAME!';
+  canvasMsg = { title: winner, sub: `${G.awayScore} — ${G.homeScore}`, color: '#FFD700' };
+  canvasMsgTimer = 9999;
+  document.getElementById('pitchBtn').style.display = 'none';
+  document.getElementById('swingBtn').style.display = 'none';
+  document.getElementById('newGameBtn').style.display = 'inline-block';
+}
+
+// =============================================
+// UI UPDATES
+// =============================================
+function updateCountDots() {
+  for (let i = 0; i < 3; i++) document.getElementById('b'+i).className = 'dot' + (i < G.balls   ? ' active-ball'   : '');
+  for (let i = 0; i < 2; i++) document.getElementById('s'+i).className = 'dot' + (i < G.strikes ? ' active-strike' : '');
+  for (let i = 0; i < 2; i++) document.getElementById('o'+i).className = 'dot' + (i < G.outs    ? ' active-out'    : '');
+  ['base1','base2','base3'].forEach((id, i) => document.getElementById(id).classList.toggle('occupied', G.bases[i]));
+}
+
+function updateUI() {
+  const avg = G.atBats > 0 ? G.hits / G.atBats : 0;
+  const obp = G.pa > 0 ? (G.hits + G.walks) / G.pa : 0;
+  const slg = G.atBats > 0 ? G.totalBases / G.atBats : 0;
+  document.getElementById('avgDisplay').textContent = avg.toFixed(3).replace('0.', '.');
+  document.getElementById('opsDisplay').textContent = 'OPS: ' + (obp + slg).toFixed(3).replace('0.', '.');
+}
+
+function buildInningGrid() {
+  const grid = document.getElementById('inningGrid');
+  grid.innerHTML = '';
+  for (let i = 0; i < 9; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'inning-cell' + (i === G.inning - 1 ? ' current' : '');
+    const sc = G.inningScores[i];
+    if (sc[0] !== null || sc[1] !== null) {
+      cell.innerHTML = `<span>${sc[0]||0}/${sc[1]||0}</span>`;
+    } else {
+      cell.textContent = i + 1;
+    }
+    grid.appendChild(cell);
+  }
+}
+
+function addToLog(result, color, extra) {
+  const log = document.getElementById('hitLog');
+  const inn = `${G.inning}${G.half === 0 ? '▲' : '▼'}`;
+  const div = document.createElement('div');
+  div.className = 'hit-entry';
+  const cls = result === 'HOME RUN' ? 'hr' : result === 'TRIPLE' ? 'triple' : result === 'DOUBLE' ? 'double' : result === 'SINGLE' ? 'single' : result === 'WALK' ? 'walk' : 'out-text';
+  div.innerHTML = `<span class="hit-result ${cls}">${result}</span><span style="color:#555">${inn}</span><span style="color:#FFD700">${extra}</span>`;
+  log.insertBefore(div, log.firstChild);
+  while (log.children.length > 20) log.removeChild(log.lastChild);
+}
+
+// =============================================
+// NEW GAME
+// =============================================
+function newGame() {
+  if (G.animFrame) cancelAnimationFrame(G.animFrame);
+  G = freshState();
+  canvasMsg = null; canvasMsgTimer = 0;
+  document.getElementById('homeScore').textContent = '0';
+  document.getElementById('awayScore').textContent = '0';
+  document.getElementById('inningDisplay').textContent = '1';
+  document.getElementById('halfDisplay').textContent = '▲ TOP';
+  document.getElementById('pitchBtn').style.display = '';
+  document.getElementById('swingBtn').style.display = '';
+  document.getElementById('newGameBtn').style.display = 'none';
+  document.getElementById('pitchBtn').disabled = false;
+  document.getElementById('swingBtn').disabled = true;
+  document.getElementById('hitLog').innerHTML = '';
+  updateCountDots(); updateUI(); buildInningGrid();
+  showCanvasMsg('PLAY BALL!', 'マウスでPCIを動かしてスイング', '#FFD700');
+  startAnimation();
+}
+
+// =============================================
+// INPUT EVENTS
+// =============================================
+const fieldContainer = document.getElementById('fieldContainer');
+
+fieldContainer.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  G.pci.x = (e.clientX - rect.left) * (W / rect.width);
+  G.pci.y = (e.clientY - rect.top)  * (H / rect.height);
+});
+
+fieldContainer.addEventListener('mouseleave', () => {
+  // keep PCI at last position
+});
+
+canvas.addEventListener('click', () => {
+  if (!document.getElementById('swingBtn').disabled) doSwing();
+});
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const touch = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  G.pci.x = (touch.clientX - rect.left) * (W / rect.width);
+  G.pci.y = (touch.clientY - rect.top)  * (H / rect.height);
+}, { passive: false });
+
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const touch = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  G.pci.x = (touch.clientX - rect.left) * (W / rect.width);
+  G.pci.y = (touch.clientY - rect.top)  * (H / rect.height);
+  if (!document.getElementById('swingBtn').disabled) doSwing();
+}, { passive: false });
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' || e.key === ' ') {
+    e.preventDefault();
+    if (!document.getElementById('pitchBtn').disabled && !G.pitching) doPitch();
+    else if (!document.getElementById('swingBtn').disabled) doSwing();
+  }
+  if (e.code === 'Enter' && G.gameOver) newGame();
+});
+
+// =============================================
+// INIT
+// =============================================
+buildInningGrid();
+showCanvasMsg('PLAY BALL!', 'マウスでPCIを動かしてスイング', '#FFD700');
+startAnimation();
+</script>
+</body>
+</html>

@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tyler Glasnow 球種別成績</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Hiragino Sans', 'Meiryo', 'Segoe UI', sans-serif;
+            max-width: 1150px;
+            margin: 0 auto;
+            padding: 24px 16px;
+            background: #f0f2f6;
+            color: #1a1a2e;
+        }
+        header {
+            background: linear-gradient(135deg, #002147 0%, #005A9C 100%);
+            color: white;
+            padding: 22px 28px;
+            border-radius: 12px;
+            margin-bottom: 22px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        .player-photos {
+            display: flex;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+        .player-photo-wrap {
+            text-align: center;
+        }
+        .player-photo-wrap img {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.5);
+            object-fit: cover;
+            display: block;
+        }
+        .player-photo-wrap span {
+            font-size: 0.68em;
+            opacity: 0.75;
+            margin-top: 3px;
+            display: block;
+        }
+        header h1 { margin: 0 0 4px; font-size: 1.7em; letter-spacing: 0.03em; }
+        header p { margin: 0; opacity: 0.75; font-size: 0.85em; }
+
+        .section {
+            background: white;
+            padding: 20px 22px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.07);
+        }
+        h2 {
+            color: #002147;
+            border-bottom: 2px solid #dce8f7;
+            padding-bottom: 8px;
+            margin-top: 0;
+            font-size: 1.1em;
+            letter-spacing: 0.02em;
+        }
+
+        table { border-collapse: collapse; width: 100%; font-size: 0.86em; }
+        thead th {
+            background: #002147;
+            color: white;
+            padding: 9px 10px;
+            text-align: center;
+            white-space: nowrap;
+            font-weight: 600;
+        }
+        tbody td {
+            padding: 7px 10px;
+            border-bottom: 1px solid #eaeef5;
+            text-align: center;
+        }
+        tbody tr:last-child td { border-bottom: none; }
+        tbody tr:hover { background: #f0f6ff; }
+        tfoot td {
+            background: #dce8f7;
+            font-weight: bold;
+            border-top: 2px solid #002147;
+            padding: 8px 10px;
+            text-align: center;
+        }
+
+        .yr { font-weight: 700; color: #002147; }
+        .p4s  { color: #CC2200; font-weight: 600; }
+        .psi  { color: #D4600A; font-weight: 600; }
+        .pcv  { color: #0055CC; font-weight: 600; }
+        .psl  { color: #1A7F1A; font-weight: 600; }
+        .pch  { color: #8800AA; font-weight: 600; }
+
+        .tag { display:inline-block; padding:2px 6px; border-radius:4px; font-size:0.75em; font-weight:700; }
+        .tag-lad { background:#002147; color:white; }
+        .tag-tb  { background:#092C5C; color:#8FBCE6; }
+        .tag-pit { background:#FDB827; color:#27251F; }
+
+        .divrow td { height: 5px; background: #f4f6fb; padding: 0; border: none; }
+        .note { font-size: 0.78em; color: #888; margin-top: 8px; }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+            margin-bottom: 20px;
+        }
+        .chart-box {
+            background: white;
+            padding: 18px 20px;
+            border-radius: 10px;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.07);
+        }
+        .chart-box h2 { font-size: 1.05em; }
+
+        @media (max-width: 760px) {
+            .charts-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="player-photos">
+        <div class="player-photo-wrap">
+            <img src="glasnow_pirates.png" alt="Glasnow Pirates">
+            <span>PIT 2017</span>
+        </div>
+        <div class="player-photo-wrap">
+            <img src="glasnow_dodgers.png" alt="Glasnow Dodgers">
+            <span>LAD 2024</span>
+        </div>
+    </div>
+    <div>
+        <h1>Tyler Glasnow 球種別成績</h1>
+        <p>データソース: Baseball Savant / ESPN / Wikipedia　｜　更新: 2026年4月</p>
+    </div>
+</header>
+
+<!-- ========== 通年成績 ========== -->
+<div class="section">
+    <h2>通年成績</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>年度</th><th>チーム</th><th>防御率</th><th>投球回</th><th>奪三振</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td class="yr">2016</td><td><span class="tag tag-pit">PIT</span></td><td>4.24</td><td>23⅓</td><td>24</td></tr>
+            <tr><td class="yr">2017</td><td><span class="tag tag-pit">PIT</span></td><td>7.69</td><td>62.0</td><td>56</td></tr>
+            <tr><td class="yr">2018</td><td><span class="tag tag-pit">PIT</span>→<span class="tag tag-tb">TB</span></td><td>4.27</td><td>111⅔</td><td>136</td></tr>
+            <tr><td class="yr">2019</td><td><span class="tag tag-tb">TB</span></td><td>1.78</td><td>60⅔</td><td>76</td></tr>
+            <tr><td class="yr">2020</td><td><span class="tag tag-tb">TB</span></td><td>4.08</td><td>57⅓</td><td>91</td></tr>
+            <tr><td class="yr">2021</td><td><span class="tag tag-tb">TB</span></td><td>2.66</td><td>88.0</td><td>123</td></tr>
+            <tr><td class="yr">2022 ※</td><td><span class="tag tag-tb">TB</span></td><td>1.35</td><td>6⅔</td><td>10</td></tr>
+            <tr><td class="yr">2023</td><td><span class="tag tag-tb">TB</span></td><td>3.53</td><td>120.0</td><td>162</td></tr>
+            <tr><td class="yr">2024</td><td><span class="tag tag-lad">LAD</span></td><td>3.49</td><td>134.0</td><td>168</td></tr>
+            <tr><td class="yr">2025</td><td><span class="tag tag-lad">LAD</span></td><td>3.19</td><td>90⅓</td><td>106</td></tr>
+            <tr><td class="yr">2026 †</td><td><span class="tag tag-lad">LAD</span></td><td>3.00</td><td>12.0</td><td>15</td></tr>
+        </tbody>
+        <tfoot>
+            <tr><td colspan="2">通算</td><td>3.72</td><td>766.0</td><td>967</td></tr>
+        </tfoot>
+    </table>
+    <p class="note">※ 2022年は故障のため登板数少（6⅔回のみ）　† 2026年はシーズン序盤（4月時点）</p>
+</div>
+
+<!-- ========== 球種別成績 ========== -->
+<div class="section">
+    <h2>球種別成績（2019〜2026）</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>年度</th>
+                <th>球種</th>
+                <th>平均球速</th>
+                <th>投球割合</th>
+                <th>被打率</th>
+                <th>被長打率</th>
+                <th>防御率</th>
+                <th>投球回</th>
+                <th>奪三振</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- 2019 -->
+            <tr>
+                <td rowspan="3" class="yr" style="vertical-align:middle">2019<br><span class="tag tag-tb" style="font-size:0.7em">TB</span></td>
+                <td class="p4s">4シームFB</td><td>155.9 km/h</td><td>67.2%</td><td>.195</td><td>.328</td>
+                <td rowspan="3" style="vertical-align:middle">1.78</td>
+                <td rowspan="3" style="vertical-align:middle">60⅔</td>
+                <td rowspan="3" style="vertical-align:middle">76</td>
+            </tr>
+            <tr><td class="pcv">カーブ</td><td>134.4 km/h</td><td>29.3%</td><td>.177</td><td>.203</td></tr>
+            <tr><td class="pch">チェンジアップ</td><td>149.0 km/h</td><td>3.5%</td><td>.125</td><td>.125</td></tr>
+            <tr class="divrow"><td colspan="9"></td></tr>
+
+            <!-- 2020 -->
+            <tr>
+                <td rowspan="4" class="yr" style="vertical-align:middle">2020<br><span class="tag tag-tb" style="font-size:0.7em">TB</span></td>
+                <td class="p4s">4シームFB</td><td>155.9 km/h</td><td>60.6%</td><td>.246</td><td>.460</td>
+                <td rowspan="4" style="vertical-align:middle">4.08</td>
+                <td rowspan="4" style="vertical-align:middle">57⅓</td>
+                <td rowspan="4" style="vertical-align:middle">91</td>
+            </tr>
+            <tr><td class="pcv">カーブ</td><td>132.6 km/h</td><td>34.8%</td><td>.120</td><td>.277</td></tr>
+            <tr><td class="pch">チェンジアップ</td><td>148.1 km/h</td><td>3.5%</td><td>.667</td><td>1.667</td></tr>
+            <tr><td class="psi">シンカー</td><td>143.2 km/h</td><td>1.0%</td><td>.000</td><td>.000</td></tr>
+            <tr class="divrow"><td colspan="9"></td></tr>
+
+            <!-- 2021 -->
+            <tr>
+                <td rowspan="4" class="yr" style="vertical-align:middle">2021<br><span class="tag tag-tb" style="font-size:0.7em">TB</span></td>
+                <td class="p4s">4シームFB</td><td>156.1 km/h</td><td>51.6%</td><td>.197</td><td>.338</td>
+                <td rowspan="4" style="vertical-align:middle">2.66</td>
+                <td rowspan="4" style="vertical-align:middle">88.0</td>
+                <td rowspan="4" style="vertical-align:middle">123</td>
+            </tr>
+            <tr><td class="psl">スライダー</td><td>140.8 km/h</td><td>32.3%</td><td>.197</td><td>.424</td></tr>
+            <tr><td class="pcv">カーブ</td><td>134.4 km/h</td><td>13.5%</td><td>.085</td><td>.122</td></tr>
+            <tr><td class="pch">チェンジアップ</td><td>147.3 km/h</td><td>2.5%</td><td>.500</td><td>1.125</td></tr>
+            <tr class="divrow"><td colspan="9"></td></tr>
+
+            <!-- 2022 -->
+            <tr>
+                <td rowspan="3" class="yr" style="vertical-align:middle">2022 ※<br><span class="tag tag-tb" style="font-size:0.7em">TB</span></td>
+                <td class="p4s">4シームFB</td><td>156.8 km/h</td><td>53.5%</td><td>.273</td><td>.545</td>
+                <td rowspan="3" style="vertical-align:middle">1.35</td>
+                <td rowspan="3" style="vertical-align:middle">6⅔</td>
+                <td rowspan="3" style="vertical-align:middle">10</td>
+            </tr>
+            <tr><td class="psl">スライダー</td><td>146.3 km/h</td><td>28.1%</td><td>.333</td><td>.333</td></tr>
+            <tr><td class="pcv">カーブ</td><td>134.7 km/h</td><td>18.4%</td><td>.000</td><td>.000</td></tr>
+            <tr class="divrow"><td colspan="9"></td></tr>
+
+            <!-- 2023 -->
+            <tr>
+                <td rowspan="4" class="yr" style="vertical-align:middle">2023<br><span class="tag tag-tb" style="font-size:0.7em">TB</span></td>
+                <td class="p4s">4シームFB</td><td>155.1 km/h</td><td>43.6%</td><td>.240</td><td>.413</td>
+                <td rowspan="4" style="vertical-align:middle">3.53</td>
+                <td rowspan="4" style="vertical-align:middle">120.0</td>
+                <td rowspan="4" style="vertical-align:middle">162</td>
+            </tr>
+            <tr><td class="psl">スライダー</td><td>145.0 km/h</td><td>34.8%</td><td>.254</td><td>.373</td></tr>
+            <tr><td class="pcv">カーブ</td><td>135.0 km/h</td><td>21.3%</td><td>.095</td><td>.190</td></tr>
+            <tr><td class="pch">チェンジアップ</td><td>148.5 km/h</td><td>0.3%</td><td>.000</td><td>.000</td></tr>
+            <tr class="divrow"><td colspan="9"></td></tr>
+
+            <!-- 2024 -->
+            <tr>
+                <td rowspan="4" class="yr" style="vertical-align:middle">2024<br><span class="tag tag-lad" style="font-size:0.7em">LAD</span></td>
+                <td class="p4s">4シームFB</td><td>154.9 km/h</td><td>45.2%</td><td>.215</td><td>.421</td>
+                <td rowspan="4" style="vertical-align:middle">3.49</td>
+                <td rowspan="4" style="vertical-align:middle">134.0</td>
+                <td rowspan="4" style="vertical-align:middle">168</td>
+            </tr>
+            <tr><td class="psl">スライダー</td><td>144.8 km/h</td><td>27.7%</td><td>.200</td><td>.333</td></tr>
+            <tr><td class="pcv">カーブ</td><td>134.7 km/h</td><td>18.6%</td><td>.098</td><td>.174</td></tr>
+            <tr><td class="psi">シンカー</td><td>155.3 km/h</td><td>8.5%</td><td>.233</td><td>.395</td></tr>
+            <tr class="divrow"><td colspan="9"></td></tr>
+
+            <!-- 2025 -->
+            <tr>
+                <td rowspan="4" class="yr" style="vertical-align:middle">2025<br><span class="tag tag-lad" style="font-size:0.7em">LAD</span></td>
+                <td class="p4s">4シームFB</td><td>154.0 km/h</td><td>36.3%</td><td>.207</td><td>.405</td>
+                <td rowspan="4" style="vertical-align:middle">3.19</td>
+                <td rowspan="4" style="vertical-align:middle">90⅓</td>
+                <td rowspan="4" style="vertical-align:middle">106</td>
+            </tr>
+            <tr><td class="psi">シンカー</td><td>154.3 km/h</td><td>19.7%</td><td>.203</td><td>.271</td></tr>
+            <tr><td class="psl">スライダー</td><td>143.7 km/h</td><td>22.1%</td><td>.188</td><td>.375</td></tr>
+            <tr><td class="pcv">カーブ</td><td>131.9 km/h</td><td>21.9%</td><td>.104</td><td>.143</td></tr>
+            <tr class="divrow"><td colspan="9"></td></tr>
+
+            <!-- 2026 -->
+            <tr>
+                <td rowspan="4" class="yr" style="vertical-align:middle">2026 †<br><span class="tag tag-lad" style="font-size:0.7em">LAD</span></td>
+                <td class="p4s">4シームFB</td><td>153.8 km/h</td><td>31.4%</td><td>.333</td><td>.583</td>
+                <td rowspan="4" style="vertical-align:middle">3.00</td>
+                <td rowspan="4" style="vertical-align:middle">12.0</td>
+                <td rowspan="4" style="vertical-align:middle">15</td>
+            </tr>
+            <tr><td class="psi">シンカー</td><td>154.2 km/h</td><td>23.6%</td><td>.100</td><td>.100</td></tr>
+            <tr><td class="pcv">カーブ</td><td>131.0 km/h</td><td>31.4%</td><td>.158</td><td>.263</td></tr>
+            <tr><td class="psl">スライダー</td><td>143.4 km/h</td><td>13.6%</td><td>.000</td><td>.000</td></tr>
+        </tbody>
+    </table>
+    <p class="note">
+        ※ 2022年は故障のため登板数少（6⅔回のみ）　† 2026年はシーズン序盤（4月時点）参考値<br>
+        球速は mph × 1.60934 で換算。被打率・被長打率・投球割合は Baseball Savant より。
+    </p>
+</div>
+
+<!-- ========== チャート ========== -->
+<div class="charts-grid">
+    <div class="chart-box">
+        <h2>球種別 変化量チャート（年度別）</h2>
+        <canvas id="movementChart"></canvas>
+        <p class="note">
+            横軸: 横変化（インチ）　＋ = アーム側（右）　− = グラブ側（左）<br>
+            縦軸: 縦変化（インチ）　値はBreakデータ（Baseball Savant）
+        </p>
+    </div>
+    <div class="chart-box">
+        <h2>球種別 平均球速推移（km/h）</h2>
+        <canvas id="velocityChart"></canvas>
+        <p class="note">単位: km/h　（mph × 1.60934）</p>
+    </div>
+</div>
+
+<div class="charts-grid">
+    <div class="chart-box">
+        <h2>球種別 被打率推移</h2>
+        <canvas id="baChart"></canvas>
+        <p class="note">2022年・チェンジアップはサンプル少のため参考値</p>
+    </div>
+    <div class="chart-box">
+        <h2>球種別 投球割合推移（%）</h2>
+        <canvas id="usageChart"></canvas>
+        <p class="note">各球種の年度別投球割合。ドジャース移籍後の変化に注目。</p>
+    </div>
+</div>
+
+<script>
+Chart.register(ChartDataLabels);
+
+const YEARS = [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026];
+
+// ─── 変化量チャート（散布図） ───────────────────────────────
+const movementCtx = document.getElementById('movementChart').getContext('2d');
+
+const movementSets = [
+    {
+        label: '4シームFB',
+        backgroundColor: '#CC2200',
+        borderColor: '#CC2200',
+        pointRadius: 8,
+        data: [
+            { x:  0.0, y: -4.4, yr: 2019 },
+            { x:  0.6, y: -4.4, yr: 2020 },
+            { x:  1.8, y: -4.6, yr: 2021 },
+            { x:  2.0, y: -4.6, yr: 2022 },
+            { x:  1.0, y: -5.7, yr: 2023 },
+            { x:  0.3, y: -6.4, yr: 2024 },
+            { x:  1.4, y: -5.2, yr: 2025 },
+            { x:  0.3, y: -7.5, yr: 2026 },
+        ]
+    },
+    {
+        label: 'カーブ',
+        backgroundColor: '#0055CC',
+        borderColor: '#0055CC',
+        pointRadius: 8,
+        data: [
+            { x: -5.6, y: -17.3, yr: 2019 },
+            { x: -6.5, y: -17.7, yr: 2020 },
+            { x: -4.6, y: -17.6, yr: 2021 },
+            { x: -1.0, y: -13.3, yr: 2023 },
+            { x: -3.3, y: -12.0, yr: 2024 },
+            { x: -4.8, y: -16.0, yr: 2025 },
+            { x: -5.2, y: -15.7, yr: 2026 },
+        ]
+    },
+    {
+        label: 'スライダー',
+        backgroundColor: '#1A7F1A',
+        borderColor: '#1A7F1A',
+        pointRadius: 8,
+        data: [
+            { x: -2.6, y:  -4.2, yr: 2021 },
+            { x: -2.3, y:   1.6, yr: 2023 },
+            { x: -2.5, y:   0.5, yr: 2024 },
+            { x: -3.1, y:  -0.1, yr: 2025 },
+            { x: -2.7, y:  -0.7, yr: 2026 },
+        ]
+    },
+    {
+        label: 'シンカー',
+        backgroundColor: '#D4600A',
+        borderColor: '#D4600A',
+        pointRadius: 8,
+        data: [
+            { x: 10.7, y: -3.5, yr: 2024 },
+            { x: 10.8, y: -3.2, yr: 2025 },
+            { x: 10.5, y: -2.8, yr: 2026 },
+        ]
+    }
+];
+
+new Chart(movementCtx, {
+    type: 'scatter',
+    data: { datasets: movementSets },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: { position: 'top', labels: { font: { size: 11 } } },
+            datalabels: {
+                formatter: (v) => v.yr,
+                anchor: 'end',
+                align: 'top',
+                offset: 2,
+                font: { size: 9, weight: 'bold' },
+                color: (ctx) => ctx.dataset.borderColor,
+            },
+            tooltip: {
+                callbacks: {
+                    label: (ctx) => {
+                        const d = ctx.raw;
+                        return `${ctx.dataset.label} (${d.yr}): 横${d.x}", 縦${d.y}"`;
+                    }
+                }
+            }
+        },
+        scales: {
+            x: {
+                title: { display: true, text: '← グラブ側　横変化 (インチ)　アーム側 →', font: { size: 11 } },
+                grid: { color: '#e8ecf5' }
+            },
+            y: {
+                title: { display: true, text: '縦変化 (インチ)', font: { size: 11 } },
+                grid: { color: '#e8ecf5' }
+            }
+        }
+    }
+});
+
+// ─── 平均球速推移（折れ線） ────────────────────────────────
+const velocityCtx = document.getElementById('velocityChart').getContext('2d');
+
+new Chart(velocityCtx, {
+    type: 'line',
+    data: {
+        labels: YEARS,
+        datasets: [
+            {
+                label: '4シームFB',
+                data: [155.9, 155.9, 156.1, 156.8, 155.1, 154.9, 154.0, 153.8],
+                borderColor: '#CC2200', backgroundColor: '#CC220018',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3, spanGaps: false
+            },
+            {
+                label: 'シンカー',
+                data: [null, 143.2, null, null, null, 155.3, 154.3, 154.2],
+                borderColor: '#D4600A', backgroundColor: '#D4600A18',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3, spanGaps: false,
+                borderDash: [5, 3]
+            },
+            {
+                label: 'スライダー',
+                data: [null, null, 140.8, 146.3, 145.0, 144.8, 143.7, 143.4],
+                borderColor: '#1A7F1A', backgroundColor: '#1A7F1A18',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3, spanGaps: false
+            },
+            {
+                label: 'カーブ',
+                data: [134.4, 132.6, 134.4, 134.7, 135.0, 134.7, 131.9, 131.0],
+                borderColor: '#0055CC', backgroundColor: '#0055CC18',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3, spanGaps: false
+            },
+            {
+                label: 'チェンジアップ',
+                data: [149.0, 148.1, 147.3, null, 148.5, null, null, null],
+                borderColor: '#8800AA', backgroundColor: '#8800AA18',
+                borderWidth: 2, pointRadius: 5, tension: 0.3, spanGaps: false,
+                borderDash: [4, 4]
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: { position: 'top', labels: { font: { size: 11 } } },
+            datalabels: { display: false },
+            tooltip: {
+                callbacks: {
+                    label: (ctx) => ctx.raw !== null ? `${ctx.dataset.label}: ${ctx.raw} km/h` : ''
+                }
+            }
+        },
+        scales: {
+            y: {
+                min: 125, max: 165,
+                title: { display: true, text: '平均球速 (km/h)', font: { size: 11 } },
+                grid: { color: '#e8ecf5' }
+            },
+            x: { grid: { color: '#e8ecf5' } }
+        }
+    }
+});
+
+// ─── 被打率推移（折れ線） ──────────────────────────────────
+const baCtx = document.getElementById('baChart').getContext('2d');
+
+new Chart(baCtx, {
+    type: 'line',
+    data: {
+        labels: YEARS,
+        datasets: [
+            {
+                label: '4シームFB',
+                data: [.195, .246, .197, .273, .240, .215, .207, .333],
+                borderColor: '#CC2200', backgroundColor: '#CC220018',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3
+            },
+            {
+                label: 'シンカー',
+                data: [null, .000, null, null, null, .233, .203, .100],
+                borderColor: '#D4600A', backgroundColor: '#D4600A18',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3, spanGaps: false,
+                borderDash: [5, 3]
+            },
+            {
+                label: 'スライダー',
+                data: [null, null, .197, .333, .254, .200, .188, .000],
+                borderColor: '#1A7F1A', backgroundColor: '#1A7F1A18',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3, spanGaps: false
+            },
+            {
+                label: 'カーブ',
+                data: [.177, .120, .085, .000, .095, .098, .104, .158],
+                borderColor: '#0055CC', backgroundColor: '#0055CC18',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: { position: 'top', labels: { font: { size: 11 } } },
+            datalabels: { display: false }
+        },
+        scales: {
+            y: {
+                min: 0, max: 0.38,
+                title: { display: true, text: '被打率', font: { size: 11 } },
+                grid: { color: '#e8ecf5' }
+            },
+            x: { grid: { color: '#e8ecf5' } }
+        }
+    }
+});
+
+// ─── 投球割合推移（折れ線） ────────────────────────────────
+const usageCtx = document.getElementById('usageChart').getContext('2d');
+
+new Chart(usageCtx, {
+    type: 'line',
+    data: {
+        labels: YEARS,
+        datasets: [
+            {
+                label: '4シームFB',
+                data: [67.2, 60.6, 51.6, 53.5, 43.6, 45.2, 36.3, 31.4],
+                borderColor: '#CC2200', backgroundColor: '#CC220018',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3, fill: false
+            },
+            {
+                label: 'シンカー',
+                data: [null, 1.0, null, null, null, 8.5, 19.7, 23.6],
+                borderColor: '#D4600A', backgroundColor: '#D4600A18',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3, spanGaps: false,
+                borderDash: [5, 3]
+            },
+            {
+                label: 'スライダー',
+                data: [null, null, 32.3, 28.1, 34.8, 27.7, 22.1, 13.6],
+                borderColor: '#1A7F1A', backgroundColor: '#1A7F1A18',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3, spanGaps: false
+            },
+            {
+                label: 'カーブ',
+                data: [29.3, 34.8, 13.5, 18.4, 21.3, 18.6, 21.9, 31.4],
+                borderColor: '#0055CC', backgroundColor: '#0055CC18',
+                borderWidth: 2.5, pointRadius: 5, tension: 0.3
+            },
+            {
+                label: 'チェンジアップ',
+                data: [3.5, 3.5, 2.5, null, 0.3, null, null, null],
+                borderColor: '#8800AA', backgroundColor: '#8800AA18',
+                borderWidth: 2, pointRadius: 5, tension: 0.3, spanGaps: false,
+                borderDash: [4, 4]
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: { position: 'top', labels: { font: { size: 11 } } },
+            datalabels: { display: false }
+        },
+        scales: {
+            y: {
+                min: 0, max: 75,
+                title: { display: true, text: '投球割合 (%)', font: { size: 11 } },
+                grid: { color: '#e8ecf5' }
+            },
+            x: { grid: { color: '#e8ecf5' } }
+        }
+    }
+});
+</script>
+
+</body>
+</html>

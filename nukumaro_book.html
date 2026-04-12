@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>みるちゃんの えほん</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700;900&display=swap');
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background: #E8F4FF;
+  font-family: 'Zen Maru Gothic', 'Hiragino Maru Gothic Pro', sans-serif;
+  overflow: hidden;
+  width: 100vw; height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+}
+
+#book {
+  width: 820px; height: 560px;
+  position: relative;
+  border-radius: 18px;
+  box-shadow: 0 20px 60px rgba(0,80,180,0.18), 0 4px 16px rgba(0,0,0,0.12);
+  border: 4px solid #B8D8F8;
+}
+
+.page {
+  display: none;
+  width: 100%; height: 100%;
+  border-radius: 14px;
+  overflow: hidden;
+  position: relative;
+}
+.page.active { display: flex; }
+
+.nav-btn {
+  position: absolute; bottom: 18px;
+  background: rgba(255,255,255,0.95);
+  border: 3px solid #7BB8F0;
+  color: #3A7AC0;
+  font-family: inherit;
+  font-size: 18px; font-weight: 900;
+  padding: 12px 28px;
+  border-radius: 40px;
+  cursor: pointer;
+  transition: all 0.2s;
+  z-index: 20;
+  box-shadow: 0 4px 12px rgba(0,100,200,0.2);
+}
+.nav-btn:hover { background: #7BB8F0; color: #fff; transform: scale(1.07); }
+.nav-btn:active { transform: scale(0.95); }
+#btn-next { right: 28px; }
+#btn-prev { left: 28px; display: none; }
+
+#page-counter {
+  position: absolute; bottom: 26px; left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px; color: #88AACC; font-family: inherit;
+  z-index: 20; font-weight: 700;
+}
+
+/* ===== COVER ===== */
+.cover {
+  background: linear-gradient(160deg, #C8E8FF 0%, #A0C8F8 40%, #D0E8FF 100%);
+  flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px;
+}
+.cover-title {
+  font-size: 52px; font-weight: 900;
+  color: #2A5A9A;
+  text-shadow: 3px 3px 0 rgba(255,255,255,0.8), 0 0 20px rgba(100,180,255,0.5);
+  text-align: center; line-height: 1.25;
+}
+.cover-sub {
+  font-size: 20px; color: #4A7AC0; font-weight: 900; text-align: center;
+  background: rgba(255,255,255,0.6); padding: 6px 20px; border-radius: 20px;
+}
+
+/* ===== SPREAD ===== */
+.spread { display:flex; width:100%; height:100%; }
+.spread-left, .spread-right {
+  flex:1; position:relative;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  padding: 16px;
+}
+.spread-left {
+  background: #F0F8FF;
+  border-right: 3px dashed #B8D8F8;
+}
+.spread-right { background: #F8FBFF; }
+
+.scene-svg { width:100%; max-height:330px; }
+
+.story-text {
+  font-size: 22px; font-weight: 700;
+  color: #2A4A7A;
+  line-height: 2.2;
+  text-align: center;
+  padding: 16px 12px;
+  background: rgba(255,255,255,0.85);
+  border-radius: 16px;
+  border: 3px solid #B8D8F8;
+  max-width: 330px;
+  letter-spacing: 0.03em;
+}
+
+.scene-caption {
+  font-size: 15px; color: #5A8AC0; font-weight: 900;
+  text-align: center; margin-bottom: 4px;
+  background: rgba(255,255,255,0.75);
+  border-radius: 20px; padding: 4px 16px;
+}
+
+.page { animation: fadeIn 0.4s ease; }
+@keyframes fadeIn { from { opacity:0; transform:scale(0.97); } to { opacity:1; transform:scale(1); } }
+
+@keyframes bounce {
+  0%,100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+@keyframes wiggle {
+  0%,100% { transform: rotate(-6deg); }
+  50% { transform: rotate(6deg); }
+}
+@keyframes float {
+  0%,100% { transform: translateX(0); }
+  50% { transform: translateX(8px); }
+}
+@keyframes sunpulse {
+  0%,100% { opacity:0.8; transform:scale(1); }
+  50% { opacity:1; transform:scale(1.06); }
+}
+.anim-bounce { animation: bounce 1.4s ease-in-out infinite; }
+.anim-sun { animation: sunpulse 2s ease-in-out infinite; }
+.anim-float { animation: float 3s ease-in-out infinite; }
+.anim-float2 { animation: float 3.8s ease-in-out infinite reverse; }
+</style>
+</head>
+<body>
+<div id="book">
+
+<!-- ============ PAGE 0: COVER ============ -->
+<div class="page active cover" id="page-0">
+  <!-- Stars/dots decoration -->
+  <svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none" viewBox="0 0 820 560">
+    <circle cx="60" cy="50" r="8" fill="rgba(255,255,255,0.5)"/>
+    <circle cx="760" cy="80" r="6" fill="rgba(255,255,255,0.5)"/>
+    <circle cx="100" cy="480" r="7" fill="rgba(255,255,255,0.5)"/>
+    <circle cx="730" cy="460" r="9" fill="rgba(255,255,255,0.5)"/>
+    <circle cx="400" cy="30" r="5" fill="rgba(255,255,255,0.5)"/>
+    <ellipse cx="140" cy="150" rx="30" ry="30" fill="rgba(255,255,255,0.2)"/>
+    <ellipse cx="680" cy="400" rx="35" ry="35" fill="rgba(255,255,255,0.2)"/>
+    <!-- Paw prints -->
+    <circle cx="700" cy="50" r="7" fill="rgba(180,210,255,0.5)"/>
+    <circle cx="680" cy="30" r="4" fill="rgba(180,210,255,0.5)"/>
+    <circle cx="720" cy="30" r="4" fill="rgba(180,210,255,0.5)"/>
+    <circle cx="690" cy="20" r="4" fill="rgba(180,210,255,0.5)"/>
+    <circle cx="710" cy="20" r="4" fill="rgba(180,210,255,0.5)"/>
+  </svg>
+
+  <!-- Miru-chan on cover -->
+  <svg width="230" height="240" viewBox="0 0 230 240">
+    <!-- Shadow -->
+    <ellipse cx="115" cy="232" rx="60" ry="10" fill="rgba(100,150,220,0.2)"/>
+    <!-- Body -->
+    <ellipse cx="115" cy="175" rx="62" ry="55" fill="#A8C8E8"/>
+    <ellipse cx="115" cy="182" rx="42" ry="38" fill="#C8E0F5"/>
+    <!-- Front paws -->
+    <ellipse cx="75" cy="215" rx="22" ry="15" fill="#A8C8E8"/>
+    <ellipse cx="155" cy="215" rx="22" ry="15" fill="#A8C8E8"/>
+    <!-- Paw toes -->
+    <circle cx="67" cy="218" r="5" fill="#C8E0F5"/>
+    <circle cx="75" cy="222" r="5" fill="#C8E0F5"/>
+    <circle cx="83" cy="218" r="5" fill="#C8E0F5"/>
+    <circle cx="147" cy="218" r="5" fill="#C8E0F5"/>
+    <circle cx="155" cy="222" r="5" fill="#C8E0F5"/>
+    <circle cx="163" cy="218" r="5" fill="#C8E0F5"/>
+    <!-- Head -->
+    <ellipse cx="115" cy="105" rx="58" ry="55" fill="#A8C8E8"/>
+    <!-- Fluffy texture (lighter patches) -->
+    <ellipse cx="100" cy="90" rx="18" ry="14" fill="#C0D8F0" opacity="0.6"/>
+    <ellipse cx="130" cy="88" rx="16" ry="12" fill="#C0D8F0" opacity="0.6"/>
+    <ellipse cx="115" cy="130" rx="20" ry="12" fill="#C0D8F0" opacity="0.5"/>
+    <!-- Ears (floppy, darker) -->
+    <ellipse cx="66" cy="108" rx="22" ry="36" fill="#8AAAC8" transform="rotate(-15,66,108)"/>
+    <ellipse cx="164" cy="108" rx="22" ry="36" fill="#8AAAC8" transform="rotate(15,164,108)"/>
+    <!-- Ear inner -->
+    <ellipse cx="66" cy="112" rx="14" ry="26" fill="#9ABBD8" transform="rotate(-15,66,112)"/>
+    <ellipse cx="164" cy="112" rx="14" ry="26" fill="#9ABBD8" transform="rotate(15,164,112)"/>
+    <!-- Ribbon on right ear -->
+    <path d="M148 76 Q158 68 168 74 Q158 80 148 76Z" fill="#CC4444"/>
+    <path d="M148 76 Q158 84 168 78 Q158 72 148 76Z" fill="#EE6666"/>
+    <circle cx="158" cy="76" r="5" fill="#FF4444"/>
+    <!-- Eyes -->
+    <ellipse cx="97" cy="102" rx="13" ry="14" fill="#1A1A2A"/>
+    <ellipse cx="133" cy="102" rx="13" ry="14" fill="#1A1A2A"/>
+    <circle cx="93" cy="97" r="4" fill="#fff"/>
+    <circle cx="129" cy="97" r="4" fill="#fff"/>
+    <circle cx="97" cy="106" r="2" fill="#404060"/>
+    <circle cx="133" cy="106" r="2" fill="#404060"/>
+    <!-- Nose -->
+    <ellipse cx="115" cy="123" rx="12" ry="9" fill="#1A1A2A"/>
+    <circle cx="111" cy="120" r="3" fill="#3A3A5A"/>
+    <!-- Mouth -->
+    <path d="M103 130 Q115 142 127 130" fill="none" stroke="#1A1A2A" stroke-width="2.5" stroke-linecap="round"/>
+    <!-- Cheek blush -->
+    <ellipse cx="84" cy="118" rx="12" ry="8" fill="#FFB0C0" opacity="0.45"/>
+    <ellipse cx="146" cy="118" rx="12" ry="8" fill="#FFB0C0" opacity="0.45"/>
+  </svg>
+
+  <div class="cover-title">みるちゃん</div>
+  <div class="cover-sub">おそとで あそぼう！</div>
+</div>
+
+<!-- ============ PAGE 1: 朝起きる ============ -->
+<div class="page" id="page-1">
+  <div class="spread">
+    <div class="spread-left">
+      <div class="scene-caption">おはよう、みるちゃん！</div>
+      <svg class="scene-svg" viewBox="0 0 320 300">
+        <defs>
+          <linearGradient id="morning" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#FFF0D0"/>
+            <stop offset="100%" stop-color="#FFE4B0"/>
+          </linearGradient>
+        </defs>
+        <!-- Room background -->
+        <rect width="320" height="300" fill="url(#morning)"/>
+        <!-- Window -->
+        <rect x="190" y="20" width="110" height="90" rx="6" fill="#B8D8F8"/>
+        <rect x="193" y="23" width="48" height="84" fill="#D8EEFF"/>
+        <rect x="248" y="23" width="48" height="84" fill="#D8EEFF"/>
+        <line x1="245" y1="23" x2="245" y2="107" stroke="#A0C0E0" stroke-width="3"/>
+        <line x1="190" y1="65" x2="300" y2="65" stroke="#A0C0E0" stroke-width="2"/>
+        <!-- Sun through window -->
+        <g class="anim-sun">
+          <circle cx="269" cy="50" r="18" fill="#FFD700" opacity="0.6"/>
+          <circle cx="269" cy="50" r="13" fill="#FFA500"/>
+        </g>
+        <!-- Curtains -->
+        <path d="M190 20 Q200 55 193 107" fill="none" stroke="#FFCCAA" stroke-width="10" stroke-linecap="round"/>
+        <path d="M300 20 Q290 55 297 107" fill="none" stroke="#FFCCAA" stroke-width="10" stroke-linecap="round"/>
+        <!-- Bed -->
+        <rect x="15" y="210" width="200" height="70" rx="12" fill="#A0B8D8"/>
+        <rect x="15" y="200" width="200" height="24" rx="10" fill="#B8CCE8"/>
+        <!-- Blanket -->
+        <rect x="20" y="218" width="190" height="55" rx="10" fill="#7BB0F0"/>
+        <rect x="20" y="218" width="190" height="16" rx="8" fill="#9ACAFF"/>
+        <!-- Stars on blanket -->
+        <text x="55" y="245" font-size="16" fill="rgba(255,255,255,0.6)">★</text>
+        <text x="95" y="252" font-size="12" fill="rgba(255,255,255,0.6)">★</text>
+        <text x="130" y="245" font-size="16" fill="rgba(255,255,255,0.6)">★</text>
+        <text x="165" y="250" font-size="13" fill="rgba(255,255,255,0.6)">★</text>
+        <!-- Pillow -->
+        <ellipse cx="80" cy="213" rx="52" ry="16" fill="#E8F0FF"/>
+        <!-- Miru-chan waking up (sitting in bed) -->
+        <g class="anim-bounce" transform="translate(30,120)">
+          <!-- Body -->
+          <ellipse cx="55" cy="75" rx="40" ry="35" fill="#A8C8E8"/>
+          <ellipse cx="55" cy="80" rx="26" ry="24" fill="#C8E0F5"/>
+          <!-- Head -->
+          <ellipse cx="55" cy="36" rx="38" ry="36" fill="#A8C8E8"/>
+          <!-- Fluffy patches -->
+          <ellipse cx="44" cy="25" rx="12" ry="9" fill="#C0D8F0" opacity="0.6"/>
+          <ellipse cx="66" cy="23" rx="10" ry="8" fill="#C0D8F0" opacity="0.6"/>
+          <!-- Ears -->
+          <ellipse cx="24" cy="30" rx="14" ry="23" fill="#8AAAC8" transform="rotate(-12,24,30)"/>
+          <ellipse cx="86" cy="30" rx="14" ry="23" fill="#8AAAC8" transform="rotate(12,86,30)"/>
+          <ellipse cx="24" cy="33" rx="9" ry="16" fill="#9ABBD8" transform="rotate(-12,24,33)"/>
+          <ellipse cx="86" cy="33" rx="9" ry="16" fill="#9ABBD8" transform="rotate(12,86,33)"/>
+          <!-- Ribbon -->
+          <path d="M75 10 Q83 4 91 9 Q83 14 75 10Z" fill="#CC4444"/>
+          <path d="M75 10 Q83 16 91 11 Q83 6 75 10Z" fill="#EE6666"/>
+          <circle cx="83" cy="10" r="3.5" fill="#FF4444"/>
+          <!-- Eyes (happy, just woke up) -->
+          <ellipse cx="41" cy="34" rx="9" ry="10" fill="#1A1A2A"/>
+          <ellipse cx="69" cy="34" rx="9" ry="10" fill="#1A1A2A"/>
+          <circle cx="38" cy="30" r="3" fill="#fff"/>
+          <circle cx="66" cy="30" r="3" fill="#fff"/>
+          <!-- Nose -->
+          <ellipse cx="55" cy="47" rx="8" ry="6" fill="#1A1A2A"/>
+          <circle cx="52" cy="45" r="2" fill="#3A3A5A"/>
+          <!-- Smile -->
+          <path d="M44 53 Q55 63 66 53" fill="none" stroke="#1A1A2A" stroke-width="2.5" stroke-linecap="round"/>
+          <!-- Blush -->
+          <ellipse cx="30" cy="44" rx="9" ry="6" fill="#FFB0C0" opacity="0.5"/>
+          <ellipse cx="80" cy="44" rx="9" ry="6" fill="#FFB0C0" opacity="0.5"/>
+          <!-- Paws up (stretching) -->
+          <ellipse cx="10" cy="65" rx="15" ry="10" fill="#A8C8E8" transform="rotate(-45,10,65)"/>
+          <ellipse cx="100" cy="65" rx="15" ry="10" fill="#A8C8E8" transform="rotate(45,100,65)"/>
+        </g>
+        <!-- Zz's fading -->
+        <text x="155" y="115" font-size="18" fill="#88AADD" opacity="0.5" font-family="sans-serif" font-weight="bold">z</text>
+        <text x="170" y="100" font-size="14" fill="#88AADD" opacity="0.35" font-family="sans-serif" font-weight="bold">z</text>
+      </svg>
+    </div>
+    <div class="spread-right">
+      <div class="story-text">
+        あさだよ！<br>
+        みるちゃんが<br>
+        めをさました。<br>
+        <br>
+        「おはよう！<br>
+        　きょうは<br>
+        　いいてんきだ！」
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAGE 2: そとへ ============ -->
+<div class="page" id="page-2">
+  <div class="spread">
+    <div class="spread-left">
+      <div class="story-text">
+        みるちゃんは<br>
+        そとへとびだした！<br>
+        <br>
+        「わあ！<br>
+        　おそらが<br>
+        　あおいよ～！」<br>
+        <br>
+        しっぽが<br>
+        ぶんぶん ふれた。
+      </div>
+    </div>
+    <div class="spread-right">
+      <div class="scene-caption">しっぽぶんぶん！</div>
+      <svg class="scene-svg" viewBox="0 0 320 300">
+        <defs>
+          <linearGradient id="sky1" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#7EC8F8"/>
+            <stop offset="70%" stop-color="#B8E0FF"/>
+            <stop offset="100%" stop-color="#D8F0C8"/>
+          </linearGradient>
+        </defs>
+        <rect width="320" height="300" fill="url(#sky1)"/>
+        <!-- Sun -->
+        <g class="anim-sun">
+          <circle cx="260" cy="50" r="34" fill="#FFD700" opacity="0.25"/>
+          <circle cx="260" cy="50" r="24" fill="#FFD700" opacity="0.5"/>
+          <circle cx="260" cy="50" r="18" fill="#FFA500"/>
+        </g>
+        <!-- Clouds -->
+        <g class="anim-float">
+          <ellipse cx="80" cy="60" rx="40" ry="22" fill="#fff" opacity="0.95"/>
+          <ellipse cx="108" cy="52" rx="32" ry="20" fill="#fff" opacity="0.95"/>
+          <ellipse cx="56" cy="58" rx="26" ry="16" fill="#fff" opacity="0.95"/>
+        </g>
+        <g class="anim-float2">
+          <ellipse cx="200" cy="40" rx="32" ry="18" fill="#fff" opacity="0.9"/>
+          <ellipse cx="225" cy="34" rx="25" ry="16" fill="#fff" opacity="0.9"/>
+        </g>
+        <!-- Ground -->
+        <rect y="228" width="320" height="72" fill="#88C840"/>
+        <ellipse cx="160" cy="230" rx="180" ry="18" fill="#A0D860"/>
+        <!-- Flowers -->
+        <circle cx="22" cy="230" r="7" fill="#FFD700"/>
+        <line x1="22" y1="237" x2="22" y2="255" stroke="#4A9A20" stroke-width="2.5"/>
+        <circle cx="38" cy="225" r="6" fill="#FF9EC0"/>
+        <line x1="38" y1="231" x2="38" y2="252" stroke="#4A9A20" stroke-width="2.5"/>
+        <circle cx="280" cy="230" r="7" fill="#FF9EC0"/>
+        <line x1="280" y1="237" x2="280" y2="255" stroke="#4A9A20" stroke-width="2.5"/>
+        <circle cx="298" cy="225" r="6" fill="#FFD700"/>
+        <line x1="298" y1="231" x2="298" y2="252" stroke="#4A9A20" stroke-width="2.5"/>
+        <circle cx="55" cy="235" r="5" fill="#FF7FAA"/>
+        <circle cx="265" cy="228" r="5" fill="#AADDFF"/>
+        <!-- Miru-chan running/jumping -->
+        <g transform="translate(95,138)">
+          <!-- Tail wagging back -->
+          <path d="M106 75 Q135 55 128 30 Q122 12 112 18" fill="none" stroke="#8AAAC8" stroke-width="12" stroke-linecap="round"/>
+          <!-- Body -->
+          <ellipse cx="58" cy="78" rx="46" ry="38" fill="#A8C8E8"/>
+          <ellipse cx="58" cy="84" rx="30" ry="26" fill="#C8E0F5"/>
+          <!-- Head -->
+          <ellipse cx="58" cy="34" rx="42" ry="40" fill="#A8C8E8"/>
+          <ellipse cx="46" cy="22" rx="13" ry="10" fill="#C0D8F0" opacity="0.6"/>
+          <ellipse cx="70" cy="20" rx="11" ry="9" fill="#C0D8F0" opacity="0.6"/>
+          <!-- Ears -->
+          <ellipse cx="24" cy="26" rx="16" ry="26" fill="#8AAAC8" transform="rotate(-15,24,26)"/>
+          <ellipse cx="92" cy="26" rx="16" ry="26" fill="#8AAAC8" transform="rotate(15,92,26)"/>
+          <ellipse cx="24" cy="30" rx="10" ry="18" fill="#9ABBD8" transform="rotate(-15,24,30)"/>
+          <ellipse cx="92" cy="30" rx="10" ry="18" fill="#9ABBD8" transform="rotate(15,92,30)"/>
+          <!-- Ribbon -->
+          <path d="M78 6 Q88 0 96 5 Q88 10 78 6Z" fill="#CC4444"/>
+          <path d="M78 6 Q88 12 96 7 Q88 2 78 6Z" fill="#EE6666"/>
+          <circle cx="87" cy="6" r="4" fill="#FF4444"/>
+          <!-- Eyes (excited) -->
+          <ellipse cx="43" cy="30" rx="10" ry="12" fill="#1A1A2A"/>
+          <ellipse cx="73" cy="30" rx="10" ry="12" fill="#1A1A2A"/>
+          <circle cx="40" cy="26" r="3.5" fill="#fff"/>
+          <circle cx="70" cy="26" r="3.5" fill="#fff"/>
+          <!-- Nose -->
+          <ellipse cx="58" cy="45" rx="9" ry="7" fill="#1A1A2A"/>
+          <circle cx="55" cy="43" r="2.5" fill="#3A3A5A"/>
+          <!-- Big smile -->
+          <path d="M44 53 Q58 68 72 53" fill="none" stroke="#1A1A2A" stroke-width="3" stroke-linecap="round"/>
+          <!-- Blush -->
+          <ellipse cx="28" cy="44" rx="11" ry="7" fill="#FFB0C0" opacity="0.5"/>
+          <ellipse cx="88" cy="44" rx="11" ry="7" fill="#FFB0C0" opacity="0.5"/>
+          <!-- Paws (running) -->
+          <ellipse cx="20" cy="94" rx="18" ry="12" fill="#A8C8E8" transform="rotate(25,20,94)"/>
+          <ellipse cx="96" cy="88" rx="18" ry="12" fill="#A8C8E8" transform="rotate(-20,96,88)"/>
+          <!-- Paw toes front -->
+          <circle cx="12" cy="98" r="4.5" fill="#C8E0F5"/>
+          <circle cx="20" cy="104" r="4.5" fill="#C8E0F5"/>
+          <circle cx="28" cy="99" r="4.5" fill="#C8E0F5"/>
+        </g>
+        <!-- Speed lines -->
+        <line x1="55" y1="195" x2="88" y2="195" stroke="rgba(200,220,255,0.7)" stroke-width="3" stroke-linecap="round"/>
+        <line x1="48" y1="208" x2="82" y2="208" stroke="rgba(200,220,255,0.7)" stroke-width="2.5" stroke-linecap="round"/>
+        <line x1="58" y1="220" x2="86" y2="220" stroke="rgba(200,220,255,0.7)" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAGE 3: ちょうちょ ============ -->
+<div class="page" id="page-3">
+  <div class="spread">
+    <div class="spread-left">
+      <div class="scene-caption">ちょうちょがとんできた！</div>
+      <svg class="scene-svg" viewBox="0 0 320 300">
+        <defs>
+          <linearGradient id="meadow" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#A8D8F8"/>
+            <stop offset="60%" stop-color="#C8ECA8"/>
+            <stop offset="100%" stop-color="#88C840"/>
+          </linearGradient>
+        </defs>
+        <rect width="320" height="300" fill="url(#meadow)"/>
+        <!-- Clouds -->
+        <g class="anim-float">
+          <ellipse cx="100" cy="50" rx="42" ry="22" fill="#fff" opacity="0.9"/>
+          <ellipse cx="130" cy="42" rx="34" ry="20" fill="#fff" opacity="0.9"/>
+        </g>
+        <!-- Ground -->
+        <rect y="230" width="320" height="70" fill="#88C840"/>
+        <ellipse cx="160" cy="232" rx="180" ry="16" fill="#A0D860"/>
+        <!-- Flowers everywhere -->
+        <circle cx="18" cy="232" r="7" fill="#FF9EC0"/>
+        <circle cx="45" cy="228" r="6" fill="#FFD700"/>
+        <circle cx="72" cy="234" r="7" fill="#FF7FAA"/>
+        <circle cx="240" cy="230" r="6" fill="#FFAA44"/>
+        <circle cx="268" cy="234" r="7" fill="#FF9EC0"/>
+        <circle cx="295" cy="228" r="6" fill="#AAE840"/>
+        <!-- Butterfly -->
+        <g transform="translate(195,80)">
+          <!-- Wings -->
+          <ellipse cx="0" cy="10" rx="28" ry="20" fill="#FF88CC" opacity="0.85" transform="rotate(-25,0,10)"/>
+          <ellipse cx="0" cy="10" rx="22" ry="15" fill="#FFB8E8" opacity="0.6" transform="rotate(-25,0,10)"/>
+          <ellipse cx="0" cy="10" rx="22" ry="16" fill="#FF88CC" opacity="0.85" transform="rotate(25,0,10)"/>
+          <ellipse cx="0" cy="10" rx="18" ry="12" fill="#FFB8E8" opacity="0.6" transform="rotate(25,0,10)"/>
+          <!-- Body -->
+          <ellipse cx="0" cy="10" rx="4" ry="14" fill="#AA3388"/>
+          <!-- Antennae -->
+          <line x1="0" y1="0" x2="-10" y2="-15" stroke="#AA3388" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="0" y1="0" x2="10" y2="-15" stroke="#AA3388" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="-10" cy="-15" r="3" fill="#FF88CC"/>
+          <circle cx="10" cy="-15" r="3" fill="#FF88CC"/>
+          <!-- Wing spots -->
+          <circle cx="-12" cy="8" r="5" fill="#FFD700" opacity="0.7"/>
+          <circle cx="12" cy="8" r="5" fill="#FFD700" opacity="0.7"/>
+        </g>
+        <!-- Miru-chan looking up at butterfly -->
+        <g transform="translate(70,140)">
+          <!-- Body -->
+          <ellipse cx="58" cy="78" rx="44" ry="36" fill="#A8C8E8"/>
+          <ellipse cx="58" cy="83" rx="28" ry="24" fill="#C8E0F5"/>
+          <!-- Head tilted up -->
+          <g transform="rotate(-10, 58, 34)">
+            <ellipse cx="58" cy="34" rx="40" ry="38" fill="#A8C8E8"/>
+            <ellipse cx="46" cy="22" rx="12" ry="9" fill="#C0D8F0" opacity="0.6"/>
+            <ellipse cx="70" cy="20" rx="11" ry="8" fill="#C0D8F0" opacity="0.6"/>
+            <!-- Ears -->
+            <ellipse cx="24" cy="25" rx="14" ry="24" fill="#8AAAC8" transform="rotate(-15,24,25)"/>
+            <ellipse cx="92" cy="25" rx="14" ry="24" fill="#8AAAC8" transform="rotate(15,92,25)"/>
+            <ellipse cx="24" cy="28" rx="9" ry="17" fill="#9ABBD8" transform="rotate(-15,24,28)"/>
+            <ellipse cx="92" cy="28" rx="9" ry="17" fill="#9ABBD8" transform="rotate(15,92,28)"/>
+            <!-- Ribbon -->
+            <path d="M79 5 Q88 -1 96 4 Q88 9 79 5Z" fill="#CC4444"/>
+            <path d="M79 5 Q88 11 96 6 Q88 1 79 5Z" fill="#EE6666"/>
+            <circle cx="87" cy="5" r="3.5" fill="#FF4444"/>
+            <!-- Eyes looking up -->
+            <ellipse cx="43" cy="26" rx="10" ry="11" fill="#1A1A2A"/>
+            <ellipse cx="73" cy="26" rx="10" ry="11" fill="#1A1A2A"/>
+            <circle cx="40" cy="22" r="3.5" fill="#fff"/>
+            <circle cx="70" cy="22" r="3.5" fill="#fff"/>
+            <!-- Nose -->
+            <ellipse cx="58" cy="41" rx="8" ry="6" fill="#1A1A2A"/>
+            <!-- Open mouth (wow!) -->
+            <ellipse cx="58" cy="51" rx="10" ry="7" fill="#CC4444"/>
+            <ellipse cx="58" cy="53" rx="8" ry="5" fill="#FF6666"/>
+            <!-- Blush -->
+            <ellipse cx="29" cy="40" rx="10" ry="6" fill="#FFB0C0" opacity="0.5"/>
+            <ellipse cx="87" cy="40" rx="10" ry="6" fill="#FFB0C0" opacity="0.5"/>
+          </g>
+          <!-- Front paws sitting -->
+          <ellipse cx="28" cy="100" rx="20" ry="13" fill="#A8C8E8"/>
+          <ellipse cx="88" cy="100" rx="20" ry="13" fill="#A8C8E8"/>
+          <circle cx="20" cy="103" r="5" fill="#C8E0F5"/>
+          <circle cx="28" cy="108" r="5" fill="#C8E0F5"/>
+          <circle cx="36" cy="103" r="5" fill="#C8E0F5"/>
+          <circle cx="80" cy="103" r="5" fill="#C8E0F5"/>
+          <circle cx="88" cy="108" r="5" fill="#C8E0F5"/>
+          <circle cx="96" cy="103" r="5" fill="#C8E0F5"/>
+          <!-- Tail -->
+          <path d="M98 85 Q124 68 118 46" fill="none" stroke="#8AAAC8" stroke-width="10" stroke-linecap="round"/>
+          <circle cx="118" cy="44" r="8" fill="#A8C8E8"/>
+        </g>
+        <!-- Stars of wonder -->
+        <text x="168" y="118" font-size="16" fill="#FFD700">✨</text>
+        <text x="178" y="100" font-size="12" fill="#FFD700">✨</text>
+      </svg>
+    </div>
+    <div class="spread-right">
+      <div class="story-text">
+        きれいな<br>
+        ちょうちょが<br>
+        とんできた！<br>
+        <br>
+        「わあ、<br>
+        　きれいだな～！」<br>
+        <br>
+        みるちゃんの<br>
+        めが ぴかぴか。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAGE 4: お友達 ============ -->
+<div class="page" id="page-4">
+  <div class="spread">
+    <div class="spread-left">
+      <div class="story-text">
+        こうえんに いったら、<br>
+        うさぎさんが いた！<br>
+        <br>
+        「いっしょに<br>
+        　あそぼう！」<br>
+        <br>
+        ふたりは<br>
+        なかよしに<br>
+        なったよ。
+      </div>
+    </div>
+    <div class="spread-right">
+      <div class="scene-caption">なかよしだよ！</div>
+      <svg class="scene-svg" viewBox="0 0 320 300">
+        <defs>
+          <linearGradient id="park" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#90D0FF"/>
+            <stop offset="65%" stop-color="#B8EAAA"/>
+            <stop offset="100%" stop-color="#78B830"/>
+          </linearGradient>
+        </defs>
+        <rect width="320" height="300" fill="url(#park)"/>
+        <!-- Clouds -->
+        <g class="anim-float2">
+          <ellipse cx="250" cy="45" rx="38" ry="20" fill="#fff" opacity="0.9"/>
+          <ellipse cx="278" cy="38" rx="30" ry="18" fill="#fff" opacity="0.9"/>
+        </g>
+        <!-- Big tree -->
+        <rect x="148" y="130" width="16" height="100" fill="#8B5A2B"/>
+        <ellipse cx="156" cy="110" rx="50" ry="48" fill="#4A9A28"/>
+        <ellipse cx="156" cy="95" rx="40" ry="38" fill="#5AAA38"/>
+        <ellipse cx="156" cy="82" rx="28" ry="28" fill="#6ABA48"/>
+        <!-- Ground -->
+        <rect y="230" width="320" height="70" fill="#78B830"/>
+        <ellipse cx="160" cy="232" rx="180" ry="15" fill="#90C840"/>
+        <!-- Flowers -->
+        <circle cx="15" cy="234" r="6" fill="#FF9EC0"/>
+        <circle cx="38" cy="230" r="5" fill="#FFD700"/>
+        <circle cx="62" cy="236" r="6" fill="#AADDFF"/>
+        <circle cx="255" cy="232" r="6" fill="#FF9EC0"/>
+        <circle cx="280" cy="236" r="5" fill="#FFD700"/>
+        <circle cx="305" cy="231" r="6" fill="#FFB0FF"/>
+        <!-- Miru-chan -->
+        <g transform="translate(40,155)">
+          <ellipse cx="55" cy="72" rx="40" ry="33" fill="#A8C8E8"/>
+          <ellipse cx="55" cy="76" rx="26" ry="22" fill="#C8E0F5"/>
+          <ellipse cx="55" cy="30" rx="38" ry="36" fill="#A8C8E8"/>
+          <ellipse cx="44" cy="19" rx="12" ry="9" fill="#C0D8F0" opacity="0.6"/>
+          <ellipse cx="66" cy="18" rx="10" ry="8" fill="#C0D8F0" opacity="0.6"/>
+          <ellipse cx="23" cy="23" rx="14" ry="23" fill="#8AAAC8" transform="rotate(-12,23,23)"/>
+          <ellipse cx="87" cy="23" rx="14" ry="23" fill="#8AAAC8" transform="rotate(12,87,23)"/>
+          <ellipse cx="23" cy="27" rx="9" ry="16" fill="#9ABBD8" transform="rotate(-12,23,27)"/>
+          <ellipse cx="87" cy="27" rx="9" ry="16" fill="#9ABBD8" transform="rotate(12,87,27)"/>
+          <!-- Ribbon -->
+          <path d="M75 4 Q83 -2 91 3 Q83 8 75 4Z" fill="#CC4444"/>
+          <path d="M75 4 Q83 10 91 5 Q83 0 75 4Z" fill="#EE6666"/>
+          <circle cx="83" cy="4" r="3.5" fill="#FF4444"/>
+          <!-- Eyes -->
+          <ellipse cx="41" cy="28" rx="9" ry="10" fill="#1A1A2A"/>
+          <ellipse cx="69" cy="28" rx="9" ry="10" fill="#1A1A2A"/>
+          <circle cx="38" cy="24" r="3" fill="#fff"/>
+          <circle cx="66" cy="24" r="3" fill="#fff"/>
+          <ellipse cx="55" cy="42" rx="8" ry="6" fill="#1A1A2A"/>
+          <circle cx="52" cy="40" r="2" fill="#3A3A5A"/>
+          <path d="M43 50 Q55 60 67 50" fill="none" stroke="#1A1A2A" stroke-width="2.5" stroke-linecap="round"/>
+          <ellipse cx="27" cy="40" rx="9" ry="6" fill="#FFB0C0" opacity="0.5"/>
+          <ellipse cx="83" cy="40" rx="9" ry="6" fill="#FFB0C0" opacity="0.5"/>
+          <!-- Raised paw waving -->
+          <ellipse cx="−8" cy="55" rx="16" ry="10" fill="#A8C8E8" transform="rotate(-55,−8,55)"/>
+          <ellipse cx="−18" cy="42" rx="14" ry="9" fill="#A8C8E8" transform="rotate(-30,−18,42)"/>
+          <!-- Other paw -->
+          <ellipse cx="98" cy="78" rx="16" ry="10" fill="#A8C8E8" transform="rotate(15,98,78)"/>
+          <!-- Tail -->
+          <path d="M92 75 Q115 60 109 40 Q105 28 98 33" fill="none" stroke="#8AAAC8" stroke-width="10" stroke-linecap="round"/>
+        </g>
+
+        <!-- Bunny friend -->
+        <g transform="translate(188,162)">
+          <!-- Body -->
+          <ellipse cx="44" cy="68" rx="34" ry="28" fill="#F8F0F0"/>
+          <ellipse cx="44" cy="72" rx="22" ry="18" fill="#FFE8E8"/>
+          <!-- Head -->
+          <ellipse cx="44" cy="28" rx="32" ry="30" fill="#F8F0F0"/>
+          <!-- Ears (long) -->
+          <ellipse cx="30" cy="-8" rx="10" ry="30" fill="#F8F0F0"/>
+          <ellipse cx="30" cy="-8" rx="6" ry="22" fill="#FFB8C8"/>
+          <ellipse cx="58" cy="-8" rx="10" ry="30" fill="#F8F0F0"/>
+          <ellipse cx="58" cy="-8" rx="6" ry="22" fill="#FFB8C8"/>
+          <!-- Eyes -->
+          <ellipse cx="34" cy="24" rx="7" ry="8" fill="#1A1A2A"/>
+          <ellipse cx="54" cy="24" rx="7" ry="8" fill="#1A1A2A"/>
+          <circle cx="31" cy="21" r="2.5" fill="#fff"/>
+          <circle cx="51" cy="21" r="2.5" fill="#fff"/>
+          <!-- Nose -->
+          <ellipse cx="44" cy="37" rx="5" ry="4" fill="#FF8888"/>
+          <!-- Smile -->
+          <path d="M36 42 Q44 50 52 42" fill="none" stroke="#CC4444" stroke-width="2" stroke-linecap="round"/>
+          <!-- Blush -->
+          <ellipse cx="22" cy="34" rx="8" ry="5" fill="#FFB0C0" opacity="0.5"/>
+          <ellipse cx="66" cy="34" rx="8" ry="5" fill="#FFB0C0" opacity="0.5"/>
+          <!-- Paws -->
+          <ellipse cx="16" cy="80" rx="16" ry="10" fill="#F8F0F0"/>
+          <ellipse cx="72" cy="80" rx="16" ry="10" fill="#F8F0F0"/>
+        </g>
+        <!-- Heart between them -->
+        <text x="170" y="195" font-size="22" fill="#FF6688">♥</text>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAGE 5: おやつ ============ -->
+<div class="page" id="page-5">
+  <div class="spread">
+    <div class="spread-left">
+      <div class="scene-caption">おなかぺこぺこ！</div>
+      <svg class="scene-svg" viewBox="0 0 320 300">
+        <rect width="320" height="300" fill="#FFF8F0"/>
+        <!-- Table cloth pattern -->
+        <rect x="40" y="170" width="240" height="90" rx="12" fill="#FFE0C0"/>
+        <rect x="40" y="165" width="240" height="20" rx="10" fill="#FFCC99"/>
+        <!-- Stripes on tablecloth -->
+        <line x1="80" y1="185" x2="80" y2="260" stroke="rgba(255,180,100,0.4)" stroke-width="12"/>
+        <line x1="120" y1="185" x2="120" y2="260" stroke="rgba(255,180,100,0.4)" stroke-width="12"/>
+        <line x1="160" y1="185" x2="160" y2="260" stroke="rgba(255,180,100,0.4)" stroke-width="12"/>
+        <line x1="200" y1="185" x2="200" y2="260" stroke="rgba(255,180,100,0.4)" stroke-width="12"/>
+        <line x1="240" y1="185" x2="240" y2="260" stroke="rgba(255,180,100,0.4)" stroke-width="12"/>
+        <!-- Plate -->
+        <ellipse cx="160" cy="190" rx="55" ry="20" fill="#fff" stroke="#E8C0A0" stroke-width="2"/>
+        <!-- Cookies / biscuits -->
+        <circle cx="148" cy="183" r="14" fill="#E8A040"/>
+        <circle cx="148" cy="183" r="11" fill="#F0B060" opacity="0.8"/>
+        <circle cx="148" cy="183" r="4" fill="#CC7020" opacity="0.6"/>
+        <circle cx="172" cy="183" r="14" fill="#E8A040"/>
+        <circle cx="172" cy="183" r="11" fill="#F0B060" opacity="0.8"/>
+        <circle cx="172" cy="183" r="4" fill="#CC7020" opacity="0.6"/>
+        <!-- Cup -->
+        <rect x="220" y="162" width="36" height="38" rx="8" fill="#AADDFF"/>
+        <rect x="220" y="162" width="36" height="12" rx="5" fill="#88CCFF"/>
+        <ellipse cx="238" cy="198" rx="18" ry="5" fill="#88CCFF"/>
+        <rect x="254" y="172" width="8" height="18" rx="4" fill="#AADDFF"/>
+        <!-- Steam -->
+        <path d="M232 158 Q228 150 232 143" fill="none" stroke="#BBDDFF" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M242 158 Q238 148 242 140" fill="none" stroke="#BBDDFF" stroke-width="2.5" stroke-linecap="round"/>
+
+        <!-- Miru-chan at table looking at food -->
+        <g transform="translate(55,60)">
+          <ellipse cx="58" cy="90" rx="44" ry="35" fill="#A8C8E8"/>
+          <ellipse cx="58" cy="95" rx="28" ry="24" fill="#C8E0F5"/>
+          <ellipse cx="58" cy="34" rx="40" ry="38" fill="#A8C8E8"/>
+          <ellipse cx="46" cy="22" rx="12" ry="9" fill="#C0D8F0" opacity="0.6"/>
+          <ellipse cx="70" cy="20" rx="11" ry="8" fill="#C0D8F0" opacity="0.6"/>
+          <ellipse cx="24" cy="26" rx="14" ry="24" fill="#8AAAC8" transform="rotate(-12,24,26)"/>
+          <ellipse cx="92" cy="26" rx="14" ry="24" fill="#8AAAC8" transform="rotate(12,92,26)"/>
+          <ellipse cx="24" cy="30" rx="9" ry="17" fill="#9ABBD8" transform="rotate(-12,24,30)"/>
+          <ellipse cx="92" cy="30" rx="9" ry="17" fill="#9ABBD8" transform="rotate(12,92,30)"/>
+          <!-- Ribbon -->
+          <path d="M79 5 Q88 -1 96 4 Q88 9 79 5Z" fill="#CC4444"/>
+          <path d="M79 5 Q88 11 96 6 Q88 1 79 5Z" fill="#EE6666"/>
+          <circle cx="87" cy="5" r="4" fill="#FF4444"/>
+          <!-- Eyes (heart-eyes looking at food) -->
+          <ellipse cx="43" cy="30" rx="11" ry="12" fill="#1A1A2A"/>
+          <ellipse cx="73" cy="30" rx="11" ry="12" fill="#1A1A2A"/>
+          <text x="36" y="36" font-size="14" fill="#FF6688">♥</text>
+          <text x="66" y="36" font-size="14" fill="#FF6688">♥</text>
+          <!-- Nose -->
+          <ellipse cx="58" cy="45" rx="8" ry="6" fill="#1A1A2A"/>
+          <circle cx="55" cy="43" r="2" fill="#3A3A5A"/>
+          <!-- Drooling smile -->
+          <path d="M44 53 Q58 67 72 53" fill="none" stroke="#1A1A2A" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="44" cy="62" r="4" fill="#AADDFF" opacity="0.6"/>
+          <!-- Blush -->
+          <ellipse cx="27" cy="44" rx="10" ry="7" fill="#FFB0C0" opacity="0.5"/>
+          <ellipse cx="89" cy="44" rx="10" ry="7" fill="#FFB0C0" opacity="0.5"/>
+          <!-- Paws on table edge -->
+          <ellipse cx="20" cy="106" rx="18" ry="12" fill="#A8C8E8"/>
+          <ellipse cx="96" cy="106" rx="18" ry="12" fill="#A8C8E8"/>
+          <circle cx="12" cy="109" r="4.5" fill="#C8E0F5"/>
+          <circle cx="20" cy="114" r="4.5" fill="#C8E0F5"/>
+          <circle cx="28" cy="109" r="4.5" fill="#C8E0F5"/>
+          <circle cx="88" cy="109" r="4.5" fill="#C8E0F5"/>
+          <circle cx="96" cy="114" r="4.5" fill="#C8E0F5"/>
+          <circle cx="104" cy="109" r="4.5" fill="#C8E0F5"/>
+        </g>
+        <!-- Sparkles -->
+        <text x="180" y="75" font-size="16" fill="#FFD700">✨</text>
+        <text x="190" y="95" font-size="12" fill="#FFD700">✨</text>
+        <text x="170" y="100" font-size="10" fill="#FFD700">✨</text>
+      </svg>
+    </div>
+    <div class="spread-right">
+      <div class="story-text">
+        あそんだら<br>
+        おなかが<br>
+        ぺこぺこに！<br>
+        <br>
+        「わ～、<br>
+        　クッキーだ！<br>
+        　やったー！」<br>
+        <br>
+        ぱくっ！<br>
+        あまくて おいしい。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAGE 6: おやすみ ============ -->
+<div class="page" id="page-6">
+  <div class="spread">
+    <div class="spread-left">
+      <div class="scene-caption">おやすみ、みるちゃん</div>
+      <svg class="scene-svg" viewBox="0 0 320 300">
+        <defs>
+          <linearGradient id="nightsky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#0A1A4A"/>
+            <stop offset="100%" stop-color="#1A2A6A"/>
+          </linearGradient>
+        </defs>
+        <rect width="320" height="300" fill="url(#nightsky)"/>
+        <!-- Stars -->
+        <circle cx="30" cy="20" r="2.5" fill="#FFD700"/>
+        <circle cx="80" cy="14" r="2" fill="#fff"/>
+        <circle cx="135" cy="25" r="3" fill="#FFD700"/>
+        <circle cx="190" cy="10" r="2" fill="#fff"/>
+        <circle cx="245" cy="22" r="2.5" fill="#FFD700"/>
+        <circle cx="292" cy="15" r="2" fill="#fff"/>
+        <circle cx="55" cy="45" r="2" fill="#fff"/>
+        <circle cx="160" cy="50" r="2.5" fill="#FFD700"/>
+        <circle cx="270" cy="42" r="2" fill="#fff"/>
+        <circle cx="310" cy="55" r="2.5" fill="#FFD700"/>
+        <!-- Moon -->
+        <circle cx="268" cy="55" r="30" fill="#FFFAE0"/>
+        <circle cx="280" cy="46" r="24" fill="#1A2A6A"/>
+        <!-- Moon face -->
+        <ellipse cx="255" cy="52" r="2" fill="#E8D880"/>
+        <ellipse cx="248" cy="62" r="2" fill="#E8D880"/>
+        <path d="M248 70 Q255 75 262 70" fill="none" stroke="#E8D880" stroke-width="1.5" stroke-linecap="round"/>
+        <!-- Room -->
+        <rect x="20" y="140" width="280" height="160" fill="#3A2A18"/>
+        <rect x="20" y="140" width="280" height="95" fill="#5A3A20"/>
+        <!-- Window -->
+        <rect x="220" y="152" width="60" height="52" rx="4" fill="#0A1A4A"/>
+        <rect x="223" y="155" width="25" height="46" fill="#1A2A5A"/>
+        <rect x="252" y="155" width="25" height="46" fill="#1A2A5A"/>
+        <line x1="249" y1="155" x2="249" y2="201" stroke="#8A6840" stroke-width="2.5"/>
+        <line x1="220" y1="177" x2="280" y2="177" stroke="#8A6840" stroke-width="2"/>
+        <!-- Moon in window -->
+        <circle cx="265" cy="170" r="14" fill="#FFFAE0" opacity="0.4"/>
+        <!-- Nightstand -->
+        <rect x="238" y="218" width="50" height="42" rx="4" fill="#7A4A18"/>
+        <rect x="238" y="214" width="50" height="10" rx="3" fill="#8B5A28"/>
+        <!-- Night light -->
+        <ellipse cx="263" cy="210" rx="12" ry="10" fill="#FFE080" opacity="0.8"/>
+        <rect x="259" y="205" width="8" height="8" rx="2" fill="#FFFFC0"/>
+        <!-- Bed -->
+        <rect x="25" y="215" width="200" height="70" rx="12" fill="#6A4A28"/>
+        <rect x="25" y="205" width="200" height="24" rx="10" fill="#8A6040"/>
+        <!-- Blanket -->
+        <rect x="30" y="223" width="190" height="57" rx="10" fill="#5588DD"/>
+        <rect x="30" y="223" width="190" height="16" rx="8" fill="#7AAAFF"/>
+        <!-- Star pattern on blanket -->
+        <text x="58" y="250" font-size="13" fill="rgba(255,255,255,0.5)">★</text>
+        <text x="92" y="257" font-size="10" fill="rgba(255,255,255,0.5)">★</text>
+        <text x="122" y="250" font-size="13" fill="rgba(255,255,255,0.5)">★</text>
+        <text x="156" y="255" font-size="11" fill="rgba(255,255,255,0.5)">★</text>
+        <!-- Pillow -->
+        <ellipse cx="90" cy="216" rx="55" ry="14" fill="#E8F0FF"/>
+        <!-- Miru-chan sleeping -->
+        <g transform="translate(32,186)">
+          <!-- Head on pillow -->
+          <ellipse cx="58" cy="22" rx="40" ry="36" fill="#A8C8E8"/>
+          <ellipse cx="46" cy="12" rx="12" ry="9" fill="#C0D8F0" opacity="0.5"/>
+          <ellipse cx="70" cy="10" rx="10" ry="8" fill="#C0D8F0" opacity="0.5"/>
+          <!-- Ears flat/sideways sleeping -->
+          <ellipse cx="22" cy="14" rx="20" ry="12" fill="#8AAAC8" transform="rotate(20,22,14)"/>
+          <ellipse cx="94" cy="14" rx="20" ry="12" fill="#8AAAC8" transform="rotate(-20,94,14)"/>
+          <ellipse cx="22" cy="15" rx="13" ry="8" fill="#9ABBD8" transform="rotate(20,22,15)"/>
+          <ellipse cx="94" cy="15" rx="13" ry="8" fill="#9ABBD8" transform="rotate(-20,94,15)"/>
+          <!-- Ribbon -->
+          <path d="M78 2 Q86 -4 94 1 Q86 6 78 2Z" fill="#CC4444"/>
+          <path d="M78 2 Q86 8 94 3 Q86 -2 78 2Z" fill="#EE6666"/>
+          <circle cx="86" cy="2" r="3.5" fill="#FF4444"/>
+          <!-- Eyes closed -->
+          <path d="M40 18 Q47 22 54 18" fill="none" stroke="#1A1A2A" stroke-width="3" stroke-linecap="round"/>
+          <path d="M62 18 Q69 22 76 18" fill="none" stroke="#1A1A2A" stroke-width="3" stroke-linecap="round"/>
+          <!-- Nose -->
+          <ellipse cx="58" cy="30" rx="7" ry="5" fill="#1A1A2A"/>
+          <!-- Tiny sleeping smile -->
+          <path d="M50 37 Q58 44 66 37" fill="none" stroke="#1A1A2A" stroke-width="2" stroke-linecap="round"/>
+          <!-- Blush -->
+          <ellipse cx="30" cy="28" rx="10" ry="7" fill="#FFB0C0" opacity="0.5"/>
+          <ellipse cx="86" cy="28" rx="10" ry="7" fill="#FFB0C0" opacity="0.5"/>
+        </g>
+        <!-- Z's -->
+        <text x="158" y="178" font-size="20" fill="#88AAEE" opacity="0.7" font-family="sans-serif" font-weight="bold">z</text>
+        <text x="174" y="162" font-size="16" fill="#88AAEE" opacity="0.5" font-family="sans-serif" font-weight="bold">z</text>
+        <text x="187" y="148" font-size="12" fill="#88AAEE" opacity="0.35" font-family="sans-serif" font-weight="bold">z</text>
+      </svg>
+    </div>
+    <div class="spread-right">
+      <div class="story-text">
+        たくさん あそんで、<br>
+        たくさん たべて、<br>
+        みるちゃんは<br>
+        ねむくなった。<br>
+        <br>
+        「きょうも<br>
+        　たのしかったな。<br>
+        　おやすみ…」<br>
+        <br>
+        　　　Zzz…
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAGE 7: LAST ============ -->
+<div class="page" id="page-7">
+  <div class="cover" style="background:linear-gradient(160deg,#C8E8FF,#A8D0F8,#D0E8FF); flex-direction:column; align-items:center; justify-content:center; gap:12px;">
+    <svg width="180" height="140" viewBox="0 0 180 140">
+      <!-- Big heart -->
+      <path d="M90 120 Q20 85 20 48 A38 38 0 0 1 90 40 A38 38 0 0 1 160 48 Q160 85 90 120Z" fill="#FFB0D0" opacity="0.85"/>
+      <!-- Mini Miru in heart -->
+      <g transform="translate(52,42) scale(0.75)">
+        <ellipse cx="50" cy="65" rx="36" ry="30" fill="#A8C8E8"/>
+        <ellipse cx="50" cy="70" rx="23" ry="20" fill="#C8E0F5"/>
+        <ellipse cx="50" cy="26" rx="34" ry="32" fill="#A8C8E8"/>
+        <ellipse cx="22" cy="18" rx="13" ry="21" fill="#8AAAC8" transform="rotate(-12,22,18)"/>
+        <ellipse cx="78" cy="18" rx="13" ry="21" fill="#8AAAC8" transform="rotate(12,78,18)"/>
+        <ellipse cx="22" cy="21" rx="8" ry="14" fill="#9ABBD8" transform="rotate(-12,22,21)"/>
+        <ellipse cx="78" cy="21" rx="8" ry="14" fill="#9ABBD8" transform="rotate(12,78,21)"/>
+        <!-- Ribbon -->
+        <path d="M66 4 Q73 -1 80 3 Q73 7 66 4Z" fill="#CC4444"/>
+        <path d="M66 4 Q73 9 80 5 Q73 1 66 4Z" fill="#EE6666"/>
+        <circle cx="73" cy="4" r="3" fill="#FF4444"/>
+        <ellipse cx="37" cy="23" rx="8" ry="9" fill="#1A1A2A"/>
+        <ellipse cx="63" cy="23" rx="8" ry="9" fill="#1A1A2A"/>
+        <circle cx="34" cy="20" r="2.8" fill="#fff"/>
+        <circle cx="60" cy="20" r="2.8" fill="#fff"/>
+        <ellipse cx="50" cy="35" rx="7" ry="5" fill="#1A1A2A"/>
+        <path d="M39 42 Q50 53 61 42" fill="none" stroke="#1A1A2A" stroke-width="2.5" stroke-linecap="round"/>
+        <ellipse cx="23" cy="34" rx="8" ry="5" fill="#FFB0C0" opacity="0.5"/>
+        <ellipse cx="77" cy="34" rx="8" ry="5" fill="#FFB0C0" opacity="0.5"/>
+      </g>
+    </svg>
+    <div style="font-size:44px;font-weight:900;color:#2A5A9A;text-shadow:3px 3px 0 rgba(255,255,255,0.8)">おわり</div>
+    <div style="font-size:18px;font-weight:900;color:#4A7AC0;background:rgba(255,255,255,0.6);padding:8px 22px;border-radius:20px;">またあそんでね！みるちゃん</div>
+    <!-- Paw prints decoration -->
+    <svg width="200" height="40" viewBox="0 0 200 40" style="margin-top:4px">
+      <circle cx="20" cy="25" r="6" fill="rgba(120,180,240,0.5)"/>
+      <circle cx="10" cy="14" r="4" fill="rgba(120,180,240,0.4)"/>
+      <circle cx="22" cy="12" r="4" fill="rgba(120,180,240,0.4)"/>
+      <circle cx="34" cy="14" r="4" fill="rgba(120,180,240,0.4)"/>
+
+      <circle cx="70" cy="25" r="6" fill="rgba(120,180,240,0.5)"/>
+      <circle cx="60" cy="14" r="4" fill="rgba(120,180,240,0.4)"/>
+      <circle cx="72" cy="12" r="4" fill="rgba(120,180,240,0.4)"/>
+      <circle cx="84" cy="14" r="4" fill="rgba(120,180,240,0.4)"/>
+
+      <circle cx="120" cy="25" r="6" fill="rgba(120,180,240,0.5)"/>
+      <circle cx="110" cy="14" r="4" fill="rgba(120,180,240,0.4)"/>
+      <circle cx="122" cy="12" r="4" fill="rgba(120,180,240,0.4)"/>
+      <circle cx="134" cy="14" r="4" fill="rgba(120,180,240,0.4)"/>
+
+      <circle cx="170" cy="25" r="6" fill="rgba(120,180,240,0.5)"/>
+      <circle cx="160" cy="14" r="4" fill="rgba(120,180,240,0.4)"/>
+      <circle cx="172" cy="12" r="4" fill="rgba(120,180,240,0.4)"/>
+      <circle cx="184" cy="14" r="4" fill="rgba(120,180,240,0.4)"/>
+    </svg>
+  </div>
+</div>
+
+<!-- Navigation -->
+<button class="nav-btn" id="btn-prev" onclick="changePage(-1)">◀ もどる</button>
+<button class="nav-btn" id="btn-next" onclick="changePage(1)">すすむ ▶</button>
+<div id="page-counter">1 / 8</div>
+
+</div><!-- #book -->
+
+<script>
+let cur = 0;
+const total = 8;
+function changePage(dir) {
+  document.getElementById('page-' + cur).classList.remove('active');
+  cur = Math.max(0, Math.min(total - 1, cur + dir));
+  document.getElementById('page-' + cur).classList.add('active');
+  document.getElementById('btn-prev').style.display = cur === 0 ? 'none' : 'block';
+  document.getElementById('btn-next').style.display = cur === total - 1 ? 'none' : 'block';
+  document.getElementById('page-counter').textContent = (cur + 1) + ' / ' + total;
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') changePage(1);
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') changePage(-1);
+});
+// Touch swipe
+let tx = 0;
+document.getElementById('book').addEventListener('touchstart', e => { tx = e.touches[0].clientX; }, {passive:true});
+document.getElementById('book').addEventListener('touchend', e => {
+  const dx = e.changedTouches[0].clientX - tx;
+  if (dx < -50) changePage(1);
+  if (dx > 50) changePage(-1);
+}, {passive:true});
+</script>
+</body>
+</html>
