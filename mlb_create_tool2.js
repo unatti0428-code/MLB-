@@ -40,8 +40,7 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
   const b64 = (r.stdout || Buffer.alloc(0)).toString('ascii').trim();
   return b64 ? Buffer.from(b64, 'base64').toString('utf8') : '';
 }
-const browseFile    = () => browseFileWithFilter('Excel Files (*.xlsx)|*.xlsx');
-const browseOdsFile = () => browseFileWithFilter('ODS Files (*.ods)|*.ods');
+const browseFile = () => browseFileWithFilter('Excel Files (*.xlsx)|*.xlsx');
 
 // ── MLB Stats API ─────────────────────────────────────────────────────────────
 function mlbGet(url) {
@@ -136,80 +135,17 @@ function ipToOuts(ip) {
   return (parseInt(w) || 0) * 3 + (parseInt(f || 0));
 }
 
-// ── ODS interaction (stats_tool2 logic) ──────────────────────────────────────
-function findLibreOffice() {
-  const candidates = [
-    'C:\\Program Files\\LibreOffice\\program\\soffice.exe',
-    'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe',
-  ];
-  return candidates.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || null;
-}
-
-function splitFormulaParts(str) {
-  const parts = []; let depth = 0, cur = '';
-  for (const ch of str) {
-    if (ch === '(') { depth++; cur += ch; }
-    else if (ch === ')') { depth--; cur += ch; }
-    else if (ch === ',' && depth === 0) { parts.push(cur.trim()); cur = ''; }
-    else cur += ch;
-  }
-  if (cur.trim()) parts.push(cur.trim());
-  return parts;
-}
-
-function evalSpreadsheetFormula(formula, vars) {
-  try {
-    let f = String(formula);
-    for (const [cell, val] of Object.entries(vars)) {
-      f = f.replace(new RegExp(`\\b${cell}\\b`, 'g'), String(val));
-    }
-    for (let i = 0; i < 30; i++) {
-      const prev = f;
-      f = f.replace(/\bIF\(([^()]+)\)/gi, (_, inner) => {
-        const p = splitFormulaParts(inner);
-        return p.length === 3 ? `((${p[0]}) ? (${p[1]}) : (${p[2]}))` : _;
-      });
-      if (f === prev) break;
-    }
-    f = f.replace(/\bROUND\(([^,)]+),\s*\d+\)/gi, 'Math.round($1)');
-    f = f.replace(/\bMAX\(([^)]+)\)/gi, 'Math.max($1)');
-    f = f.replace(/\bMIN\(([^)]+)\)/gi, 'Math.min($1)');
-    f = f.replace(/<>/g, '!==');
-    f = f.replace(/([^<>!=])=([^=])/g, '$1==$2');
-    // eslint-disable-next-line no-new-func
-    return Function('"use strict"; return (' + f + ')')();
-  } catch { return null; }
-}
-
-async function getControlRating(odsPath, bb9Value) {
-  const wb = XLSX.readFile(odsPath, { cellFormula: true, cellDates: false, type: 'file' });
-  const wsName = wb.SheetNames[0];
-  const ws = wb.Sheets[wsName];
-  const ac2Formula = ws['AC2']?.f || null;
-
-  ws['V2'] = { t: 'n', v: bb9Value };
-  XLSX.writeFile(wb, odsPath);
-
-  const lo = findLibreOffice();
-  if (lo) {
-    const dir = path.dirname(odsPath);
-    spawnSync(lo, [
-      '--headless', '--norestore', '--infilter=calc8',
-      '--convert-to', 'ods', '--outdir', dir, odsPath
-    ], { timeout: 30000 });
-    try {
-      const wb2 = XLSX.readFile(odsPath, { cellFormula: true });
-      const ws2 = wb2.Sheets[wb2.SheetNames[0]];
-      const v = ws2['AC2']?.v;
-      if (v != null) return v;
-    } catch {}
-  }
-
-  if (ac2Formula) {
-    const result = evalSpreadsheetFormula(ac2Formula, { V2: bb9Value });
-    if (result != null) return result;
-  }
-  return ws['AC2']?.v ?? 0;
+// ── 制球計算式 (守備.ods AC2 の等価実装) ─────────────────────────────────────
+// 守備.ods AC2 の数式:
+//   IFERROR(IFS(V2>=4.2, ROUND(60-(V2-4.2)/0.16),
+//               V2>=1.2, ROUND(85-(V2-1.2)/0.12),
+//               V2>=0,   ROUND(100-V2/0.08)), "")
+// V2 = 四死球(O列) / 換算イニング(K列) × 9  (= BB9)
+function calcSeikyuFromBB9(bb9) {
+  if (bb9 == null || isNaN(bb9) || bb9 < 0) return '';
+  if (bb9 >= 4.2) return Math.round(60 - (bb9 - 4.2) / 0.16);
+  if (bb9 >= 1.2) return Math.round(85 - (bb9 - 1.2) / 0.12);
+  return Math.round(100 - bb9 / 0.08);
 }
 
 // ── Cell styling ──────────────────────────────────────────────────────────────
@@ -221,16 +157,17 @@ function purpleCell(cell, value, fs) {
   cell.alignment = { horizontal: 'center', vertical: 'middle' };
 }
 
-// ── Add 制球 column to pitcher Excel (stats_tool2 logic) ─────────────────────
-// Col 51 = AY = 制球 (after 22 main + 7×4=28 pitch cols)
+// ── Add 制球 column to pitcher Excel ────────────────────────────────────────
+// Col 51 = AY = 制球 (22 主要成績 + 7×4=28 球種列 + 1)
 const SEIKYU_COL = 51;
 
-async function addSeikyuToFile(xlsxPath, odsPath) {
+async function addSeikyuToFile(xlsxPath) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(xlsxPath);
   const ws = wb.worksheets[0];
   const fontSize = ws.getCell(1, 1).font?.size || 11;
 
+  // 制球ヘッダー (Row 1)
   purpleCell(ws.getCell(1, SEIKYU_COL), '制球', fontSize);
 
   const dataRows = [];
@@ -238,19 +175,21 @@ async function addSeikyuToFile(xlsxPath, odsPath) {
     if (rn <= 2) return;
     const yr = row.getCell(2).value;
     if (!yr) return;
-    const ipStr = String(row.getCell(11).value ?? '').trim();
-    if (!ipStr || ipStr === '--') return;
-    const bb = Number(row.getCell(15).value) || 0;
-    dataRows.push({ rn, ipStr, bb });
+    const ipRaw = row.getCell(11).value;  // K列: イニング
+    if (ipRaw == null || ipRaw === '' || ipRaw === '--') return;
+    const bb = Number(row.getCell(15).value) || 0; // O列: 四死球
+    dataRows.push({ rn, ipRaw, bb });
   });
 
   let count = 0;
-  for (const { rn, ipStr, bb } of dataRows) {
-    const ip = parseIP(ipStr);
+  for (const { rn, ipRaw, bb } of dataRows) {
+    const ip = parseIP(ipRaw);
     if (!ip) continue;
+    // V2 = 四死球 / 換算イニング × 9
     const bb9 = bb / ip * 9;
-    const controlVal = await getControlRating(odsPath, bb9);
-    purpleCell(ws.getCell(rn, SEIKYU_COL), Math.round(controlVal), fontSize);
+    const seikyu = calcSeikyuFromBB9(bb9);
+    if (seikyu === '') continue;
+    purpleCell(ws.getCell(rn, SEIKYU_COL), seikyu, fontSize);
     count++;
   }
 
@@ -595,15 +534,13 @@ async function runCreateJob(jobId, params) {
     upd('Excel ファイルを生成中...');
     const outFile = await buildExcel(params.name, years, basic, vsLeftByYear, rawPitch);
 
+    upd('制球を計算中...');
     let seikyuRows = 0;
-    if (params.odsPath) {
-      upd('制球を計算中（守備.ods と連携）...');
-      try {
-        seikyuRows = await addSeikyuToFile(outFile, params.odsPath);
-        upd(`制球追加完了: ${seikyuRows} 行`);
-      } catch (e) {
-        upd('⚠ 制球追加失敗: ' + e.message);
-      }
+    try {
+      seikyuRows = await addSeikyuToFile(outFile);
+      upd(`制球追加完了: ${seikyuRows} 行`);
+    } catch (e) {
+      upd('⚠ 制球追加失敗: ' + e.message);
     }
 
     const j = jobs.get(jobId);
@@ -718,17 +655,6 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
       </div>
     </div>
 
-    <div class="sec">
-      <label>③ 守備.ods <span class="opt-label">（制球算出用・任意）</span></label>
-      <div class="ods-area" id="odsArea">
-        <div class="ods-icon">📋</div>
-        <div class="ods-path" id="odsPathDisp">未選択（制球列をスキップ）</div>
-      </div>
-      <button class="btn-s" style="font-size:13px;padding:8px 16px" onclick="browseOds()">
-        📂 守備.ods を選択...
-      </button>
-    </div>
-
     <div class="sec" style="margin-top:4px">
       <div class="badge-row">
         <span class="badge">投手成績取得</span>
@@ -737,7 +663,7 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
         <span style="font-size:14px;color:#aaa;align-self:center">→</span>
         <span class="badge red">7球種 × 4項目</span>
         <span style="font-size:14px;color:#aaa;align-self:center">→</span>
-        <span class="badge" id="seikyuBadge">制球（守備.ods連携）</span>
+        <span class="badge">制球（AY列）自動追加</span>
       </div>
       <button class="btn-p" id="btnCreate" onclick="doCreate()">▶ 成績ファイルを作成</button>
     </div>
@@ -746,7 +672,7 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
     <div class="err"  id="cErr"></div>
     <div class="note">
       ※ Chromeが自動起動します（Baseball Savant へのアクセス）<br>
-      ※ 守備.ods を選択すると制球（AY列）が自動計算・追加されます<br>
+      ※ 制球（AY列）は守備.ods AC2 相当の計算式で自動追加されます<br>
       ※ 出力先: このツールと同じフォルダ
     </div>
   </div>
@@ -763,29 +689,13 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
 </div>
 
 <script>
-let cTimer = null, odsFilePath = '';
+let cTimer = null;
 
 function switchTab(id, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   el.classList.add('active');
   document.getElementById('panel-' + id).classList.add('active');
-}
-
-async function browseOds() {
-  try {
-    const r = await fetch('/api/browse-ods');
-    const d = await r.json();
-    if (d.path) {
-      odsFilePath = d.path;
-      const el = document.getElementById('odsPathDisp');
-      el.textContent = d.path;
-      el.className = 'ods-path has';
-      document.getElementById('odsArea').className = 'ods-area sel';
-      document.getElementById('seikyuBadge').style.background = '#7030A0';
-      document.getElementById('seikyuBadge').style.color = 'white';
-    }
-  } catch(e) { alert('ODS選択エラー: ' + e.message); }
 }
 
 async function doSearch() {
@@ -824,7 +734,7 @@ async function doCreate() {
   document.getElementById('cErr').style.display='none';
   setCP('処理を開始しています...');
   const r=await fetch('/api/create',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({slug,id,name,fullName,y1,y2,odsPath:odsFilePath})});
+    body:JSON.stringify({slug,id,name,fullName,y1,y2})});
   const {jobId}=await r.json();
   cTimer=setInterval(()=>pollCreate(jobId),1500);
 }
@@ -873,12 +783,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     return res.end(JSON.stringify({ path: fp }));
   }
-  if (req.method === 'GET' && url.pathname === '/api/browse-ods') {
-    const fp = browseOdsFile();
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    return res.end(JSON.stringify({ path: fp }));
-  }
-  if (req.method === 'GET' && url.pathname.startsWith('/api/job/')) {
+if (req.method === 'GET' && url.pathname.startsWith('/api/job/')) {
     const job = jobs.get(url.pathname.slice('/api/job/'.length));
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     return res.end(JSON.stringify(job || { status: 'unknown' }));

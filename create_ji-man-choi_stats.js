@@ -233,7 +233,7 @@ ws['!cols'] = [
   {wch:9},{wch:13},{wch:12},{wch:9},{wch:7},{wch:8},{wch:9},
   ...Array(16).fill({wch:7}),
 ];
-ws['!freeze'] = { xSplit: 1, ySplit: 2 };
+ws['!freeze'] = { xSplit: 2, ySplit: 2 };
 
 XLSX.utils.book_append_sheet(wb, ws, 'チェ_ジマン成績');
 

@@ -19,7 +19,7 @@ function weightedBA(entries) { // [{ba: '.xxx', pa: N}, ...]
   return (sumH / sumPA).toFixed(3).split('.')[1]; // e.g. "276"
 }
 
-// Baseball innings addition: "306.2" + "1275.2" -> "1582.1"
+// Baseball innings addition: addInnings('306.2', '1275.2') -> "1582.1"
 function addInnings(a, b) {
   const parse = s => {
     const [full, frac] = String(s).split('.');
@@ -27,6 +27,10 @@ function addInnings(a, b) {
   };
   const total = parse(a) + parse(b);
   return Math.floor(total / 3) + '.' + (total % 3);
+}
+function innToOuts(s) {
+  const [f, r] = String(s).split('.');
+  return parseInt(f) * 3 + parseInt(r || 0);
 }
 
 // ========== SOURCE DATA ==========
@@ -126,11 +130,21 @@ const fieldingRaw = {
   '2025': { CF: { inn:'1275.2',drs:-18 } },
   '2026': { RF: { inn:'127.0', drs:-1  } },
 };
-// Career fielding aggregation
-const fieldingCareer = {
-  CF: { inn: addInnings('306.2','1275.2'), drs: -2 + (-18) },
-  RF: { inn: '127.0', drs: -1 },
-};
+// Career fielding aggregation (Inn-weighted average DRS)
+const fieldingCareer = {};
+for (const pos of positions) {
+  const entries = years.map(yr => fieldingRaw[yr]?.[pos]).filter(Boolean);
+  if (!entries.length) continue;
+  const totalOuts = entries.reduce((s, e) => s + innToOuts(e.inn), 0);
+  const weightedDRS = totalOuts === 0 ? 0
+    : entries.reduce((s, e) => s + e.drs * innToOuts(e.inn), 0) / totalOuts;
+  let careerInn = entries[0].inn;
+  for (let i = 1; i < entries.length; i++) careerInn = addInnings(careerInn, entries[i].inn);
+  fieldingCareer[pos] = {
+    inn: careerInn,
+    drs: Math.round(weightedDRS),
+  };
+}
 
 function getFieldVal(yearKey, pos, field) {
   const src = yearKey === '通算' ? fieldingCareer : (fieldingRaw[yearKey] || {});
@@ -141,7 +155,7 @@ function getFieldVal(yearKey, pos, field) {
 
 // Two header rows
 const statsColsRow0 = [
-  '年度','チーム','試合','打席','得点','安打','二塁打','三塁打','本塁打',
+  '選手名','年度','チーム','試合','打数','得点','安打','二塁打','三塁打','本塁打',
   '打点','四球','三振','盗塁','盗塁死',
   '打率','出塁率','OPS',
   '対左打率','得点圏打率',
@@ -168,6 +182,7 @@ function buildDataRow(yearKey) {
   const pt = pitchBA[yearKey];
 
   const statsVals = [
+    'イ・ジョンフ',
     yearKey,
     b.team,
     b.g, b.pa, b.r, b.h, b.d, b.t, b.hr,
@@ -215,19 +230,20 @@ ws['!merges'] = merges;
 
 // Column widths
 const colWidths = [
+  {wch:12},
   {wch:6},{wch:6},{wch:5},{wch:5},{wch:5},{wch:5},{wch:7},{wch:7},{wch:7},
   {wch:5},{wch:5},{wch:5},{wch:5},{wch:7},
   {wch:6},{wch:6},{wch:6},
   {wch:8},{wch:8},
-  {wch:14},
+  {wch:6},
   {wch:9},{wch:13},{wch:12},{wch:9},{wch:7},{wch:8},{wch:9},
   // 8 positions × 2 cols
   ...Array(16).fill({wch:7}),
 ];
 ws['!cols'] = colWidths;
 
-// Freeze first 2 header rows + first column
-ws['!freeze'] = { xSplit: 1, ySplit: 2 };
+// Freeze first 2 header rows + first 2 columns (選手名, 年度)
+ws['!freeze'] = { xSplit: 2, ySplit: 2 };
 
 XLSX.utils.book_append_sheet(wb, ws, 'イ・ジョンフ成績');
 
@@ -244,8 +260,8 @@ const noteData = [
   ['球種別打率通算','PA加重平均による近似値'],
   ['走力','Baseball Savant棒グラフのパーセンタイル値(percent_speed_order)。通算は試合数加重平均'],
   ['守備','各ポジションのInn(守備イニング)とDRS(守備貢献値)'],
-  ['CF通算守備','2024+2025合算: Inn=' + addInnings('306.2','1275.2') + ' DRS=' + (-2-18)],
-  ['2026守備','RF出場のみ: Inn=127.0 DRS=-1'],
+  ['CF通算守備','2024+2025合算: Inn=' + fieldingCareer['CF'].inn + ' DRS=' + fieldingCareer['CF'].drs + '（Inn加重平均）'],
+  ['2026守備','RF出場のみ: Inn=' + fieldingCareer['RF'].inn + ' DRS=' + fieldingCareer['RF'].drs],
   ['2026','2026/4/12時点 (シーズン途中)'],
   ['対左打率通算','AB=' + totVsLAB + ' H=' + totVsLH + ' → .' + splits['通算'].vsLeft],
   ['得点圏打率通算','AB=' + totRispAB + ' H=' + totRispH + ' → .' + splits['通算'].risp],
