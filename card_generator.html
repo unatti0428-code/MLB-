@@ -1,0 +1,3049 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>MLBカード生成ツール</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: radial-gradient(ellipse at center, #1e0a3c 0%, #12001e 70%);
+    min-height: 100vh;
+    font-family: 'MS Gothic', 'Yu Gothic', 'Hiragino Kaku Gothic Pro', sans-serif;
+    color: #fff;
+    padding: 40px 20px;
+  }
+  .app-wrap { max-width: 920px; margin: 0 auto; }
+  .app-title {
+    text-align: center;
+    font-size: 26px;
+    font-weight: 900;
+    color: #ffd700;
+    text-shadow: 2px 2px 0 #000, 0 0 20px #ffd70066;
+    margin-bottom: 6px;
+    letter-spacing: 4px;
+  }
+  .app-sub { text-align: center; font-size: 12px; color: #8898b0; margin-bottom: 28px; letter-spacing: 1px; }
+
+  /* ── メイン入力パネル ── */
+  .input-panel {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    padding: 22px 26px;
+    margin-bottom: 12px;
+    display: flex;
+    gap: 18px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+  .input-group { flex: 1; min-width: 200px; }
+  .input-label {
+    display: block;
+    font-size: 11px;
+    color: #88aac8;
+    margin-bottom: 8px;
+    letter-spacing: 2px;
+    font-weight: 900;
+  }
+  input[type="file"] {
+    display: block;
+    width: 100%;
+    padding: 9px 12px;
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 7px;
+    color: #ccc;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  input[type="file"]::file-selector-button {
+    background: rgba(80,50,0,0.9);
+    color: #ffd700;
+    border: 1px solid #ffd70066;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 11px;
+    margin-right: 8px;
+    font-family: inherit;
+  }
+  .btn-generate {
+    flex-shrink: 0;
+    padding: 13px 36px;
+    background: linear-gradient(135deg, #b07800, #f5c518, #b07800);
+    color: #1a0c00;
+    border: none;
+    border-radius: 9px;
+    font-size: 17px;
+    font-weight: 900;
+    letter-spacing: 4px;
+    cursor: pointer;
+    box-shadow: 0 4px 20px #ffd70033;
+    transition: transform 0.15s, box-shadow 0.15s;
+    font-family: inherit;
+  }
+  .btn-generate:hover { transform: translateY(-2px); box-shadow: 0 6px 28px #ffd70055; }
+  .btn-generate:active { transform: translateY(0); }
+
+  /* ── 年代選択パネル ── */
+  #year-selector-section {
+    background: rgba(255,215,0,0.06);
+    border: 1px solid rgba(255,215,0,0.20);
+    border-radius: 12px;
+    padding: 16px 26px;
+    margin-bottom: 12px;
+    display: none;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  #year-selector-section .input-group { flex: 0 0 auto; min-width: 160px; }
+  select#year-select {
+    display: block;
+    width: 100%;
+    padding: 9px 12px;
+    background: rgba(0,0,0,0.50);
+    border: 1px solid #ffd70055;
+    border-radius: 7px;
+    color: #ffd700;
+    font-size: 14px;
+    font-weight: 900;
+    cursor: pointer;
+    font-family: inherit;
+    appearance: auto;
+  }
+  select#year-select option { background: #1a1000; color: #fff; }
+  #year-info {
+    flex: 1;
+    font-size: 12px;
+    color: #aabbd0;
+    line-height: 1.7;
+    min-width: 180px;
+  }
+  #year-info .peak-tag {
+    display: inline-block;
+    background: rgba(180,0,50,0.50);
+    border: 1px solid #ff4477;
+    border-radius: 4px;
+    padding: 1px 7px;
+    color: #ff8899;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    margin-left: 5px;
+  }
+
+  /* ── MLB 選手検索パネル ── */
+  #mlb-search-section {
+    background: rgba(0,80,160,0.10);
+    border: 1px solid rgba(100,180,255,0.22);
+    border-radius: 12px;
+    padding: 14px 22px 16px;
+    margin-bottom: 12px;
+  }
+  #mlb-search-section .input-label { color: #88bbee; }
+  .mlb-search-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  #mlb-search-input {
+    flex: 1;
+    padding: 8px 12px;
+    background: rgba(0,0,0,0.45);
+    border: 1px solid rgba(100,180,255,0.30);
+    border-radius: 7px;
+    color: #cce4ff;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  #mlb-search-input:focus { outline: none; border-color: #4499ff88; }
+  .btn-mlb-search {
+    padding: 8px 18px;
+    background: rgba(0,60,130,0.85);
+    color: #88ccff;
+    border: 1px solid #3388ff66;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .btn-mlb-search:hover { background: rgba(0,80,170,0.90); color: #aaddff; }
+  .btn-mlb-search:disabled { opacity: 0.5; cursor: default; }
+  #mlb-search-results {
+    margin-top: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    border-radius: 7px;
+    border: 1px solid transparent;
+  }
+  #mlb-search-results:not(:empty) { border-color: rgba(100,180,255,0.20); }
+  .mlb-result-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    transition: background 0.12s;
+  }
+  .mlb-result-item:last-child { border-bottom: none; }
+  .mlb-result-item:hover { background: rgba(0,80,160,0.35); }
+  .mlb-result-thumb {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: #1a2a3a;
+    border: 1px solid rgba(100,180,255,0.30);
+    flex-shrink: 0;
+  }
+  .mlb-result-name { color: #cce4ff; font-size: 13px; font-weight: 900; letter-spacing: 1px; }
+  .mlb-result-sub  { color: #6699bb; font-size: 11px; margin-top: 2px; }
+  /* 選択済み選手表示 */
+  #mlb-selected-player {
+    margin-top: 10px;
+    padding: 10px 14px;
+    background: rgba(0,60,120,0.40);
+    border: 1px solid #3388ff55;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  #mlb-selected-photo {
+    width: 52px;
+    height: 52px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: #0a1828;
+    border: 2px solid #4488ff55;
+    flex-shrink: 0;
+  }
+  .mlb-selected-info { flex: 1; min-width: 0; }
+  .mlb-selected-name { color: #aaddff; font-size: 15px; font-weight: 900; letter-spacing: 2px; }
+  .mlb-selected-meta { color: #5599bb; font-size: 11px; margin-top: 3px; }
+  .btn-mlb-clear {
+    padding: 5px 12px;
+    background: rgba(80,0,0,0.70);
+    color: #ff8888;
+    border: 1px solid #ff444455;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 900;
+    cursor: pointer;
+    font-family: inherit;
+    flex-shrink: 0;
+  }
+  .btn-mlb-clear:hover { background: rgba(120,0,0,0.80); }
+
+  /* ── エラーボックス ── */
+  #error-box {
+    background: rgba(180,0,0,0.3);
+    border: 1px solid #ff5555;
+    border-radius: 8px;
+    padding: 11px 16px;
+    margin-bottom: 16px;
+    color: #ffaaaa;
+    font-size: 13px;
+    display: none;
+  }
+
+  /* ── カード表示エリア ── */
+  #card-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 10px;
+    gap: 14px;
+  }
+  #card-root {
+    display: flex;
+    justify-content: center;
+    font-family: 'MS Gothic', 'Yu Gothic', 'Hiragino Kaku Gothic Pro', sans-serif;
+  }
+  /* ── 保存ボタンエリア ── */
+  #save-area {
+    display: none;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .btn-save {
+    padding: 10px 28px;
+    background: linear-gradient(135deg, #1a3a6a, #2a5aaa, #1a3a6a);
+    color: #aaccff;
+    border: 1px solid #4488ff88;
+    border-radius: 9px;
+    font-size: 14px;
+    font-weight: 900;
+    letter-spacing: 3px;
+    cursor: pointer;
+    box-shadow: 0 3px 14px #0044aa44;
+    transition: transform 0.12s, box-shadow 0.12s;
+    font-family: inherit;
+  }
+  .btn-save:hover { transform: translateY(-2px); box-shadow: 0 5px 20px #0066cc55; color: #ddeeff; }
+  .btn-save:active { transform: translateY(0); }
+  #save-msg { font-size: 12px; color: #77cc88; font-weight: 900; letter-spacing: 1px; }
+
+  /* ── カードフリップ（機構のみ） ── */
+  .card-flip-scene { perspective: 1400px; }
+  .card-flip-inner {
+    position: relative;
+    transform-style: preserve-3d;
+    transition: transform 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .card-flip-inner.flipped { transform: rotateY(180deg); }
+  .card-face { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+  .card-back-face {
+    transform: rotateY(180deg);
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+  }
+</style>
+</head>
+<body>
+<div class="app-wrap">
+  <h1 class="app-title">⚾ MLBカード生成ツール</h1>
+  <p class="app-sub">投手・野手・捕手のエクセルデータ＋選手写真を読み込み、データカードを自動生成</p>
+
+  <!-- メイン入力 -->
+  <div class="input-panel">
+    <div class="input-group">
+      <label class="input-label">📊 エクセルデータ (.xlsx)</label>
+      <input type="file" id="excel-file" accept=".xlsx,.xls" onchange="onExcelChange(this)">
+    </div>
+    <div class="input-group">
+      <label class="input-label">📷 選手写真（省略可）</label>
+      <input type="file" id="photo-file" accept="image/*">
+    </div>
+    <button class="btn-generate" onclick="generateCard()">カード生成</button>
+  </div>
+
+  <!-- MLB 選手検索パネル（省略可） -->
+  <div id="mlb-search-section">
+    <div class="input-group">
+      <label class="input-label">🔍 MLB選手検索（省略可）— 英語名・顔写真・列伝強化に使用</label>
+      <div class="mlb-search-row">
+        <input id="mlb-search-input" type="text"
+               placeholder="例: Dylan Cease / Shohei Ohtani"
+               onkeydown="if(event.key==='Enter') mlbSearch()">
+        <button class="btn-mlb-search" id="mlb-search-btn" onclick="mlbSearch()">🔍 検索</button>
+      </div>
+    </div>
+    <div id="mlb-search-results"></div>
+    <div id="mlb-selected-player" style="display:none;">
+      <img id="mlb-selected-photo" src="" alt="">
+      <div class="mlb-selected-info">
+        <div class="mlb-selected-name" id="mlb-selected-name-label"></div>
+        <div class="mlb-selected-meta" id="mlb-selected-meta-label"></div>
+      </div>
+      <button class="btn-mlb-clear" onclick="clearMlbSelection()">✕ 選択解除</button>
+    </div>
+  </div>
+
+  <!-- 年代選択パネル（Excel読込後に表示） -->
+  <div id="year-selector-section">
+    <div class="input-group">
+      <label class="input-label">📅 生成する年代</label>
+      <select id="year-select" onchange="onYearChange()"></select>
+    </div>
+    <div id="year-info"></div>
+  </div>
+
+  <div id="error-box"></div>
+
+  <!-- 保存ボタン（カード生成後に表示） -->
+  <div id="save-area">
+    <button class="btn-save" onclick="saveCardAsHTML()">💾 HTMLとして保存</button>
+    <span id="save-msg"></span>
+  </div>
+
+  <div id="card-area"></div>
+</div>
+
+
+<script>
+// ===== グローバル状態 =====
+let g_rows     = null;   // Excel全行データ
+let g_headers  = null;   // ヘッダー行（rows[0], rows[1]）
+let g_dataRows = null;   // データ行（rows[2]以降）
+let g_peakYear = null;   // 自動検出ピーク年
+let g_isPitcher  = false;
+let g_isCatcher  = false;
+let g_careerWAR  = null;   // 通算行専用：加重平均WAR（_doGenerateで事前計算）
+
+// MLB.com 連携（省略可）
+let g_mlbId       = null;   // MLB選手ID
+let g_mlbNameEn   = null;   // 英語正式名称 (例: "Dylan Cease")
+let g_mlbHeadshot = null;   // ヘッドショット画像URL
+let g_mlbPos      = null;   // ポジション略称
+let g_mlbTeam     = null;   // 現所属チーム名
+
+// ===== MLB.com 連携 =====
+async function mlbSearch() {
+  const input = document.getElementById('mlb-search-input');
+  const btn   = document.getElementById('mlb-search-btn');
+  const q     = (input.value || '').trim();
+  if (!q) return;
+
+  const resultsEl = document.getElementById('mlb-search-results');
+  resultsEl.innerHTML = '<div style="padding:8px 12px;color:#6699bb;font-size:12px;">🔍 検索中…</div>';
+  btn.disabled = true;
+
+  try {
+    // MLB Stats API は CORS 許可済のため、ブラウザから直接呼び出す（サーバー経由不要）
+    const mlbUrl = 'https://statsapi.mlb.com/api/v1/people/search?names='
+                 + encodeURIComponent(q) + '&sportId=1';
+    const res  = await fetch(mlbUrl);
+    if (!res.ok) throw new Error('MLB API エラー (HTTP ' + res.status + ')');
+    const data = await res.json();
+
+    const people = (data.people || []).slice(0, 8);
+    if (people.length === 0) {
+      resultsEl.innerHTML = '<div style="padding:8px 12px;color:#886644;font-size:12px;">該当選手が見つかりませんでした（英語フルネームで検索してください）</div>';
+      return;
+    }
+
+    // data-* 属性を使い、特殊文字(アポストロフィ等)によるJS構文エラーを回避
+    const items = people.map(p => {
+      const pos   = p.primaryPosition ? p.primaryPosition.abbreviation : '';
+      const team  = p.currentTeam     ? p.currentTeam.name             : '';
+      const thumb = `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_60,q_auto:best/v1/people/${p.id}/headshot/67/current`;
+      const el = document.createElement('div');
+      el.className = 'mlb-result-item';
+      el.dataset.id   = p.id;
+      el.dataset.name = p.fullName;
+      el.dataset.pos  = pos;
+      el.dataset.team = team;
+      el.innerHTML = `
+        <img class="mlb-result-thumb" src="${thumb}" alt="" onerror="this.src=''">
+        <div>
+          <div class="mlb-result-name">${escapeHtml(p.fullName)}</div>
+          <div class="mlb-result-sub">${escapeHtml(pos)}${team ? ' · ' + escapeHtml(team) : ''}</div>
+        </div>`;
+      el.addEventListener('click', () =>
+        mlbSelectPlayer(Number(el.dataset.id), el.dataset.name, el.dataset.pos, el.dataset.team));
+      return el;
+    });
+
+    resultsEl.innerHTML = '';
+    items.forEach(el => resultsEl.appendChild(el));
+
+  } catch (e) {
+    resultsEl.innerHTML = `<div style="padding:8px 12px;color:#ff8888;font-size:12px;">❌ エラー: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function mlbSelectPlayer(id, fullName, pos, team) {
+  // 検索結果リストを閉じる
+  document.getElementById('mlb-search-results').innerHTML = '';
+
+  // グローバル状態を更新
+  g_mlbId       = id;
+  g_mlbNameEn   = fullName;
+  g_mlbPos      = pos;
+  g_mlbTeam     = team;
+  g_mlbHeadshot = `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${id}/headshot/67/current`;
+
+  // 選択済み表示
+  const photoEl = document.getElementById('mlb-selected-photo');
+  photoEl.src   = g_mlbHeadshot;
+  photoEl.onerror = () => { photoEl.src = ''; };
+  document.getElementById('mlb-selected-name-label').textContent = fullName;
+  document.getElementById('mlb-selected-meta-label').textContent =
+    (pos ? pos : '') + (team ? (pos ? ' · ' : '') + team : '') + `  (ID: ${id})`;
+  document.getElementById('mlb-selected-player').style.display = 'flex';
+  document.getElementById('mlb-search-input').value = fullName;
+}
+
+function clearMlbSelection() {
+  g_mlbId       = null;
+  g_mlbNameEn   = null;
+  g_mlbPos      = null;
+  g_mlbTeam     = null;
+  g_mlbHeadshot = null;
+  document.getElementById('mlb-selected-player').style.display = 'none';
+  document.getElementById('mlb-search-input').value = '';
+  document.getElementById('mlb-search-results').innerHTML = '';
+}
+
+// ===== UTILITIES =====
+function showError(msg) {
+  const el = document.getElementById('error-box');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+function clearError() {
+  document.getElementById('error-box').style.display = 'none';
+}
+
+function fmtWAR(v) {
+  if (v === null || v === undefined || v === '--' || v === '') return '--';
+  const s = String(v).trim();
+  const prefix = s.startsWith('~') ? '~' : '';
+  const num = parseFloat(s.replace('~', ''));
+  if (isNaN(num)) return s;
+  return prefix + num.toFixed(1);
+}
+function fmtRate(v) {
+  if (v === null || v === undefined || v === '--') return '--';
+  const s = String(v).trim();
+  if (/^\d{3}$/.test(s)) return '.' + s;
+  return s;
+}
+function fmtOPS(v) {
+  if (v === null || v === undefined || v === '--' || v === '') return '--';
+  const s = String(v).trim();
+  // 4桁整数（例: 1379 → "1.379"）
+  if (/^1\d{3}$/.test(s)) return s[0] + '.' + s.slice(1);
+  // 3桁整数（例: 750 → ".750"、378 → "1.378" ※OPS<0.65は現実的でないため1.XXXへ補正）
+  if (/^\d{3}$/.test(s)) {
+    const asDecimal = '.' + s;
+    const n = parseFloat(asDecimal);
+    return (!isNaN(n) && n < 0.65) ? '1' + asDecimal : asDecimal;
+  }
+  // 小数点始まり（例: ".750" → そのまま、".378" → "1.378"）
+  if (s.startsWith('.')) {
+    const n = parseFloat(s);
+    if (!isNaN(n) && n < 0.65) return '1' + s;
+    return s;
+  }
+  return s;
+}
+function fmtPct(v) {
+  if (v === null || v === undefined) return '--';
+  return v + '%';
+}
+function safeNum(v) {
+  if (v === null || v === undefined || v === '--' || v === '') return null;
+  const n = parseFloat(v);
+  return isNaN(n) ? null : n;
+}
+/**
+ * 盗塁（SB）の値を取得する。
+ * ヘッダー行で 'SB' / '盗塁' / '盗塁数' を検索し、
+ * 見つからない場合は row[11]（旧デフォルト）を返す。
+ * headerRow を省略した場合はグローバル g_headers を使用。
+ */
+function getSB(row, headerRow) {
+  const hdr = headerRow || (g_headers && g_headers[0]);
+  if (hdr) {
+    for (const name of ['SB', '盗塁', '盗塁数', 'Stolen Bases']) {
+      const idx = findColIdx(hdr, name);
+      if (idx >= 0) return parseInt(row[idx]) || 0;
+    }
+  }
+  return parseInt(row[11]) || 0;
+}
+
+/** ヘッダー行（配列）から列名（大小文字不問）を検索してインデックスを返す。見つからない場合は -1 */
+function findColIdx(headerRow, name) {
+  if (!headerRow) return -1;
+  const target = name.trim().toUpperCase();
+  return headerRow.findIndex(h => String(h ?? '').trim().toUpperCase() === target);
+}
+/** 行データとヘッダー行から列名でセル値を取得。なければ fallback */
+function getColVal(row, headerRow, name, fallback = '--') {
+  const idx = findColIdx(headerRow, name);
+  if (idx < 0) return fallback;
+  const v = row[idx];
+  return (v === null || v === undefined || v === '') ? fallback : v;
+}
+
+// ===== WAR 推定ロジック（スプレッドシートに WAR 列がない場合のフォールバック） =====
+/**
+ * 野手 WAR 推定（bWAR 近似）
+ *   battingWAR  = (OPS − リーグ平均 0.728) × 15 × 出場比率
+ *   fieldingWAR = 全ポジション合計 DRS ÷ 10
+ *   bsrWAR      = SB ÷ 20 × 出場比率
+ *   replWAR     = 2.0 × 出場比率  （代替選手基準）
+ * 推定値は "~X.X" 形式で表示（実測値と区別）
+ */
+function estimateHitterWAR(row) {
+  const ops    = parseFloat(fmtOPS(row[17]));
+  const rawG   = parseInt(row[6]);
+  const games  = (!isNaN(rawG) && rawG >= 10 && rawG <= 162) ? rawG : 150;
+  const sb     = getSB(row);
+  if (!ops || isNaN(ops) || ops <= 0) return null;
+
+  const ptRatio = Math.min(games, 162) / 162;
+
+  // 打撃貢献
+  const battingWAR = (ops - 0.728) * 15 * ptRatio;
+
+  // 守備貢献（DRS ÷ 10 ≈ WAR）
+  let totalDrs = 0, totalInn = 0;
+  for (let i = 0; i < 8; i++) {
+    const inn = parseFloat(row[28 + i * 2]) || 0;
+    const drs = safeNum(row[29 + i * 2]) || 0;
+    if (inn > 0) { totalDrs += drs; totalInn += inn; }
+  }
+  const fieldingWAR = totalInn > 0 ? totalDrs / 10 : 0;
+
+  // 走塁貢献（SB 20本 ≒ 0.5 WAR）
+  const bsrWAR = (sb / 20) * ptRatio;
+
+  // 代替選手比較基準
+  const replWAR = 2.0 * ptRatio;
+
+  const total = battingWAR + fieldingWAR + bsrWAR + replWAR;
+  return Math.round(total * 10) / 10;
+}
+
+/**
+ * 投手 WAR 推定（bWAR 近似）
+ *   (代替ERA − 実測ERA) × IP ÷ 9 ÷ runsPerWin
+ *   先発代替ERA = 5.40 / リリーフ代替ERA = 5.60 / runsPerWin = 9.0
+ */
+function estimatePitcherWAR(row) {
+  const era    = parseFloat(row[5]);
+  const ip     = parseFloat(row[10]);
+  const gs     = parseInt(row[7]) || 0;
+  const totalG = parseInt(row[6]) || 1;
+  if (isNaN(era) || isNaN(ip) || ip <= 0) return null;
+
+  const isStarter = gs >= totalG * 0.5;
+  const replERA   = isStarter ? 5.40 : 5.60;
+  const war = (replERA - era) * ip / 9 / 9.0;
+  return Math.round(war * 10) / 10;
+}
+
+/**
+ * WAR 表示値を返す。
+ *   スプレッドシートに WAR 列があればその値、
+ *   なければ推定値を "~X.X" 形式で返す。
+ */
+function resolveWAR(row, headerRow, isPitcher) {
+  const raw = getColVal(row, headerRow, 'WAR');
+  if (raw !== '--') return raw;  // 実測値あり
+  const est = isPitcher ? estimatePitcherWAR(row) : estimateHitterWAR(row);
+  return est !== null ? String(est) : '--';
+}
+// 通算行の場合は g_careerWAR（加重平均）を優先して返す
+function resolveWAREffective(row, headerRow, isPitcher) {
+  const isCareer = !/^\d{4}$/.test(String(row[1] ?? '').trim());
+  if (isCareer && g_careerWAR != null) return g_careerWAR;
+  return resolveWAR(row, headerRow, isPitcher);
+}
+function statRank(v) {
+  if (v >= 90) return 's-rank';
+  if (v >= 80) return 'a-rank';
+  return '';
+}
+function isPeak(v) { return v >= 90; }
+
+// ===== TEAM BADGE COLORS =====
+const TEAM_COLORS = {
+  'NYY': { bg: 'linear-gradient(135deg,#001a55,#003399)', border: '#aaccff', glow: '#88aaff' },
+  'NEW': { bg: 'linear-gradient(135deg,#001a55,#003399)', border: '#aaccff', glow: '#88aaff' },
+  'HOU': { bg: 'linear-gradient(135deg,#002d62,#0a3080)', border: '#eb6e1f', glow: '#ff7733' },
+  'CHW': { bg: 'linear-gradient(135deg,#111111,#333333)', border: '#c4ced4', glow: '#aaaaaa' },
+  'CWS': { bg: 'linear-gradient(135deg,#111111,#333333)', border: '#c4ced4', glow: '#aaaaaa' },
+  'CIN': { bg: 'linear-gradient(135deg,#880000,#5a0000)', border: '#ff9999', glow: '#ff6666' },
+  'LAD': { bg: 'linear-gradient(135deg,#005a9c,#003366)', border: '#ffffff', glow: '#aaccff' },
+  'BOS': { bg: 'linear-gradient(135deg,#bd3039,#8a1020)', border: '#ffffff', glow: '#ff9999' },
+  'SFG': { bg: 'linear-gradient(135deg,#fd5a1e,#c4450e)', border: '#ffffff', glow: '#ffaa77' },
+  'SF' : { bg: 'linear-gradient(135deg,#fd5a1e,#c4450e)', border: '#ffffff', glow: '#ffaa77' },
+  'PIT': { bg: 'linear-gradient(135deg,#fdb827,#b07700)', border: '#000000', glow: '#ffdd44' },
+  'ATL': { bg: 'linear-gradient(135deg,#ce1141,#8a0020)', border: '#13274f', glow: '#ff7799' },
+  'MIN': { bg: 'linear-gradient(135deg,#002b5c,#001a3a)', border: '#d31145', glow: '#ff4466' },
+  'SEA': { bg: 'linear-gradient(135deg,#0c2c56,#001a33)', border: '#005c5c', glow: '#00aaaa' },
+  'TEX': { bg: 'linear-gradient(135deg,#003278,#001a55)', border: '#c0111f', glow: '#ff3344' },
+  'OAK': { bg: 'linear-gradient(135deg,#003831,#001e18)', border: '#efb21e', glow: '#ffcc33' },
+  'SDN': { bg: 'linear-gradient(135deg,#2f241d,#1a1008)', border: '#ffc425', glow: '#ffcc44' },
+  'SD' : { bg: 'linear-gradient(135deg,#2f241d,#1a1008)', border: '#ffc425', glow: '#ffcc44' },
+};
+function getTeamStyle(teamCode) {
+  const k = String(teamCode || '').toUpperCase();
+  return TEAM_COLORS[k] || { bg: 'linear-gradient(135deg,#222244,#111133)', border: '#8888bb', glow: '#8888cc' };
+}
+
+// ===== CARD THEMES =====
+function getThemeVars(stars) {
+  if (stars === 6) {
+    // ── UR: スターダストパターン（散らばったレンズ輝きのダイヤ） ──
+    // 56×56タイルに2大・2小の4つのファセットダイヤをランダム配置
+    // 各ダイヤは4面のファセット陰影で②レンズ光り方を再現
+    const _mkDiamond = (cx, cy, r, a1, a2, a3, a4) =>
+      // 右上面(明) / 左上面 / 右下面 / 左下面(暗) / アウトライン
+      `<polygon points="${cx},${cy-r} ${cx+r},${cy} ${cx},${cy}" fill="rgba(255,255,255,${a1})"/>` +
+      `<polygon points="${cx},${cy-r} ${cx-r},${cy} ${cx},${cy}" fill="rgba(210,220,240,${a2})"/>` +
+      `<polygon points="${cx},${cy+r} ${cx+r},${cy} ${cx},${cy}" fill="rgba(80,90,130,${a3})"/>` +
+      `<polygon points="${cx},${cy+r} ${cx-r},${cy} ${cx},${cy}" fill="rgba(40,50,90,${a4})"/>` +
+      `<polygon points="${cx},${cy-r+0.4} ${cx+r-0.4},${cy} ${cx},${cy+r-0.4} ${cx-r+0.4},${cy}" fill="none" stroke="rgba(255,255,255,0.30)" stroke-width="0.5"/>`;
+    const _fSvg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="840" height="530">' +
+      '<defs>' +
+      '<pattern id="sd" x="0" y="0" width="56" height="56" patternUnits="userSpaceOnUse">' +
+      _mkDiamond(14, 15, 9,  0.38, 0.24, 0.22, 0.36) + // 大ダイヤA (左上)
+      _mkDiamond(42, 41, 9,  0.36, 0.22, 0.20, 0.34) + // 大ダイヤB (右下)
+      _mkDiamond(39, 13, 5,  0.32, 0.20, 0.18, 0.30) + // 小ダイヤC (右上)
+      _mkDiamond(13, 41, 5,  0.30, 0.18, 0.16, 0.28) + // 小ダイヤD (左下)
+      '</pattern>' +
+      '</defs>' +
+      '<rect width="840" height="530" fill="url(#sd)"/>' +
+      '</svg>';
+    const _lensUrl = 'url("data:image/svg+xml,' + encodeURIComponent(_fSvg) + '")';
+    return {
+      stars: '★★★★★★', rank: 'UR',
+      holo: true,
+      starPatternUrl: _lensUrl,
+      // ── クロームシルバー下地 ──
+      cardBg: 'linear-gradient(160deg,#9898b8 0%,#d8d8f0 12%,#a8a8c8 28%,#e8e8ff 46%,#9898b8 62%,#d0d0ec 78%,#b0b0cc 100%)',
+      cardBorder: '#aabbff', cardBorder2: '#6677cc',
+      cardShadow: '0 0 0 2px #8899ff66,0 8px 50px #000000cc,0 0 80px #6688ff44,0 0 40px #ffffff22,inset 0 2px 0 #ffffff77,inset 0 -2px 0 #6677cc66',
+      bannerBg: 'linear-gradient(90deg,#04040e,#0c0c28,#04040e,#080820,#04040e)',
+      bannerBorder: '#8899ff88', leftBorder: '#6677cc55',
+      overlay: 'rgba(6,6,18,0.56)', sheen: 'rgba(255,255,255,0.38)',
+      sectionText: '#c8d4ff', sectionBar: '#8899ff',
+      recBorder: '#6677cc', recLabel: '#a0b0e0',
+      statName: '#a0b0e0', statBorder: '#6677cc55',
+      peakBg: 'rgba(20,20,80,0.60)', peakBorder: '#aabbff',
+      srank: '#ffffff', srankGlow: '#aaccff',
+      arank: '#ffe8aa', arankGlow: '#ffcc44',
+      recHl: '#ffffff', recHlGlow: '#aaddff',
+      recPp: '#ffaaff', recPpGlow: '#ff44cc',
+      posBadgeBg: 'linear-gradient(135deg,#04040e,#0c0c28)', posBadgeBorder: '#8899ff88',
+      nameGlow: '#aaccff', nameEnColor: '#c8d4ff',
+      seasonBorder: '#8899ff88', seasonText: '#c8d4ff',
+      powerBorder: '#8899ff', powerTextColor: '#c8d4ff',
+      starsColor: '#ffffff', starsGlow: '#ffffff',
+      rankGlow: '#aaccff', typeGlow: '#8899ff',
+      pitchTblBorder: '#6677cc', pitchNameColor: '#c8d4ff',
+      drsBorder: '#6677cc55',
+      retBorder: '#6677cc55', retColor: '#c8d4ff', retStrong: '#ffffff',
+      photoTopColor: '#04040ecc', photoBotColor: '#08081af5', photoBotLight: '#0e0e2888', photoSideColor: '#04040ecc',
+    };
+  }
+  if (stars === 5) return {
+    stars: '★★★★★', rank: 'SSR',
+    holoBlue: true,
+    // ── 光沢エメラルドブルー下地 ──
+    cardBg: 'linear-gradient(160deg,#b0f0ff 0%,#40c8f0 7%,#1090c8 22%,#045888 42%,#0878b0 58%,#18b0e0 78%,#70eaff 92%,#b0f4ff 100%)',
+    cardBorder: '#7fddff', cardBorder2: '#1080b0',
+    cardShadow: '0 0 0 2px #2090b066,0 8px 50px #000000cc,0 0 80px #00ccff33,0 0 40px #00aaee22,inset 0 2px 0 #aaeeff77,inset 0 -2px 0 #005a88aa',
+    bannerBg: 'linear-gradient(90deg,#020f1a,#053560,#0a70a8,#053560,#020f1a)',
+    bannerBorder: '#30a8cc88', leftBorder: '#1070a055',
+    overlay: 'rgba(0,8,18,0.56)', sheen: 'rgba(255,255,255,0.35)',
+    sectionText: '#aaeeff', sectionBar: '#33bbee',
+    recBorder: '#1080a0', recLabel: '#66ccee',
+    statName: '#66ccee', statBorder: '#1080a055',
+    peakBg: 'rgba(0,60,110,0.60)', peakBorder: '#00ddff',
+    srank: '#ffffff', srankGlow: '#ffffff',
+    arank: '#ffffaa', arankGlow: '#ffee00',
+    recHl: '#ffffff', recHlGlow: '#ccf0ff',
+    recPp: '#ff88ff', recPpGlow: '#ff00ff',
+    posBadgeBg: 'linear-gradient(135deg,#020f1a,#074460)', posBadgeBorder: '#30a8cc88',
+    nameGlow: '#66ddff', nameEnColor: '#aaeeff',
+    seasonBorder: '#2080a888', seasonText: '#aaeeff',
+    powerBorder: '#33bbee', powerTextColor: '#aaeeff',
+    starsColor: '#ffffff', starsGlow: '#ffffff',
+    rankGlow: '#aaeeff', typeGlow: '#66ddff',
+    pitchTblBorder: '#1080a0', pitchNameColor: '#aaeeff',
+    drsBorder: '#1080a055',
+    retBorder: '#1080a044', retColor: '#aaeeff', retStrong: '#ffffff',
+    photoTopColor: '#053560cc', photoBotColor: '#020f1af5', photoBotLight: '#020f1a88', photoSideColor: '#053560cc',
+  };
+  if (stars === 4) return {
+    // ── SR ゴールド ──
+    stars: '★★★★', rank: 'SR',
+    cardBg: 'linear-gradient(160deg,#ffe8a0 0%,#f0c040 15%,#c88c00 35%,#a06800 55%,#c89020 75%,#f0c840 90%,#ffe090 100%)',
+    cardBorder: '#f5c518', cardBorder2: '#a07000',
+    cardShadow: '0 0 0 2px #a07000,0 8px 40px #00000099,0 0 60px #ffd70044,inset 0 2px 0 #fff8cc,inset 0 -2px 0 #8b6000',
+    bannerBg: 'linear-gradient(90deg,#3a2200,#a07000,#f0c030,#a07000,#3a2200)',
+    bannerBorder: '#ffe066', leftBorder: '#c8900a',
+    overlay: 'rgba(10,5,0,0.52)', sheen: 'rgba(255,255,255,0.22)',
+    sectionText: '#ffe066', sectionBar: '#f5c518',
+    recBorder: '#c8900a', recLabel: '#ffd070',
+    statName: '#ffd070', statBorder: '#c8900a88',
+    peakBg: 'rgba(150,0,40,0.55)', peakBorder: '#ff5577',
+    srank: '#ff6688', srankGlow: '#ff2255',
+    arank: '#88ff88', arankGlow: '#22cc22',
+    recHl: '#ff7777', recHlGlow: '#ff3333',
+    recPp: '#dd99ff', recPpGlow: '#aa44ff',
+    posBadgeBg: 'linear-gradient(135deg,#5a3000,#8a5500)', posBadgeBorder: '#f5c518',
+    nameGlow: '#ffd700', nameEnColor: '#ffe8a0',
+    seasonBorder: '#f5c518', seasonText: '#ffe066',
+    powerBorder: '#f5c518', powerTextColor: '#ffe066',
+    starsColor: '#fff8cc', starsGlow: '#ffd700',
+    rankGlow: '#ffd700', typeGlow: '#ffd700',
+    pitchTblBorder: '#c8900a', pitchNameColor: '#ffe8a0',
+    drsBorder: '#44cc6688',
+    retBorder: '#c8900a88', retColor: '#ffe8c0', retStrong: '#ffe066',
+    photoTopColor: '#a07000dd', photoBotColor: '#3a2200f5', photoBotLight: '#3a220088', photoSideColor: '#a07800cc',
+  };
+  if (stars === 3) return {
+    // ── RR シルバー ──
+    stars: '★★★', rank: 'RR',
+    cardBg: 'linear-gradient(160deg,#f8f8ff 0%,#d8dfe8 12%,#a0aabb 30%,#7888a0 50%,#9aaabb 68%,#ccd5e0 85%,#eef2f8 100%)',
+    cardBorder: '#e0e8f0', cardBorder2: '#8090a8',
+    cardShadow: '0 0 0 2px #8090a8,0 8px 40px #00000099,0 0 50px #c0d0e055,inset 0 2px 0 #ffffff,inset 0 -2px 0 #606878',
+    bannerBg: 'linear-gradient(90deg,#303840,#7888a0,#c8d8e8,#7888a0,#303840)',
+    bannerBorder: '#d0dce8', leftBorder: '#9aaabb',
+    overlay: 'rgba(5,10,20,0.52)', sheen: 'rgba(255,255,255,0.30)',
+    sectionText: '#c8dff0', sectionBar: '#a0b8d0',
+    recBorder: '#7888a0', recLabel: '#a8c0d8',
+    statName: '#a8c0d8', statBorder: '#7888a088',
+    peakBg: 'rgba(0,60,120,0.55)', peakBorder: '#55aaff',
+    srank: '#55ccff', srankGlow: '#0099ff',
+    arank: '#88ff88', arankGlow: '#22cc22',
+    recHl: '#88ddff', recHlGlow: '#44aaff',
+    recPp: '#dd99ff', recPpGlow: '#aa44ff',
+    posBadgeBg: 'linear-gradient(135deg,#283848,#405870)', posBadgeBorder: '#c8d8e8',
+    nameGlow: '#c0d8ff', nameEnColor: '#d8e8ff',
+    seasonBorder: '#c8d8e8', seasonText: '#d8eeff',
+    powerBorder: '#c8d8e8', powerTextColor: '#e8f2ff',
+    starsColor: '#e8f0ff', starsGlow: '#c0d8ff',
+    rankGlow: '#c0d8ff', typeGlow: '#c0d8ff',
+    pitchTblBorder: '#7888a0', pitchNameColor: '#d8eeff',
+    drsBorder: '#44cc6688',
+    retBorder: '#7888a088', retColor: '#c8dff0', retStrong: '#d8eeff',
+    photoTopColor: '#505868cc', photoBotColor: '#303848f5', photoBotLight: '#30384888', photoSideColor: '#7888a0cc',
+  };
+  if (stars === 2) return {
+    // ── R ブロンズ ──
+    stars: '★★', rank: 'R',
+    cardBg: 'linear-gradient(160deg,#ffd090 0%,#e09030 15%,#c07028 35%,#904a10 55%,#b06820 75%,#d89040 90%,#ffc870 100%)',
+    cardBorder: '#cd7f32', cardBorder2: '#7a4c00',
+    cardShadow: '0 0 0 2px #7a4c00,0 8px 40px #00000099,0 0 50px #cd7f3244,inset 0 2px 0 #ffe4aa,inset 0 -2px 0 #603800',
+    bannerBg: 'linear-gradient(90deg,#2a1400,#784a00,#c07028,#784a00,#2a1400)',
+    bannerBorder: '#e09040', leftBorder: '#a06030',
+    overlay: 'rgba(10,5,0,0.55)', sheen: 'rgba(255,255,255,0.18)',
+    sectionText: '#ffd090', sectionBar: '#cd7f32',
+    recBorder: '#a06030', recLabel: '#ffb060',
+    statName: '#ffb060', statBorder: '#a0603088',
+    peakBg: 'rgba(120,40,0,0.55)', peakBorder: '#ff8844',
+    srank: '#ff9944', srankGlow: '#ff5500',
+    arank: '#88ff88', arankGlow: '#22cc22',
+    recHl: '#ffaa66', recHlGlow: '#ff6600',
+    recPp: '#dd99ff', recPpGlow: '#aa44ff',
+    posBadgeBg: 'linear-gradient(135deg,#3a1800,#6a3800)', posBadgeBorder: '#cd7f32',
+    nameGlow: '#cd7f32', nameEnColor: '#ffd090',
+    seasonBorder: '#cd7f32', seasonText: '#ffd090',
+    powerBorder: '#cd7f32', powerTextColor: '#ffd090',
+    starsColor: '#ffe4aa', starsGlow: '#cd7f32',
+    rankGlow: '#cd7f32', typeGlow: '#cd7f32',
+    pitchTblBorder: '#a06030', pitchNameColor: '#ffd090',
+    drsBorder: '#44cc6688',
+    retBorder: '#a0603088', retColor: '#ffd090', retStrong: '#ffd090',
+    photoTopColor: '#784a00cc', photoBotColor: '#2a1400f5', photoBotLight: '#2a140088', photoSideColor: '#906030cc',
+  };
+  if (stars === 1) return {
+    // ── N レッド ──
+    stars: '★', rank: 'N',
+    cardBg: 'linear-gradient(160deg,#ff9898 0%,#e03838 12%,#b81010 30%,#880000 50%,#b01818 68%,#d83838 85%,#ff8080 100%)',
+    cardBorder: '#ff4444', cardBorder2: '#880000',
+    cardShadow: '0 0 0 2px #880000,0 8px 40px #00000099,0 0 50px #ff000033,inset 0 2px 0 #ff9999,inset 0 -2px 0 #660000',
+    bannerBg: 'linear-gradient(90deg,#2a0000,#880808,#cc2020,#880808,#2a0000)',
+    bannerBorder: '#ff6060', leftBorder: '#cc2020',
+    overlay: 'rgba(15,0,0,0.55)', sheen: 'rgba(255,255,255,0.16)',
+    sectionText: '#ff9090', sectionBar: '#dd4444',
+    recBorder: '#cc2020', recLabel: '#ff8080',
+    statName: '#ff8080', statBorder: '#cc202088',
+    peakBg: 'rgba(100,0,0,0.55)', peakBorder: '#ff4444',
+    srank: '#ffdd88', srankGlow: '#ffbb00',
+    arank: '#88ff88', arankGlow: '#22cc22',
+    recHl: '#ff9999', recHlGlow: '#ff4444',
+    recPp: '#ffbbff', recPpGlow: '#ff88ff',
+    posBadgeBg: 'linear-gradient(135deg,#2a0000,#660808)', posBadgeBorder: '#cc2020',
+    nameGlow: '#ff4444', nameEnColor: '#ff9090',
+    seasonBorder: '#cc202088', seasonText: '#ff9090',
+    powerBorder: '#dd4444', powerTextColor: '#ff9090',
+    starsColor: '#ff9090', starsGlow: '#ff4444',
+    rankGlow: '#ff6060', typeGlow: '#ff4444',
+    pitchTblBorder: '#cc2020', pitchNameColor: '#ff9090',
+    drsBorder: '#cc202055',
+    retBorder: '#cc202044', retColor: '#ff9090', retStrong: '#ffffff',
+    photoTopColor: '#880808cc', photoBotColor: '#2a0000f5', photoBotLight: '#2a000088', photoSideColor: '#880808cc',
+  };
+  return {
+    // ── C マットブラック（49以下）──
+    stars: '―', rank: 'C',
+    cardBg: 'linear-gradient(160deg,#2e2e2e 0%,#1a1a1a 18%,#0a0a0a 42%,#111111 62%,#1c1c1c 80%,#282828 100%)',
+    cardBorder: '#505050', cardBorder2: '#1e1e1e',
+    cardShadow: '0 0 0 2px #2a2a2a88,0 8px 40px #000000cc,0 0 40px #ffffff08,inset 0 2px 0 #ffffff18,inset 0 -2px 0 #00000099',
+    bannerBg: 'linear-gradient(90deg,#000000,#161616,#242424,#161616,#000000)',
+    bannerBorder: '#3a3a3a', leftBorder: '#2a2a2a55',
+    overlay: 'rgba(0,0,0,0.52)', sheen: 'rgba(255,255,255,0.08)',
+    sectionText: '#999999', sectionBar: '#555555',
+    recBorder: '#303030', recLabel: '#777777',
+    statName: '#777777', statBorder: '#30303088',
+    peakBg: 'rgba(35,35,35,0.60)', peakBorder: '#888888',
+    srank: '#dddddd', srankGlow: '#aaaaaa',
+    arank: '#bbbbbb', arankGlow: '#888888',
+    recHl: '#cccccc', recHlGlow: '#888888',
+    recPp: '#bbbbbb', recPpGlow: '#888888',
+    posBadgeBg: 'linear-gradient(135deg,#0e0e0e,#1e1e1e)', posBadgeBorder: '#505050',
+    nameGlow: '#555555', nameEnColor: '#999999',
+    seasonBorder: '#505050', seasonText: '#999999',
+    powerBorder: '#505050', powerTextColor: '#aaaaaa',
+    starsColor: '#666666', starsGlow: '#444444',
+    rankGlow: '#555555', typeGlow: '#555555',
+    pitchTblBorder: '#303030', pitchNameColor: '#999999',
+    drsBorder: '#44444488',
+    retBorder: '#30303088', retColor: '#999999', retStrong: '#cccccc',
+    photoTopColor: '#0a0a0acc', photoBotColor: '#000000f5', photoBotLight: '#00000088', photoSideColor: '#181818cc',
+  };
+}
+
+// ===== CARD CSS TEMPLATE =====
+function getCardCSS(t) {
+  return `
+  #card-root * { margin:0; padding:0; box-sizing:border-box; }
+  #card-root { font-family:'MS Gothic','Yu Gothic','Hiragino Kaku Gothic Pro',sans-serif; }
+  #card-root .card {
+    width:840px; height:530px; border-radius:16px;
+    border:4px solid ${t.cardBorder}; background:${t.cardBg};
+    box-shadow:${t.cardShadow}; display:flex; position:relative; overflow:hidden;
+  }
+  #card-root .card::after {
+    content:''; position:absolute; top:0; left:0; right:0; height:50%;
+    background:linear-gradient(to bottom,${t.sheen} 0%,transparent 100%);
+    pointer-events:none; z-index:50; border-radius:14px 14px 0 0;
+  }
+  #card-root .top-banner {
+    position:absolute; top:0; left:0; right:0; height:42px;
+    background:${t.bannerBg}; display:flex; align-items:center;
+    justify-content:space-between; padding:0 20px; z-index:20;
+    border-bottom:3px solid ${t.bannerBorder}; box-shadow:0 3px 12px #00000066;
+  }
+  #card-root .card-rank { color:#fff; font-size:20px; font-weight:900; letter-spacing:4px; text-shadow:2px 2px 0 #000,0 0 14px ${t.rankGlow}; }
+  #card-root .stars { color:${t.starsColor}; font-size:22px; text-shadow:1px 1px 0 #000,0 0 12px ${t.starsGlow}; letter-spacing:6px; }
+  #card-root .card-type { color:#fff; font-size:17px; font-weight:900; letter-spacing:3px; text-shadow:2px 2px 0 #000,0 0 10px ${t.typeGlow}; }
+  #card-root .left-panel { width:285px; min-width:285px; position:relative; border-right:3px solid ${t.leftBorder}; overflow:hidden; }
+  #card-root .photo-frame { position:absolute; top:0; left:0; right:0; bottom:0; background:linear-gradient(180deg,#4a3800 0%,#806000 50%,#382800 100%); }
+  #card-root .photo-frame img { width:100%; height:100%; object-fit:cover; object-position:center top; display:block; }
+  #card-root .photo-top-fade { position:absolute; top:0; left:0; right:0; height:55px; background:linear-gradient(to bottom,${t.photoTopColor} 0%,transparent 100%); z-index:2; }
+  #card-root .photo-bot-fade { position:absolute; bottom:0; left:0; right:0; height:120px; background:linear-gradient(to top,${t.photoBotColor} 0%,${t.photoBotLight} 60%,transparent 100%); z-index:2; }
+  #card-root .photo-side-fade { position:absolute; top:0; right:0; bottom:0; width:50px; background:linear-gradient(to left,${t.photoSideColor} 0%,transparent 100%); z-index:2; }
+  #card-root .player-name-block { position:absolute; bottom:12px; left:0; right:0; text-align:center; z-index:5; }
+  #card-root .player-name-ja { color:#fff; font-size:28px; font-weight:900; letter-spacing:4px; text-shadow:2px 2px 0 #000,-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,0 0 16px ${t.nameGlow}; display:block; white-space:nowrap; }
+  #card-root .player-name-en { color:${t.nameEnColor}; font-size:12px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000,-1px -1px 0 #000; display:block; margin-top:4px; white-space:nowrap; }
+  #card-root .team-badge { position:absolute; top:48px; left:14px; border-radius:6px; padding:4px 14px; color:#fff; font-size:16px; font-weight:900; letter-spacing:4px; z-index:5; box-shadow:0 2px 8px #000000aa; }
+  #card-root .power-display { position:absolute; top:46px; right:10px; text-align:center; z-index:5; background:rgba(0,0,0,0.60); border:2px solid ${t.powerBorder}; border-radius:8px; padding:3px 10px; }
+  #card-root .power-label { color:${t.powerTextColor}; font-size:11px; font-weight:900; display:block; letter-spacing:1px; text-shadow:1px 1px 0 #000; }
+  #card-root .power-value { color:${t.powerTextColor}; font-size:32px; font-weight:900; text-shadow:2px 2px 0 #000,0 0 14px ${t.nameGlow}; line-height:1; }
+  #card-root .right-panel { flex:1; padding:52px 18px 10px 16px; display:flex; flex-direction:column; gap:6px; position:relative; z-index:2; background:${t.overlay}; overflow:hidden; }
+  #card-root .header-row { display:flex; align-items:center; gap:10px; }
+  #card-root .position-badge { background:${t.posBadgeBg}; border:2px solid ${t.posBadgeBorder}; border-radius:6px; padding:4px 12px; color:#fff; font-size:13px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; box-shadow:0 2px 6px #000000aa; }
+  #card-root .player-full-name { color:#fff; font-size:22px; font-weight:900; text-shadow:2px 2px 0 #000,0 0 16px ${t.nameGlow}; letter-spacing:2px; white-space:nowrap; overflow:visible; }
+  #card-root .season-badge { margin-left:auto; background:rgba(0,0,0,0.55); border:2px solid ${t.seasonBorder}; border-radius:6px; padding:3px 12px; color:${t.seasonText}; font-size:13px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; white-space:nowrap; }
+  #card-root .record-bar { background:rgba(0,0,0,0.45); border:2px solid ${t.recBorder}; border-radius:8px; padding:5px 6px; display:flex; align-items:center; justify-content:space-between; }
+  #card-root .rec-item { display:flex; flex-direction:column; align-items:center; flex:1; min-width:0; border-right:1px solid ${t.recBorder}88; padding:2px 3px; }
+  #card-root .rec-item:last-child { border-right:none; }
+  #card-root .rec-label { color:${t.recLabel}; font-size:10px; font-weight:900; letter-spacing:0; text-shadow:1px 1px 0 #000; white-space:nowrap; }
+  #card-root .rec-val { color:#fff; font-size:21px; font-weight:900; line-height:1.1; text-shadow:1px 1px 0 #000; white-space:nowrap; }
+  #card-root .rec-val.hl { color:${t.recHl}; text-shadow:1px 1px 0 #000,0 0 10px ${t.recHlGlow}; }
+  #card-root .rec-val.pp { color:${t.recPp}; text-shadow:1px 1px 0 #000,0 0 10px ${t.recPpGlow}; }
+  #card-root .rec-val.sm { font-size:16px; }
+  #card-root .sec-title { color:${t.sectionText}; font-size:12px; font-weight:900; letter-spacing:3px; border-left:5px solid ${t.sectionBar}; padding-left:8px; text-shadow:1px 1px 0 #000; }
+  #card-root .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
+  #card-root .stat-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:6px; padding:4px 5px; display:flex; flex-direction:column; align-items:center; }
+  #card-root .stat-box.peak { background:${t.peakBg}; border:2px solid ${t.peakBorder}; box-shadow:0 0 10px ${t.peakBorder}66; }
+  #card-root .stat-name { color:${t.statName}; font-size:10px; font-weight:900; letter-spacing:0.5px; text-shadow:1px 1px 0 #000; }
+  #card-root .stat-val { color:#fff; font-size:20px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
+  #card-root .stat-val.s-rank { color:${t.srank}; text-shadow:2px 2px 0 #000,0 0 14px ${t.srankGlow}; }
+  #card-root .stat-val.a-rank { color:${t.arank}; text-shadow:2px 2px 0 #000,0 0 10px ${t.arankGlow}; }
+  #card-root .pitch-table { width:100%; border-collapse:collapse; }
+  #card-root .pitch-table th { color:${t.recLabel}; font-size:11px; font-weight:900; letter-spacing:2px; padding:3px 6px; text-align:center; border-bottom:2px solid ${t.pitchTblBorder}; text-shadow:1px 1px 0 #000; }
+  #card-root .pitch-table td { color:#fff; padding:3px 6px; text-align:center; border-bottom:1px solid ${t.pitchTblBorder}55; font-size:13px; font-weight:900; text-shadow:1px 1px 0 #000; }
+  #card-root .pn { color:${t.pitchNameColor}!important; text-align:left!important; font-size:12px!important; font-weight:900!important; text-shadow:1px 1px 0 #000!important; }
+  #card-root .ps { color:#88ddff!important; text-shadow:1px 1px 0 #000,0 0 8px #44aaff!important; }
+  #card-root .pp2 { color:#ffcc66!important; text-shadow:1px 1px 0 #000,0 0 8px #ff8800!important; }
+  #card-root .pr { color:#88ff88!important; text-shadow:1px 1px 0 #000,0 0 8px #22cc22!important; }
+  #card-root .pitch-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
+  #card-root .pitch-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:5px; padding:3px 4px; display:flex; flex-direction:column; align-items:center; }
+  #card-root .pitch-box.pos-b { border-color:#ff664488; }
+  #card-root .pitch-box.neg-b { border-color:#4488ff88; }
+  #card-root .pitch-box.neu-b { border-color:#88886688; }
+  #card-root .pitch-lbl { color:${t.recLabel}; font-size:11px; font-weight:900; letter-spacing:1px; text-shadow:1px 1px 0 #000; }
+  #card-root .pitch-v { font-size:16px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
+  #card-root .pitch-v.pos { color:#ff8866; text-shadow:2px 2px 0 #000,0 0 8px #ff4422; }
+  #card-root .pitch-v.neg { color:#88ccff; text-shadow:2px 2px 0 #000,0 0 8px #4488ff; }
+  #card-root .pitch-v.neu { color:#ccccaa; text-shadow:1px 1px 0 #000; }
+  #card-root .era-note { grid-column:span 1; display:flex; align-items:center; justify-content:center; background:rgba(80,60,0,0.35); border:1px solid #88886688; border-radius:5px; padding:2px; }
+  #card-root .era-note span { color:#aaa888; font-size:8px; font-weight:900; text-align:center; line-height:1.3; text-shadow:1px 1px 0 #000; }
+  #card-root .drs-bar { background:rgba(0,0,0,0.45); border:2px solid ${t.drsBorder}; border-radius:7px; padding:3px 16px; display:flex; align-items:center; justify-content:center; gap:20px; flex-wrap:wrap; }
+  #card-root .drs-item { display:flex; align-items:center; gap:5px; }
+  #card-root .drs-pos { color:#aaddff; font-size:11px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; background:rgba(0,60,120,0.5); border:1px solid #4488ff88; border-radius:4px; padding:1px 5px; }
+  #card-root .drs-num { font-size:17px; font-weight:900; text-shadow:2px 2px 0 #000; }
+  #card-root .drs-num.pos { color:#66ff88; text-shadow:2px 2px 0 #000,0 0 10px #22cc44; }
+  #card-root .drs-num.neg { color:#ff6666; text-shadow:2px 2px 0 #000,0 0 10px #cc2222; }
+  #card-root .drs-num.neu { color:#ccccaa; text-shadow:1px 1px 0 #000; }
+  #card-root .drs-div { width:1px; height:20px; background:#44cc6644; }
+  #card-root .drs-inn { color:#a0b8a0; font-size:9px; font-weight:900; text-shadow:1px 1px 0 #000; }
+  #card-root .combo-row { display:flex; gap:8px; align-items:stretch; }
+  #card-root .combo-l { flex:1.3; display:flex; flex-direction:column; gap:4px; }
+  #card-root .combo-r { flex:1; display:flex; flex-direction:column; gap:4px; }
+  #card-root .combo-l .catcher-bar, #card-root .combo-r .drs-bar { flex:1; padding:4px 8px; }
+  /* 捕手 combo-row 内の DRS バーはコンパクト表示・数値サイズを捕手能力値に合わせる */
+  #card-root .combo-row .drs-bar { padding:3px 8px; gap:10px; flex-wrap:nowrap; }
+  #card-root .combo-row .drs-item { gap:4px; }
+  #card-root .combo-row .drs-num { font-size:20px; }
+  #card-root .combo-row .drs-pos { font-size:10px; padding:1px 4px; letter-spacing:1px; }
+  #card-root .combo-row .drs-inn { font-size:9px; }
+  #card-root .combo-row .drs-div { height:18px; }
+  #card-root .catcher-bar { background:rgba(0,0,0,0.45); border:2px solid #66aaff88; border-radius:7px; padding:5px 14px; display:flex; align-items:center; justify-content:space-around; }
+  #card-root .ca-item { display:flex; align-items:center; gap:8px; flex:1; justify-content:center; }
+  #card-root .ca-item + .ca-item { border-left:1px solid #66aaff44; }
+  #card-root .ca-label { color:#aaddff; font-size:12px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; background:rgba(0,50,120,0.45); border:1px solid #4488ff66; border-radius:4px; padding:2px 8px; white-space:nowrap; }
+  #card-root .ca-val { font-size:24px; font-weight:900; text-shadow:2px 2px 0 #000; line-height:1; }
+  #card-root .ca-val.lead { color:#ffdd66; text-shadow:2px 2px 0 #000,0 0 10px #ffaa00; }
+  #card-root .ca-val.cs   { color:#66ffaa; text-shadow:2px 2px 0 #000,0 0 10px #22cc66; }
+  #card-root .ca-unit { color:#a0b8a0; font-size:10px; font-weight:900; text-shadow:1px 1px 0 #000; align-self:flex-end; margin-bottom:2px; }
+  #card-root .retsuden { font-size:11px; color:${t.retColor}; line-height:1.6; border-top:2px solid ${t.retBorder}; padding-top:5px; font-weight:900; text-shadow:1px 1px 0 #000; flex:1; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:5; }
+  #card-root .retsuden strong { color:${t.retStrong}; font-size:12px; text-shadow:1px 1px 0 #000; }
+  #card-root .retsuden .ai-loading { color:#aaaaaa; font-style:normal; animation:blink 1s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  ${t.holo ? `
+  /* ── UR: レンズ ホログラフィック（写真前面・枠全面ホロ版） ── */
+  /* @property でコニックグラデーションの角度をアニメーション */
+  @property --ha {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+  /* カード本体はクロームシルバー下地のみ */
+  #card-root .card {
+    background: ${t.cardBg};
+    animation: holo-border 5s linear infinite;
+  }
+  /* ホログラムオーバーレイ: バナー(z-index:20)の上(z-index:22)に重ねる
+     mix-blend-mode:screen → 暗い背景はレインボーに輝き、白文字は残る */
+  #card-root .card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 12px;
+    --ha: 0deg;
+    background:
+      ${t.starPatternUrl || ''} center / 56px 56px repeat,
+      conic-gradient(from var(--ha) at 50% 50%,
+        rgba(255,20,110,0.85)  0deg,
+        rgba(255,150,0,0.78)   60deg,
+        rgba(240,255,0,0.75)   120deg,
+        rgba(0,255,130,0.80)   180deg,
+        rgba(0,130,255,0.85)   240deg,
+        rgba(150,0,255,0.78)   300deg,
+        rgba(255,20,110,0.85)  360deg
+      );
+    background-blend-mode: normal, screen;
+    mix-blend-mode: screen;
+    opacity: 0.8;
+    z-index: 22;
+    pointer-events: none;
+    animation: lens-bg-spin 5s linear infinite;
+  }
+  /* 写真パネルはホログラムより前面（z-index:28 > ::before z-index:22）
+     → 選手写真・名前エリアはレインボー不要で鮮明に表示
+     clip-path でバナー高さ分(45px)を上からカット
+     → バナーの UR 表示・★★★★★★ がホログラム越しに可視化される */
+  #card-root .left-panel {
+    position: relative;
+    z-index: 28;
+    clip-path: inset(45px 0 0 0);
+  }
+  /* 写真縁のホログラムフェード: 縁から内部へ向かって徐々に消える（6mm≒57px相当） */
+  #card-root .left-panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    --ha: 0deg;
+    background:
+      ${t.starPatternUrl || ''} center / 56px 56px repeat,
+      conic-gradient(from var(--ha) at 50% 50%,
+        rgba(255,20,110,0.85)  0deg,
+        rgba(255,150,0,0.78)   60deg,
+        rgba(240,255,0,0.75)   120deg,
+        rgba(0,255,130,0.80)   180deg,
+        rgba(0,130,255,0.85)   240deg,
+        rgba(150,0,255,0.78)   300deg,
+        rgba(255,20,110,0.85)  360deg
+      );
+    background-blend-mode: normal, screen;
+    mix-blend-mode: screen;
+    opacity: 0.8;
+    z-index: 6;
+    pointer-events: none;
+    animation: lens-bg-spin 5s linear infinite;
+    /* 縁部分のみ表示・中央は透明（6mm≒57px でフェードアウト） */
+    -webkit-mask-image: radial-gradient(ellipse 75% 80% at 50% 50%,
+      transparent 55%, rgba(0,0,0,0.4) 68%, rgba(0,0,0,0.8) 80%, black 92%);
+    mask-image: radial-gradient(ellipse 75% 80% at 50% 50%,
+      transparent 55%, rgba(0,0,0,0.4) 68%, rgba(0,0,0,0.8) 80%, black 92%);
+  }
+  @keyframes lens-bg-spin {
+    to { --ha: 360deg; }
+  }
+  @keyframes holo-border {
+    0%   { border-color:#ff44aa; box-shadow:0 0 0 2px #88006688,0 8px 50px #000000cc,0 0 90px #ff00aa55,0 0 30px #ffffff33,inset 0 2px 0 #ffffff88,inset 0 -2px 0 #ff00aa44; }
+    17%  { border-color:#ff8800; box-shadow:0 0 0 2px #88440088,0 8px 50px #000000cc,0 0 90px #ff880055,0 0 30px #ffffff33,inset 0 2px 0 #ffffff88,inset 0 -2px 0 #ff880044; }
+    33%  { border-color:#aaff00; box-shadow:0 0 0 2px #44880088,0 8px 50px #000000cc,0 0 90px #aaff0055,0 0 30px #ffffff33,inset 0 2px 0 #ffffff88,inset 0 -2px 0 #aaff0044; }
+    50%  { border-color:#00ffee; box-shadow:0 0 0 2px #00888888,0 8px 50px #000000cc,0 0 90px #00ffee66,0 0 30px #ffffff33,inset 0 2px 0 #ffffff88,inset 0 -2px 0 #00ffee55; }
+    67%  { border-color:#00aaff; box-shadow:0 0 0 2px #00448888,0 8px 50px #000000cc,0 0 90px #00aaff55,0 0 30px #ffffff33,inset 0 2px 0 #ffffff88,inset 0 -2px 0 #00aaff44; }
+    83%  { border-color:#aa00ff; box-shadow:0 0 0 2px #44008888,0 8px 50px #000000cc,0 0 90px #aa00ff55,0 0 30px #ffffff33,inset 0 2px 0 #ffffff88,inset 0 -2px 0 #aa00ff44; }
+    100% { border-color:#ff44aa; box-shadow:0 0 0 2px #88006688,0 8px 50px #000000cc,0 0 90px #ff00aa55,0 0 30px #ffffff33,inset 0 2px 0 #ffffff88,inset 0 -2px 0 #ff00aa44; }
+  }
+  /* 星のレインボーグロー */
+  #card-root .stars {
+    animation: holo-stars 4s linear infinite;
+  }
+  @keyframes holo-stars {
+    0%   { color:#ffffff; text-shadow:0 0 8px #fff,0 0 20px #ff00aa,0 0 35px #ff00aa66; }
+    17%  { color:#ffe0aa; text-shadow:0 0 8px #fff,0 0 20px #ff8800,0 0 35px #ff880066; }
+    33%  { color:#eeffaa; text-shadow:0 0 8px #fff,0 0 20px #aaff00,0 0 35px #aaff0066; }
+    50%  { color:#aaffee; text-shadow:0 0 8px #fff,0 0 20px #00ffcc,0 0 35px #00ffcc66; }
+    67%  { color:#aaddff; text-shadow:0 0 8px #fff,0 0 20px #00aaff,0 0 35px #00aaff66; }
+    83%  { color:#ddaaff; text-shadow:0 0 8px #fff,0 0 20px #aa00ff,0 0 35px #aa00ff66; }
+    100% { color:#ffffff; text-shadow:0 0 8px #fff,0 0 20px #ff00aa,0 0 35px #ff00aa66; }
+  }
+  /* ランク・タイプ文字もレインボーグロー */
+  #card-root .card-rank, #card-root .card-type {
+    animation: holo-text 5s linear infinite;
+  }
+  @keyframes holo-text {
+    0%,100% { text-shadow:2px 2px 0 #000,0 0 16px #ff00aa; }
+    25%      { text-shadow:2px 2px 0 #000,0 0 16px #00ffee; }
+    50%      { text-shadow:2px 2px 0 #000,0 0 16px #00aaff; }
+    75%      { text-shadow:2px 2px 0 #000,0 0 16px #aa00ff; }
+  }
+  ` : ''}
+  ${t.holoBlue ? `
+  /* ── エメラルドブルーホログラフィック（SSR専用） ── */
+  #card-root .card {
+    animation: ssr-border 5s linear infinite;
+  }
+  @keyframes ssr-border {
+    0%   { border-color:#00ffee; box-shadow:0 0 0 2px #004455aa,0 8px 50px #000000cc,0 0 70px #00ffee66,inset 0 2px 0 #ffffff55,inset 0 -2px 0 #003388aa; }
+    25%  { border-color:#00ccff; box-shadow:0 0 0 2px #002244aa,0 8px 50px #000000cc,0 0 70px #00ccff66,inset 0 2px 0 #ffffff55,inset 0 -2px 0 #003388aa; }
+    50%  { border-color:#44ffdd; box-shadow:0 0 0 2px #004444aa,0 8px 50px #000000cc,0 0 70px #44ffdd66,inset 0 2px 0 #ffffff55,inset 0 -2px 0 #003388aa; }
+    75%  { border-color:#00aaff; box-shadow:0 0 0 2px #002255aa,0 8px 50px #000000cc,0 0 70px #00aaff66,inset 0 2px 0 #ffffff55,inset 0 -2px 0 #003388aa; }
+    100% { border-color:#00ffee; box-shadow:0 0 0 2px #004455aa,0 8px 50px #000000cc,0 0 70px #00ffee66,inset 0 2px 0 #ffffff55,inset 0 -2px 0 #003388aa; }
+  }
+  /* 青ラメシマー（斜め掃引） */
+  #card-root .card::before {
+    content:''; position:absolute; inset:0; border-radius:12px;
+    background: linear-gradient(
+      108deg,
+      transparent 0%,      transparent 18%,
+      rgba(0,220,255,0.28) 20%, rgba(0,255,210,0.24) 22%,
+      rgba(80,210,255,0.22) 24%, rgba(0,180,255,0.28) 26%,
+      rgba(0,255,200,0.24) 28%, rgba(100,230,255,0.22) 30%,
+      rgba(0,200,255,0.20) 32%, transparent 34%,
+      transparent 100%
+    );
+    background-size: 400% 400%;
+    animation: ssr-sweep 3.4s linear infinite;
+    pointer-events:none; z-index:15; mix-blend-mode:screen;
+  }
+  @keyframes ssr-sweep {
+    0%   { background-position: 160% -60%; }
+    100% { background-position: -160% 160%; }
+  }
+  /* 星の青シマーグロー */
+  #card-root .stars {
+    animation: ssr-stars 4s linear infinite;
+  }
+  @keyframes ssr-stars {
+    0%   { color:#ffffff; text-shadow:0 0 8px #fff,0 0 22px #00ffee,0 0 38px #00ffee66; }
+    33%  { color:#aaffee; text-shadow:0 0 8px #fff,0 0 22px #00ccff,0 0 38px #00ccff66; }
+    67%  { color:#aaeeff; text-shadow:0 0 8px #fff,0 0 22px #44ddff,0 0 38px #44ddff66; }
+    100% { color:#ffffff; text-shadow:0 0 8px #fff,0 0 22px #00ffee,0 0 38px #00ffee66; }
+  }
+  /* ランク・タイプ文字の青グロー */
+  #card-root .card-rank, #card-root .card-type {
+    animation: ssr-text 5s linear infinite;
+  }
+  @keyframes ssr-text {
+    0%,100% { text-shadow:2px 2px 0 #000,0 0 18px #00ffee; }
+    33%      { text-shadow:2px 2px 0 #000,0 0 18px #00aaff; }
+    67%      { text-shadow:2px 2px 0 #000,0 0 18px #44ffdd; }
+  }
+  ` : ''}
+
+  /* ── カード裏面デザイン（テーマ連動） ── */
+  #card-root .card-back-card {
+    width:840px; height:530px; border-radius:16px;
+    border:4px solid ${t.cardBorder}; background:${t.cardBg};
+    box-shadow:${t.cardShadow};
+    display:flex; flex-direction:column; cursor:pointer; overflow:hidden; position:relative;
+  }
+  #card-root .card-back-card::after {
+    content:''; position:absolute; top:0; left:0; right:0; height:50%;
+    background:linear-gradient(to bottom,${t.sheen} 0%,transparent 100%);
+    pointer-events:none; z-index:10; border-radius:14px 14px 0 0;
+  }
+  #card-root .card-back-banner {
+    height:42px; flex-shrink:0;
+    background:${t.bannerBg}; display:flex; align-items:center; justify-content:center; gap:10px;
+    border-bottom:3px solid ${t.bannerBorder}; box-shadow:0 3px 12px #00000066; position:relative; z-index:20;
+  }
+  #card-root .card-back-banner-name {
+    color:#fff; font-size:19px; font-weight:900; letter-spacing:4px;
+    text-shadow:2px 2px 0 #000,0 0 14px ${t.nameGlow};
+  }
+  #card-root .card-back-banner-sep { color:${t.bannerBorder}; font-size:16px; font-weight:900; opacity:0.7; }
+  #card-root .card-back-banner-label {
+    color:${t.seasonText}; font-size:14px; font-weight:900; letter-spacing:3px;
+    text-shadow:1px 1px 0 #000,0 0 8px ${t.nameGlow}66;
+  }
+  #card-root .card-back-scroll {
+    flex:1; overflow-y:auto; overflow-x:hidden; padding:4px 8px 4px;
+    background:${t.overlay}; position:relative; z-index:5;
+  }
+  #card-root .card-back-scroll::-webkit-scrollbar { width:4px; height:4px; }
+  #card-root .card-back-scroll::-webkit-scrollbar-track { background:transparent; }
+  #card-root .card-back-scroll::-webkit-scrollbar-thumb { background:${t.cardBorder}88; border-radius:3px; }
+  #card-root .card-back-tbl { border-collapse:collapse; width:100%; table-layout:fixed; }
+  #card-root .card-back-tbl th {
+    color:${t.recLabel}; font-weight:900; padding:6px 3px;
+    border-bottom:2px solid ${t.recBorder}; text-align:center;
+    font-size:11px; letter-spacing:0; text-shadow:1px 1px 0 #000;
+    background:rgba(0,0,0,0.60); white-space:nowrap; overflow:hidden;
+    position:sticky; top:0; z-index:2;
+  }
+  #card-root .card-back-tbl td {
+    color:#fff; padding:5px 3px; border-bottom:1px solid ${t.recBorder}44;
+    text-align:center; white-space:nowrap; overflow:hidden;
+    font-size:16px; font-weight:900; text-shadow:2px 2px 0 #000;
+  }
+  #card-root .card-back-tbl td.cb-year {
+    color:${t.seasonText}; font-size:15px; font-weight:900;
+    text-shadow:2px 2px 0 #000,0 0 8px ${t.nameGlow}66; letter-spacing:1px;
+  }
+  #card-root .card-back-tbl td.cb-team {
+    color:${t.recLabel}; font-size:13px; font-weight:900;
+    text-shadow:1px 1px 0 #000;
+  }
+  #card-root .card-back-tbl td.cb-hi {
+    color:${t.recHl}; text-shadow:2px 2px 0 #000,0 0 8px ${t.recHlGlow};
+  }
+  #card-root .card-back-tbl td.cb-pp {
+    color:${t.recPp}; text-shadow:2px 2px 0 #000,0 0 8px ${t.recPpGlow};
+  }
+  #card-root .card-back-tbl tbody tr:nth-child(even) td { background:rgba(255,255,255,0.05); }
+  #card-root .card-back-tbl tbody tr:hover td { background:rgba(255,255,255,0.12); }
+  `;
+}
+
+// ===== 野手・総合力 加重平均計算 =====
+/**
+ * 野手（捕手含む）の総合力を加重平均で算出する。
+ * 基準値を超える場合は 100 超の値を返す（キャップなし）。
+ *
+ * 重みの考え方（ミート/パワーを 1.0 とした相対値）:
+ *   ミート・パワー      : 1.0
+ *   スピード・チャンス・選球眼・三振耐性 : 0.5
+ *   守備 DRS (1000inn換算): 0.5  → score = 50 + drs_per1000 × 2.5
+ *   対左投手 (±差分)    : 0.25 → score = 50 + vsLeft × 2.5
+ *   リード (捕手)        : 1.0  → score = 50 + lead × 5
+ *   盗塁阻止率 % (捕手)  : 0.5  → score = csRate × 2
+ */
+/**
+ * WAR 実測値 → 評価スコア変換
+ *   WAR=0→40, 1→50, 2→60, ... 6→100, 8→120, 10→140
+ *   （一定: warScore = 40 + war × 10）
+ * @param {number} war - 実測 WAR 値
+ * @returns {number} 評価スコア
+ */
+function warToScore(war) {
+  return 50 + war * 10;
+}
+
+/**
+ * @param {string|number|null} realWar - スプレッドシートの実測 WAR 値。
+ *   '--' または null の場合は WAR なしとして扱い、calcHitterOverall の
+ *   加重平均のみを総合力とする。
+ */
+function calcHitterOverall(row, isCatcher, realWar = null) {
+  // ── 能力値（0–100+ の絶対スコア。0はデータなしとして除外） ──
+  const meet   = safeNum(row[44]);
+  const power  = safeNum(row[45]);
+  const speed  = safeNum(row[46]);
+  const chance = safeNum(row[47]);
+  const eye    = safeNum(row[48]);
+  const kres   = safeNum(row[49]);
+
+  // ── 守備 DRS ──
+  // 最大イニングのポジション（主ポジ）DRS を基本採用。
+  // それ以外でイニングが主ポジの 60% 超のポジションがあれば、それらを含めた最大 DRS を採用。
+  // score = 50 + bestDRS × 2.5
+  let drsScore = null;
+  let defInn = 0;  // 守備イニング合計（盗塁換算にも流用）
+  {
+    let maxInn = 0;
+    const posList = [];
+    for (let i = 0; i < 8; i++) {
+      const inn = parseFloat(row[28 + i * 2]) || 0;
+      const drs = safeNum(row[29 + i * 2]) ?? 0;
+      if (inn > 0) {
+        defInn += inn;
+        posList.push({ inn, drs });
+        if (inn > maxInn) maxInn = inn;
+      }
+    }
+    if (posList.length > 0 && maxInn > 0) {
+      const primaryDrs = posList.find(p => p.inn === maxInn)?.drs ?? 0;
+      let bestDrs = primaryDrs;
+      for (const p of posList) {
+        if (p.inn > maxInn * 0.6 && p.drs > bestDrs) bestDrs = p.drs;
+      }
+      drsScore = 50 + bestDrs * 2.5;
+    }
+  }
+
+  // ── 対左投手: ±差分値 → score = 50 + vsLeft × 2.5 ──
+  const vsLeftRaw   = safeNum(row[52]);
+  const vsLeftScore = vsLeftRaw !== null ? 50 + vsLeftRaw * 2.5 : null;
+
+  // ── 加重平均 ──
+  let wSum = 0, wTotal = 0;
+  // 絶対スコア系（0 = データなし として除外）
+  const addAbs = (val, w) => {
+    if (val !== null && val > 0) { wSum += val * w; wTotal += w; }
+  };
+  // 変換済みスコア系（負にもなり得るので null チェックのみ）
+  const addConv = (val, w) => {
+    if (val !== null) { wSum += val * w; wTotal += w; }
+  };
+
+  addAbs(meet,              1.5);
+  addAbs(power * 1.2,       1.5);  // パワーは1.2倍した値をスコアとして使用
+  addAbs(speed,        isCatcher ? 0.25 : 0.5);  // 捕手は走力の重みを低減
+  addAbs(chance,       0.5);
+  addAbs(eye,          0.5);
+  addAbs(kres,         0.5);
+  addConv(drsScore,    0.5);
+  addConv(vsLeftScore, 0.25);
+
+  // ── 盗塁（500イニング換算）区分線形スコア ──
+  // SB=0→40, 10→60, 20→80, 30→100, 40→120, 50→140（+2/盗塁）
+  // SB>50→140+(SB-50)×1（+1/盗塁）  重み 0.5
+  //
+  // 正規化基準: max(守備イニング, 試合数×8.5)
+  // DH等で守備イニングが極端に少ない場合も試合数ベースで補正し
+  // 「少イニング × 500 = 爆発」を防ぐ
+  {
+    const rawG    = parseInt(row[6]);
+    const gamesInn = (!isNaN(rawG) && rawG >= 10 && rawG <= 162) ? rawG * 8.5 : 0;
+    // 守備イニングと試合数推定の大きい方を採用（DH時は試合数ベースが優先される）
+    let inn500 = Math.max(defInn, gamesInn);
+    if (inn500 > 0) {
+      const sbRaw  = getSB(row);
+      const sbNorm = sbRaw * 500 / inn500;   // 500イニング換算
+      const sbScore = sbNorm <= 50
+        ? 40 + sbNorm * 2              // 0〜50 : +2/盗塁
+        : 140 + (sbNorm - 50);         // 50超  : +1/盗塁
+      addConv(sbScore, isCatcher ? 0.25 : 0.5);  // 捕手は盗塁の重みを低減
+    }
+  }
+
+  // ── 捕手専用 ──
+  if (isCatcher) {
+    const lead   = safeNum(row[53]);
+    const csRate = safeNum(row[54]);
+    if (lead !== null)   addConv(50 + lead * 5,       1.0); // +10→100, 0→50, -10→0
+    // 盗塁阻止スコア: 0%→30, 10%→45, 20%→60, 30%→75, 40%→90, 50%→105（+1.5/1%）
+    if (csRate !== null) addConv(30 + csRate * 1.5,   0.5);
+  }
+
+  const A = wTotal > 0 ? Math.round(wSum / wTotal) : 70;
+
+  // ── WAR 実測値がある場合のみ総合力にブレンド ──
+  const warNum = (realWar !== null && realWar !== '--') ? parseFloat(realWar) : NaN;
+  if (!isNaN(warNum)) {
+    return Math.round((A + warToScore(warNum)) / 2);
+  }
+  return A;
+}
+
+/**
+ * 投手総合力スコアを算出する。
+ * @param {Array} row - スプレッドシート行
+ * @param {string|number|null} realWar - resolveWAR で取得した WAR 値（実測 or 推定）。
+ *   '--' または null の場合は WAR なしとして扱う。
+ */
+function calcPitcherOverall(row, realWar = null) {
+  // ── 能力値（0–100+ の絶対スコア。0はデータなしとして除外） ──
+  const ctrl   = safeNum(row[51]);   // 制球
+  const change = safeNum(row[52]);   // 緩急
+  const ment   = safeNum(row[53]);   // 精神
+  const strk   = safeNum(row[54]);   // 奪三振
+  const heavy  = safeNum(row[55]);   // 球重
+
+  // ── 対左・対盗塁: ±差分値 → score = 50 + val × 2.5 ──
+  const leftRaw  = safeNum(row[56]);
+  const baseRaw  = safeNum(row[57]);
+  const leftScore = leftRaw  !== null ? 50 + leftRaw  * 2.5 : null;
+  const baseScore = baseRaw  !== null ? 50 + baseRaw  * 2.5 : null;
+
+  // ── 総合球威: 球威 × 投球割合 の加重平均（6球種） ──
+  let pwrWSum = 0, pwrWTotal = 0;
+  for (let i = 0; i < 6; i++) {
+    const pwr  = parseFloat(row[59 + i * 3]) || 0;
+    const rate = parseFloat(row[60 + i * 3]) || 0;
+    if (pwr > 0 && rate > 0) {
+      pwrWSum   += pwr * rate;
+      pwrWTotal += rate;
+    }
+  }
+  const pitchPowerScore = pwrWTotal > 0 ? pwrWSum / pwrWTotal : null;
+
+  // ── 加重平均 ──
+  let wSum = 0, wTotal = 0;
+  // 絶対スコア系（0 = データなし として除外）
+  const addAbs = (val, w) => {
+    if (val !== null && val > 0) { wSum += val * w; wTotal += w; }
+  };
+  // 変換済みスコア系（負にもなり得るので null チェックのみ）
+  const addConv = (val, w) => {
+    if (val !== null) { wSum += val * w; wTotal += w; }
+  };
+
+  addAbs(ctrl,            1.0);   // 制球
+  addAbs(ment,            1.0);   // 精神
+  addAbs(strk,            1.0);   // 奪三振
+  addAbs(change,          0.5);   // 緩急
+  addAbs(heavy,           0.5);   // 球重
+  addConv(leftScore,      0.25);  // 対左
+  addConv(baseScore,      0.25);  // 対盗塁
+  addAbs(pitchPowerScore, 2.5);   // 総合球威（投球割合加重平均）
+
+  const A = wTotal > 0 ? Math.round(wSum / wTotal) : 70;
+
+  // ── WAR 実測値 or 推定値がある場合のみ総合力にブレンド ──
+  const warNum = (realWar !== null && realWar !== '--') ? parseFloat(realWar) : NaN;
+  if (!isNaN(warNum)) {
+    return Math.round((A + warToScore(warNum)) / 2);
+  }
+  return A;
+}
+
+// ===== CARD HTML BUILDERS =====
+function buildStatBox(label, value) {
+  const rank = statRank(value);
+  const peak = isPeak(value);
+  // 3桁以上はフォントを少し小さく
+  const sizeStyle = value >= 100 ? ' style="font-size:16px;"' : '';
+  return `<div class="stat-box${peak ? ' peak' : ''}"><span class="stat-name">${label}</span><span class="stat-val${rank ? ' ' + rank : ''}"${sizeStyle}>${value}</span></div>`;
+}
+
+function buildPitchPointBox(label, value) {
+  if (value === null || value === undefined) {
+    return `<div class="pitch-box neu-b"><span class="pitch-lbl">${label}</span><span class="pitch-v neu">±0</span></div>`;
+  }
+  const cls  = value > 0 ? 'pos' : value < 0 ? 'neg' : 'neu';
+  const disp = value > 0 ? '+' + value : value === 0 ? '±0' : String(value);
+  return `<div class="pitch-box ${cls}-b"><span class="pitch-lbl">${label}</span><span class="pitch-v ${cls}">${disp}</span></div>`;
+}
+
+function buildDrsSection(drsData) {
+  if (!drsData || drsData.length === 0) return '';
+  const items = drsData.map((d, i) => {
+    const n = safeNum(d.drs) || 0;
+    const cls = n > 0 ? 'pos' : n < 0 ? 'neg' : 'neu';
+    const disp = n > 0 ? '+' + n : n === 0 ? '±0' : String(n);
+    return (i > 0 ? '<div class="drs-div"></div>' : '') +
+      `<div class="drs-item"><span class="drs-pos">${d.pos}</span><span class="drs-num ${cls}">${disp}</span><span class="drs-inn">${d.inn} inn</span></div>`;
+  }).join('');
+  return `<div class="drs-bar">${items}</div>`;
+}
+
+// ===== PITCHER CARD BUILDER =====
+function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
+  const name   = row[0] || '---';
+  const year   = row[1] || '';
+  const teamCode = String(row[2] || '').toUpperCase();
+  const wins   = row[3] || 0;
+  const losses = row[4] || 0;
+  const era    = row[5] || '--';
+  const totalG = row[6] || 0;
+  const gs     = row[7] || 0;
+  const ip     = row[10] || '--';
+  const k      = row[15] || 0;
+  const whip   = row[17] || '--';
+  const sv     = getColVal(row, headers[0], 'SV');
+  const war    = fmtWAR(resolveWAREffective(row, headers[0], true));
+
+  const stam   = row[50] || 0, ctrl   = row[51] || 0, change = row[52] || 0,
+        ment   = row[53] || 0, strk   = row[54] || 0, heavy  = row[55] || 0;
+
+  const pitchNames = ['フォーシーム','スライダー','チェンジアップ','カーブ','カットボール','ツーシーム'];
+  const pitchHdrNames = [58,61,64,67,70,73].map(i => headers[0][i]).filter(Boolean);
+  const finalPitchNames = pitchHdrNames.length >= 4 ? pitchHdrNames : pitchNames;
+
+  const pitches = [];
+  for (let i = 0; i < 6; i++) {
+    const speed = row[58 + i * 3];
+    const power = row[59 + i * 3];
+    const rate  = row[60 + i * 3];
+    if (speed != null && rate != null && rate > 0) {
+      pitches.push({ name: finalPitchNames[i] || pitchNames[i], speed, power, rate });
+    }
+  }
+
+  const overallScore = calcPitcherOverall(row, war);
+
+  const isStarter   = gs >= totalG * 0.5;
+  const posBadge    = isStarter ? '先発投手' : 'リリーフ';
+  const cardTypeLabel = isStarter
+    ? (strk >= 90 ? '先発エース' : '先発投手')
+    : (strk >= 90 ? 'クローザー' : 'リリーフ');
+
+  const teamStyle    = getTeamStyle(teamCode);
+  const teamBadgeHtml = `<div class="team-badge" style="background:${teamStyle.bg};border:2px solid ${teamStyle.border};text-shadow:1px 1px 0 #000,0 0 8px ${teamStyle.glow};">${teamCode === 'NEW' ? 'NYY' : teamCode}</div>`;
+
+  // 初期列伝（統計ベース、後でAI上書き）
+  const retsudenText = `${year}年、防御率 ${era}、${wins}勝${losses}敗、奪三振 ${k}、WHIP ${whip}、${ip}回投球。` +
+    `スタミナ${stam}・制球${ctrl}・緩急${change}・精神${ment}・奪三振${strk}・球重${heavy}。`;
+
+  const leftVal  = safeNum(row[56]);
+  const baseVal  = safeNum(row[57]);
+  const statBoxes = [
+    buildStatBox('スタミナ', stam),
+    buildStatBox('制　球',   ctrl),
+    buildStatBox('緩　急',   change),
+    buildStatBox('精　神',   ment),
+    buildStatBox('奪三振',   strk),
+    buildStatBox('球　重',   heavy),
+    leftVal  !== null
+      ? buildStatBox('対　左', leftVal)
+      : `<div class="stat-box"><span class="stat-name">対　左</span><span class="stat-val" style="font-size:14px;color:#888">--</span></div>`,
+    baseVal !== null
+      ? buildStatBox('対盗塁', baseVal)
+      : `<div class="stat-box"><span class="stat-name">対盗塁</span><span class="stat-val" style="font-size:14px;color:#888">--</span></div>`,
+  ].join('');
+
+  const pitchRows = pitches.map(p =>
+    `<tr><td class="pn" data-pitch="${escapeHtml(p.name)}">${p.name}</td><td class="ps">${p.speed}</td><td class="pp2">${p.power}</td><td class="pr">${fmtPct(p.rate)}</td></tr>`
+  ).join('');
+
+  const photoSrc   = photoURL ? `<img src="${photoURL}" alt="${name}" onerror="this.style.display='none'">` : '';
+  const seasonLabel = isPeakYear ? `${year} PEAK` : `${year}`;
+
+  return `
+    <div class="top-banner">
+      <span class="card-rank">${t.rank}</span>
+      <span class="stars">${t.stars}</span>
+      <span class="card-type">${cardTypeLabel}</span>
+    </div>
+    <div class="left-panel">
+      <div class="photo-frame">${photoSrc}</div>
+      <div class="photo-top-fade"></div><div class="photo-bot-fade"></div><div class="photo-side-fade"></div>
+      ${teamBadgeHtml}
+      <div class="power-display">
+        <span class="power-label">総合力</span>
+        <span class="power-value" style="${overallScore >= 100 ? 'font-size:26px;' : ''}">${overallScore}</span>
+      </div>
+      <div class="player-name-block">
+        <span class="player-name-ja">${name}</span>
+        ${nameEn ? `<span class="player-name-en">${escapeHtml(nameEn)}</span>` : ''}
+      </div>
+    </div>
+    <div class="right-panel">
+      <div class="header-row">
+        <span class="position-badge">${posBadge}</span>
+        <span class="player-full-name">${name}</span>
+        <span class="season-badge">${seasonLabel}</span>
+      </div>
+      <div class="record-bar">
+        <div class="rec-item"><span class="rec-label">防御率</span><span class="rec-val hl">${era}</span></div>
+        <div class="rec-item"><span class="rec-label">勝利</span><span class="rec-val hl">${wins}</span></div>
+        <div class="rec-item"><span class="rec-label">敗北</span><span class="rec-val">${losses}</span></div>
+        <div class="rec-item"><span class="rec-label">セーブ</span><span class="rec-val pp">${sv}</span></div>
+        <div class="rec-item"><span class="rec-label">イニング</span><span class="rec-val sm">${ip}</span></div>
+        <div class="rec-item"><span class="rec-label">奪三振</span><span class="rec-val pp">${k}</span></div>
+        <div class="rec-item"><span class="rec-label">WAR</span><span class="rec-val hl">${war}</span></div>
+      </div>
+      <div class="sec-title">■ ゲームステータス</div>
+      <div class="stats-grid">${statBoxes}</div>
+      <div class="sec-title">■ 球種データ</div>
+      <table class="pitch-table">
+        <thead><tr><th style="text-align:left;">球種</th><th>球速</th><th>球威</th><th>割合</th></tr></thead>
+        <tbody>${pitchRows}</tbody>
+      </table>
+      <div class="retsuden" id="retsuden-area"><strong>【列伝】</strong> <span class="ai-loading">AI生成中...</span></div>
+    </div>`;
+}
+
+// ===== HITTER CARD BUILDER =====
+function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameEn) {
+  const name     = row[0] || '---';
+  const year     = row[1] || '';
+  const teamCode = String(row[2] || '').toUpperCase();
+  const avg  = fmtRate(row[15]);
+  const obp  = fmtRate(row[16]);
+  const ops  = fmtOPS(row[17]);
+  const hr   = row[9]  || 0;
+  const rbi  = row[10] || 0;
+  const sb   = getSB(row, headers[0]);
+  const war  = fmtWAR(resolveWAREffective(row, headers[0], false));
+
+  const meet  = row[44] || 0, power  = row[45] || 0, speed  = row[46] || 0,
+        chance = row[47] || 0, eye   = row[48] || 0, kres   = row[49] || 0,
+        steal  = row[51] || 0, vsLeft = row[52] || 0;
+  const lead   = row[53], csRate = row[54];
+
+  const pitchLabels = ['FB','2C','CT','SL','CB','CH','SF'];
+  const pitchVals   = pitchLabels.map((lbl, i) => ({ lbl, val: safeNum(row[55 + i]) }));
+  const allPitchNull = pitchVals.every(p => p.val === null);
+
+  const posLabels = ['C','1B','2B','3B','SS','LF','CF','RF'];
+  const drsData   = [];
+  for (let i = 0; i < 8; i++) {
+    const inn = row[28 + i * 2];
+    const drs = row[29 + i * 2];
+    if (inn && inn !== '--' && inn !== null && inn !== '') {
+      drsData.push({ pos: posLabels[i], inn: String(inn), drs: safeNum(drs) || 0 });
+    }
+  }
+
+  let primaryPos = 'RF';
+  if (drsData.length > 0) {
+    primaryPos = drsData.reduce((a, b) => parseFloat(a.inn) >= parseFloat(b.inn) ? a : b).pos;
+  }
+  const posJa = { 'C':'捕手','1B':'一塁手','2B':'二塁手','3B':'三塁手','SS':'遊撃手','LF':'左翼手','CF':'中堅手','RF':'右翼手' };
+  const posBadge = isCatcher ? '捕手' : (posJa[primaryPos] || '野手');
+
+  const realWar = resolveWAREffective(row, headers[0], false);  // 実測値 or 推定値（通算行は加重平均）
+  const overallScore = calcHitterOverall(row, isCatcher, realWar);
+
+  let cardTypeLabel;
+  if (isCatcher)       cardTypeLabel = power >= 85 ? '大砲捕手' : '守備型捕手';
+  else if (power >= 100) cardTypeLabel = 'スラッガー';
+  else if (speed >= 80)  cardTypeLabel = '俊足外野手';
+  else if (eye >= 85)    cardTypeLabel = 'OBP型打者';
+  else                   cardTypeLabel = '野手';
+
+  const teamStyle    = getTeamStyle(teamCode);
+  const teamBadgeHtml = `<div class="team-badge" style="background:${teamStyle.bg};border:2px solid ${teamStyle.border};text-shadow:1px 1px 0 #000,0 0 8px ${teamStyle.glow};">${teamCode === 'NEW' ? 'NYY' : teamCode}</div>`;
+
+  const statBoxes = [
+    buildStatBox('ミート',   meet),
+    buildStatBox('パワー',   power),
+    buildStatBox('スピード', speed),
+    buildStatBox('チャンス', chance),
+    buildStatBox('選球眼',   eye),
+    buildStatBox('三振耐性', kres),
+    buildStatBox('盗塁能',   steal),
+    buildStatBox('対左投手', vsLeft),
+  ].join('');
+
+  const pitchBoxes = pitchVals.map(p => buildPitchPointBox(p.lbl, p.val)).join('');
+  const eraNote    = allPitchNull ? `<div class="era-note"><span>時代的<br>データなし</span></div>` : '';
+
+  let defSection = '';
+  if (isCatcher) {
+    // 守備DRS: イニング上位2ポジションのみ表示
+    const topDrs = [...drsData].sort((a, b) => parseFloat(b.inn) - parseFloat(a.inn)).slice(0, 2);
+    const catDrs = topDrs.length > 0
+      ? buildDrsSection(topDrs)
+      : `<div class="drs-bar"><div class="drs-item"><span class="drs-pos">C</span><span class="drs-num neu">±0</span></div></div>`;
+    const leadDisp = lead   !== null && lead   !== undefined ? lead   : 0;
+    const csDisp   = csRate !== null && csRate !== undefined ? csRate : '--';
+    // 守備DRSと捕手能力を横並び1行で表示
+    defSection = `
+      <div class="combo-row" style="align-items:center;">
+        <div style="display:flex;flex-direction:column;gap:2px;flex:1;">
+          <div class="sec-title">■ 守備 DRS</div>
+          ${catDrs}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px;flex:1.2;">
+          <div class="sec-title">■ 捕手能力</div>
+          <div class="catcher-bar" style="padding:4px 8px;">
+            <div class="ca-item">
+              <span class="ca-label">リード</span>
+              <span class="ca-val lead" style="font-size:20px;">${leadDisp}</span>
+            </div>
+            <div class="ca-item">
+              <span class="ca-label">阻止率</span>
+              <span class="ca-val cs" style="font-size:20px;">${csDisp}</span>
+              <span class="ca-unit">%</span>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  } else {
+    defSection = `
+      <div class="sec-title">■ 守備 DRS</div>
+      ${drsData.length > 0
+        ? buildDrsSection(drsData)
+        : '<div class="drs-bar"><span style="color:#888;font-size:11px;">データなし</span></div>'}`;
+  }
+
+  const opsNum      = parseFloat(ops);
+  const seasonSuffix = isPeakYear
+    ? ((!isNaN(opsNum) && opsNum >= 1.0) || (hr >= 50) ? 'MVP' : 'PEAK')
+    : '';
+  const seasonLabel  = isPeakYear ? `${year} ${seasonSuffix}` : `${year}`;
+  const photoSrc     = photoURL ? `<img src="${photoURL}" alt="${name}" onerror="this.style.display='none'">` : '';
+
+  return `
+    <div class="top-banner">
+      <span class="card-rank">${t.rank}</span>
+      <span class="stars">${t.stars}</span>
+      <span class="card-type">${cardTypeLabel}</span>
+    </div>
+    <div class="left-panel">
+      <div class="photo-frame">${photoSrc}</div>
+      <div class="photo-top-fade"></div><div class="photo-bot-fade"></div><div class="photo-side-fade"></div>
+      ${teamBadgeHtml}
+      <div class="power-display">
+        <span class="power-label">総合力</span>
+        <span class="power-value" style="${overallScore >= 100 ? 'font-size:26px;' : ''}">${overallScore}</span>
+      </div>
+      <div class="player-name-block">
+        <span class="player-name-ja">${name}</span>
+        ${nameEn ? `<span class="player-name-en">${escapeHtml(nameEn)}</span>` : ''}
+      </div>
+    </div>
+    <div class="right-panel">
+      <div class="header-row">
+        <span class="position-badge">${posBadge}</span>
+        <span class="player-full-name">${name}</span>
+        <span class="season-badge">${seasonLabel}</span>
+      </div>
+      <div class="record-bar">
+        <div class="rec-item"><span class="rec-label">打率</span><span class="rec-val hl">${avg}</span></div>
+        <div class="rec-item"><span class="rec-label">本塁打</span><span class="rec-val pp">${hr}</span></div>
+        <div class="rec-item"><span class="rec-label">打点</span><span class="rec-val">${rbi}</span></div>
+        <div class="rec-item"><span class="rec-label">盗塁</span><span class="rec-val">${sb}</span></div>
+        <div class="rec-item"><span class="rec-label">出塁率</span><span class="rec-val hl">${obp}</span></div>
+        <div class="rec-item"><span class="rec-label">OPS</span><span class="rec-val hl">${ops}</span></div>
+        <div class="rec-item"><span class="rec-label">WAR</span><span class="rec-val hl">${war}</span></div>
+      </div>
+      <div class="sec-title">■ ゲームステータス</div>
+      <div class="stats-grid">${statBoxes}</div>
+      <div class="sec-title">■ 対球種ポイント</div>
+      <div class="pitch-grid">${pitchBoxes}${eraNote}</div>
+      ${defSection}
+      <div class="retsuden" id="retsuden-area"><strong>【列伝】</strong> <span class="ai-loading">AI生成中...</span></div>
+    </div>`;
+}
+
+// ===== EXCEL 変更ハンドラ（年代選択UIを更新） =====
+function onExcelChange(input) {
+  if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb   = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+      if (rows.length < 3) return;
+
+      g_rows     = rows;
+      g_headers  = rows.slice(0, 2);
+      g_dataRows = rows.slice(2).filter(r => r[0] && r[0] !== null);
+      g_isPitcher = rows[0][3] === '勝利' || rows[0][3] === '勝';
+      g_isCatcher = !g_isPitcher && g_dataRows.some(r =>
+        r[53] !== null && r[53] !== undefined && r[53] !== '--' && String(r[53]).trim() !== '');
+
+      // ピーク年検出
+      let peakRow;
+      if (g_isPitcher) {
+        peakRow = g_dataRows.reduce((best, r) => {
+          const era = parseFloat(r[5]), bestEra = parseFloat(best[5]);
+          return (!isNaN(era) && (isNaN(bestEra) || era < bestEra)) ? r : best;
+        }, g_dataRows[0]);
+      } else {
+        peakRow = g_dataRows.reduce((best, r) => {
+          const opsCur = parseFloat(fmtOPS(r[17])) || 0;
+          const opsBest = parseFloat(fmtOPS(best[17])) || 0;
+          return opsCur > opsBest ? r : best;
+        }, g_dataRows[0]);
+      }
+      g_peakYear = peakRow ? peakRow[1] : null;
+
+      // ドロップダウン生成
+      const sel = document.getElementById('year-select');
+      sel.innerHTML = '';
+      g_dataRows.forEach(r => {
+        const yr  = r[1];
+        const opt = document.createElement('option');
+        opt.value = yr;
+        opt.textContent = yr + '年' + (yr == g_peakYear ? ' ★ピーク' : '');
+        if (yr == g_peakYear) opt.style.color = '#ffcc44';
+        sel.appendChild(opt);
+      });
+      sel.value = g_peakYear;
+
+      // 年代情報更新
+      updateYearInfo(g_peakYear);
+
+      // 年代選択パネルを表示
+      document.getElementById('year-selector-section').style.display = 'flex';
+    } catch(err) {
+      console.warn('Excel先読みエラー:', err);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function onYearChange() {
+  const sel = document.getElementById('year-select');
+  updateYearInfo(sel.value);
+}
+
+function updateYearInfo(selectedYear) {
+  const row = g_dataRows && g_dataRows.find(r => String(r[1]) === String(selectedYear));
+  if (!row) { document.getElementById('year-info').innerHTML = ''; return; }
+
+  let info = '';
+  if (g_isPitcher) {
+    const era  = row[5]  || '--';
+    const wins = row[3]  || 0;
+    const k    = row[15] || 0;
+    const whip = row[17] || '--';
+    info = `防御率 <b style="color:#ffd700">${era}</b>　${wins}勝　奪三振 <b style="color:#ff99cc">${k}</b>　WHIP ${whip}`;
+  } else {
+    const avg = fmtRate(row[15]);
+    const ops = fmtOPS(row[17]);
+    const hr  = row[9]  || 0;
+    const rbi = row[10] || 0;
+    info = `打率 <b style="color:#ffd700">${avg}</b>　OPS <b style="color:#ffd700">${ops}</b>　${hr}本塁打　${rbi}打点`;
+  }
+
+  const isPk  = String(selectedYear) === String(g_peakYear);
+  const pkTag = isPk ? '<span class="peak-tag">★ PEAK</span>' : '';
+  document.getElementById('year-info').innerHTML = info + pkTag;
+}
+
+// ===== MLB データから列伝・称号を自動生成（API キー不要） =====
+
+// ── MLB Stats API からシーズン成績・受賞歴を取得 ────────────────
+async function fetchMlbSeasonData(mlbId, year, isPitcher) {
+  if (!mlbId) return { stats: {}, awards: [] };
+  try {
+    const group = isPitcher ? 'pitching' : 'hitting';
+    const [statsRes, awardsRes] = await Promise.all([
+      fetch(`https://statsapi.mlb.com/api/v1/people/${mlbId}/stats?stats=season&season=${year}&group=${group}&sportId=1`),
+      fetch(`https://statsapi.mlb.com/api/v1/people/${mlbId}/awards`)
+    ]);
+    const statsData  = statsRes.ok  ? await statsRes.json()  : {};
+    const awardsData = awardsRes.ok ? await awardsRes.json() : {};
+
+    const seasonStats = statsData?.stats?.[0]?.splits?.[0]?.stat || {};
+
+    // 受賞歴をシーズンでフィルタ（nameとidの両方を保持）
+    const allAwards = awardsData?.awards || [];
+    const yearAwards = allAwards
+      .filter(a => {
+        const s = a.season || (a.date ? String(a.date).substring(0,4) : '');
+        return s === String(year);
+      })
+      .map(a => ({ name: a.name || '', id: a.id || '' }))
+      .filter(a => a.name || a.id);
+
+    return { stats: seasonStats, awards: yearAwards };
+  } catch (e) {
+    console.warn('MLB Stats API 取得エラー:', e.message);
+    return { stats: {}, awards: [] };
+  }
+}
+
+// ── 受賞名（英語）→日本語変換 ────────────────────────────────
+function awardToJa(award) {
+  const n = (award.name || award.id || '').toLowerCase();
+  // リーグ識別
+  const isAL = n.includes('american league') || n.includes(' al ') || n.startsWith('al ');
+  const isNL = n.includes('national league')  || n.includes(' nl ') || n.startsWith('nl ');
+  const lg   = isAL ? 'AL' : isNL ? 'NL' : '';
+  if (n.includes('most valuable player') || n.includes('mvp'))
+    return lg ? `${lg} MVP` : 'MVP';
+  if (n.includes('cy young'))
+    return lg ? `${lg}サイ・ヤング賞` : 'サイ・ヤング賞';
+  if (n.includes('rookie of the year') || n.includes('rookie'))
+    return lg ? `${lg}新人王` : '新人王';
+  if (n.includes('gold glove'))           return 'ゴールドグラブ賞';
+  if (n.includes('silver slugger'))       return 'シルバースラッガー賞';
+  if (n.includes('hank aaron'))          return 'ハンク・アーロン賞';
+  if (n.includes('world series') && n.includes('mvp')) return 'ワールドシリーズMVP';
+  if (n.includes('championship series')) return 'リーグ優勝シリーズMVP';
+  if (n.includes('comeback player'))     return 'カムバック賞';
+  if (n.includes('reliever'))            return 'リリーバー賞';
+  if (n.includes('all-star') || n.includes('allstar')) return 'オールスター';
+  if (n.includes('batting title'))       return '首位打者';
+  if (n.includes('home run') && n.includes('leader')) return '本塁打王';
+  return award.name || award.id || '';
+}
+
+// ── 称号（cardType）を決定 ────────────────────────────────────
+function buildCardType(row, awardsJa) {
+  const hr  = parseInt(row[9])  || 0;
+  const k   = parseInt(row[15]) || 0;
+  const era = parseFloat(row[5]) || 99;
+  const wins= parseInt(row[3])  || 0;
+  const gs  = parseInt(row[7])  || 0;
+  const tg  = parseInt(row[6])  || 1;
+  const isStarter = g_isPitcher && gs >= tg * 0.5;
+  const hand = String(row[57] || '').toUpperCase().includes('L') ? '左腕' : '右腕';
+  const ops  = parseFloat(fmtOPS(row[17])) || 0;
+  const pos  = g_mlbPos || '';
+  const posMap = { P:'投手',C:'捕手','1B':'一塁手','2B':'二塁手','3B':'三塁手',
+    SS:'遊撃手',LF:'左翼手',CF:'中堅手',RF:'右翼手',DH:'指名打者',OF:'外野手' };
+  const posJa = posMap[pos.toUpperCase()] || '';
+
+  const mvp  = awardsJa.find(a => a.includes('MVP') && !a.includes('ワールドシリーズ') && !a.includes('リーグ優勝'));
+  const cy   = awardsJa.find(a => a.includes('サイ・ヤング'));
+  const ws   = awardsJa.find(a => a.includes('ワールドシリーズMVP'));
+  const rook = awardsJa.find(a => a.includes('新人王'));
+
+  // ① WS MVP
+  if (ws) return 'ワールドシリーズMVP';
+  // ② MVP
+  if (mvp) {
+    if (!g_isPitcher && hr >= 60) return '本塁打記録MVP';
+    if (!g_isPitcher && hr >= 40) return `MVP${posJa || '打者'}`;
+    if (!g_isPitcher)             return `${mvp}${posJa ? '・' + posJa : ''}`;
+    return `MVP${hand}`;
+  }
+  // ③ サイ・ヤング
+  if (cy) return cy.replace('賞','') + `・${hand}`;
+  // ④ 新人王
+  if (rook) return rook;
+  // ⑤ 記録から生成
+  if (!g_isPitcher) {
+    const games = parseInt(row[6]) || 0;
+    const hasEnoughGames = games >= 80; // 出場数が少ない場合はOPS/打率系タイトルを付与しない
+    if (hr >= 73) return '本塁打記録男';
+    if (hr >= 60) return `${hr}HR王`;
+    if (hr >= 50) return `${hr}本塁打達成`;
+    if (hr >= 40 && hasEnoughGames) return `${hr}本塁打の強打者`;
+    if (ops >= 1.20 && hasEnoughGames) return 'OPS怪物打者';
+    if (ops >= 1.00 && hasEnoughGames) return '勝負強打者';
+    const avg = parseFloat(String(fmtRate(row[15])).replace(/^\./,'0.')) || 0;
+    if (avg >= 0.370 && hasEnoughGames) return '首位打者候補';
+    if (avg >= 0.340 && hasEnoughGames) return `打率${fmtRate(row[15])}の巧打者`;
+    const sb = getSB(row);
+    if (sb >= 60) return `${sb}盗塁王`;
+    if (sb >= 40 && hasEnoughGames) return `${sb}盗塁の俊足選手`;
+    const rbi = parseInt(row[10]) || 0;
+    if (rbi >= 140) return `${rbi}打点王`;
+    if (rbi >= 100 && hasEnoughGames) return `${rbi}打点の勝負強打者`;
+    // 受賞歴があればそちらを優先
+    if (awardsJa.length) return awardsJa[0];
+    // 受賞歴なし・出場十分なら数字ベースのフォールバック（hr=0は除外）
+    if (hr >= 20 && hasEnoughGames) return `${hr}本塁打の強打者`;
+    if (sb >= 20 && hasEnoughGames) return `${sb}盗塁の俊足選手`;
+    if (avg >= 0.300 && hasEnoughGames) return `打率${fmtRate(row[15])}の巧打者`;
+    // 試合数不足 or 特徴なし → ポジション名のみ
+    return posJa || '野手';
+  } else {
+    if (k >= 300) return `${k}奪三振${hand}`;
+    if (k >= 250) return `奪三振王${hand}`;
+    if (era < 1.80 && gs > 10) return `防御率${row[5]}の${hand}`;
+    if (wins >= 22) return `${wins}勝${hand}`;
+    if (!isStarter && era < 2.20) return '不滅の守護神';
+    return awardsJa.length ? awardsJa[0] : `${wins}勝${hand}投手`;
+  }
+}
+
+// ── MLB通算成績 歴代ランキング基準（2024年時点・降順） ──────────────
+const _MLB_RANKS = {
+  // 野手
+  hr:  [762, 755, 714, 696, 660, 630, 612, 609, 586, 583],
+  //    Bonds,Aaron,Ruth,ARod,Mays,Griffey,Thome,Sosa,F.Robinson,McGwire
+  rbi: [2297, 2213, 2086, 2075, 1996, 1995, 1951, 1938, 1922, 1917],
+  //    Aaron,Ruth,ARod,Anson,Bonds,Gehrig,Musial,Cobb,Foxx,E.Murray
+  sb:  [1406, 938, 897, 808, 752, 741, 739, 738, 722, 689],
+  //    Henderson,Brock,Cobb,Raines,Coleman,Collins,Latham,Carey,Wagner,Morgan
+  avg: [0.366, 0.358, 0.356, 0.349, 0.346, 0.345, 0.344, 0.344, 0.342, 0.342],
+  //    Cobb,Hornsby,Jackson,ODoul,Delahanty,Speaker,Hamilton,Williams,Brouthers,Ruth
+  ops: [1.164, 1.116, 1.080, 1.051, 1.038, 1.017, 1.010, 0.996, 0.982, 0.977],
+  //    Ruth,Williams,Gehrig,Bonds,Foxx,Greenberg,Hornsby,Ramirez,McGwire,DiMaggio
+  // 投手
+  k:   [5714, 4875, 4672, 4136, 3701, 3640, 3574, 3534, 3508, 3371],
+  //    Ryan,R.Johnson,Clemens,Carlton,Blyleven,Seaver,Sutton,Perry,W.Johnson,Maddux
+  wins:[511, 417, 373, 373, 365, 363, 361, 342, 329, 328],
+  //    CYoung,W.Johnson,Alexander,Mathewson,Galvin,Spahn,Nichols,Keefe,Carlton,Clarkson
+  sv:  [652, 601, 478, 424, 422, 390, 367, 358, 347, 326],
+  //    Rivera,Hoffman,L.Smith,J.Franco,B.Wagner,Eckersley,Reardon,Percival,Myers,R.Hernandez
+};
+
+/** 通算成績の歴代順位を返す（1〜10位、圏外は null） */
+function _mlbCareerRank(category, value) {
+  const tbl = _MLB_RANKS[category];
+  if (!tbl || value == null) return null;
+  for (let i = 0; i < tbl.length; i++) {
+    if (value >= tbl[i]) return i + 1;
+  }
+  return null;
+}
+
+/** 順位テキスト（1位→"歴代最多"、2位以降→"歴代N位"） */
+function _rankLabel(r) { return r === 1 ? '歴代最多' : `歴代${r}位`; }
+
+// ── 野手・列伝テキスト生成 ────────────────────────────────────
+function buildHitterRetsuden(row, year, awardsJa, apiSt) {
+  const hr    = parseInt(apiSt.homeRuns    ?? row[9])  || 0;
+  const rbi   = parseInt(apiSt.rbi         ?? row[10]) || 0;
+  const avg   = apiSt.avg  || fmtRate(row[15]);
+  const ops   = apiSt.ops  || fmtOPS(row[17]);
+  const obp   = apiSt.obp  || fmtRate(row[16]);
+  const sb    = parseInt(apiSt.stolenBases ?? getSB(row)) || 0;
+  const games = parseInt(apiSt.gamesPlayed ?? row[6]) || 0;
+  const opsN  = parseFloat(ops) || 0;
+  const avgN  = parseFloat(avg) || 0;
+  const obpN  = parseFloat(obp) || 0;
+
+  // ── 通算カード判定（1シーズンでは不可能な試合数） ──
+  const isCareerCard = !/^\d{4}$/.test(String(year).trim()) || games >= 170;
+
+  if (isCareerCard) {
+    // ── 通算カード向けコメント（最大5行） ──
+    const lines = [];
+    const span = !/^\d{4}$/.test(String(year).trim()) ? '通算' : `${games}試合`;
+
+    // 行1: 主要スタッツ要約
+    const sp = [];
+    if (hr  > 0)  sp.push(`${hr}本塁打`);
+    if (rbi > 0)  sp.push(`${rbi}打点`);
+    sp.push(`打率${avg}`);
+    if (sb  > 20) sp.push(`${sb}盗塁`);
+    lines.push(`${span}で${sp.join('・')}・OPS${ops}を積み上げた、リーグを代表し続けた強打者。`);
+
+    // 行2: 受賞歴 OR 主要マイルストーン
+    if (awardsJa.length > 0) {
+      lines.push(`${awardsJa.slice(0, 3).join('・')}など栄誉を手にし、時代を代表するスターとして球史に名を刻んだ。`);
+    } else if (hr >= 500) {
+      lines.push(`通算${hr}本塁打は球史に残る真の長距離砲の証明であり、偉業として永く語り継がれる。`);
+    } else if (hr >= 300) {
+      lines.push(`通算${hr}本塁打を積み上げ、本物のスラッガーとして長年にわたり打線の軸を担い続けた。`);
+    } else if (sb >= 400) {
+      lines.push(`通算${sb}盗塁という機動力で攻撃のダイナモとして輝き続け、相手バッテリーを翻弄した。`);
+    } else if (obpN >= 0.390) {
+      lines.push(`通算出塁率${obp}は選球眼と打撃技術の高さが本物であり続けた証で、打線の起点として機能した。`);
+    } else if (opsN >= 0.900) {
+      lines.push(`通算OPS${ops}はキャリアを通じて一線級打者だった証明で、対戦投手を常に苦しめ続けた。`);
+    }
+
+    // 行3: MLB歴代順位（最も上位の記録を1件のみ・具体的な順位を明記）
+    const rankChecks = [
+      { cat: 'hr',  val: hr,   ok: true,          fmt: r => `通算${hr}本塁打はMLB${_rankLabel(r)}の長打力で、球史に刻まれたホームランレジェンド。` },
+      { cat: 'rbi', val: rbi,  ok: true,          fmt: r => `通算${rbi}打点はMLB${_rankLabel(r)}の打点記録であり、勝負強さをキャリア通じて証明した。` },
+      { cat: 'sb',  val: sb,   ok: true,          fmt: r => `通算${sb}盗塁はMLB${_rankLabel(r)}の快足伝説で、機動力野球の象徴として球史に輝く。` },
+      { cat: 'ops', val: opsN, ok: games >= 500,  fmt: r => `通算OPS${ops}はMLB${_rankLabel(r)}の最高峰打撃力であり、時代を超えた打者の格を示す数字。` },
+      { cat: 'avg', val: avgN, ok: games >= 500,  fmt: r => `通算打率${avg}はMLB${_rankLabel(r)}の確実性で、どの時代でも首位打者級の精度を誇った。` },
+    ];
+    let topRank = null, topText = null;
+    for (const c of rankChecks) {
+      if (!c.ok) continue;
+      const r = _mlbCareerRank(c.cat, c.val);
+      if (r && (!topRank || r < topRank)) { topRank = r; topText = c.fmt(r); }
+    }
+    if (topText) lines.push(topText);
+
+    // 行4: 副次的な特筆（行3で記録行を使った場合はスキップ、まだ行数に余裕がある場合のみ）
+    if (!topText && opsN >= 0.900 && lines.length < 4) {
+      lines.push(`通算OPS${ops}はキャリアを通じて一線級打者だった証明で、対戦投手を常に苦しめ続けた。`);
+    }
+
+    // 最終行: 締め（常に1行）
+    const closings = [
+      `ファンに愛され、長年チームの顔として球団史に刻まれた不朽の名選手。`,
+      `誰もが認める実力でチームを牽引し続けた、球団にとって誇りある功労者。`,
+      `その打撃は時代を超えて語り継がれ、後進の選手たちへの道標となり続けている。`,
+    ];
+    lines.push(closings[hr % closings.length]);
+    return lines.join('\n');
+  }
+
+  // ── シングルシーズン ──
+  // 出場試合が少ない場合は極端な評価を抑制
+  const isSparsePA = games > 0 && games < 30;
+
+  // 複数ポジション（ユーティリティ）チェック
+  const posLabels = ['C','1B','2B','3B','SS','LF','CF','RF'];
+  const posJa = { C:'捕手', '1B':'一塁', '2B':'二塁', '3B':'三塁', SS:'遊撃', LF:'左翼', CF:'中堅', RF:'右翼' };
+  const drsInn = [];
+  for (let i = 0; i < 8; i++) {
+    const inn = parseFloat(row[28 + i * 2]) || 0;
+    if (inn > 0) drsInn.push({ pos: posLabels[i], inn });
+  }
+  const maxInn = drsInn.length > 0 ? Math.max(...drsInn.map(d => d.inn)) : 0;
+  const multiPosList = drsInn.filter(d => maxInn > 0 && d.inn >= maxInn * 0.4);
+  const isUtility = multiPosList.length >= 2;
+
+  const lines = [];
+
+  // 1文：主要成績（試合数少ない場合は注記）
+  const p = [];
+  if (hr > 0)  p.push(`${hr}本塁打`);
+  if (rbi > 0) p.push(`${rbi}打点`);
+  p.push(`打率${avg}`);
+  if (sb > 5)  p.push(`${sb}盗塁`);
+  if (isSparsePA) {
+    lines.push(`${year}年、限られた出場機会の中で${p.join('・')}・OPS${ops}という数字を残した。`);
+  } else {
+    lines.push(`${year}年、${p.join('・')}・OPS${ops}という成績でシーズンを戦い抜いた。`);
+  }
+
+  // 2文：受賞歴 or 特筆成績（少出場時は受賞歴のみ）
+  if (awardsJa.length > 0) {
+    lines.push(`${awardsJa.slice(0,3).join('・')}を受賞し、リーグ最高の打者として名を刻んだシーズン。`);
+  } else if (!isSparsePA && hr >= 50) {
+    lines.push(`${hr}本塁打という圧倒的な長打力でリーグ全投手を震え上がらせた。`);
+  } else if (!isSparsePA && opsN >= 1.05) {
+    lines.push(`OPS${ops}はリーグ屈指の数字で、対戦投手が苦しめられ続けたシーズン。`);
+  } else if (!isSparsePA && obpN >= 0.420) {
+    lines.push(`出塁率${obp}の選球眼で塁上を賑わせ、得点圏での存在感は別格だった。`);
+  } else if (!isSparsePA && sb >= 30) {
+    lines.push(`${sb}盗塁で相手バッテリーに的を絞らせず、攻撃のダイナモとして機能した。`);
+  }
+
+  // 3文：記録・スタイル（少出場時は省略）
+  if (!isSparsePA) {
+    if (hr >= 73) {
+      lines.push(`マーク・マグワイアの70本塁打記録を超え、MLB史上最多のシングルシーズン本塁打記録を樹立。`);
+    } else if (hr >= 62) {
+      lines.push(`ロジャー・マリスの61本塁打記録を打ち破り、MLB新記録を樹立した歴史的快挙。`);
+    } else if (hr >= 60) {
+      lines.push(`60本塁打の大台を超え、MLB史に刻まれる歴史的な長打力を世界に示した。`);
+    } else if (obpN >= 0.480) {
+      lines.push(`出塁率${obp}は敬遠を選ぶほど投手が恐れた証明で、歴代最高水準の数字。`);
+    } else if (sb >= 50) {
+      lines.push(`${sb}盗塁と長打力を兼ね備えた史上最高クラスの5ツールプレーヤー。`);
+    } else if (isUtility) {
+      const posStr = multiPosList.map(d => posJa[d.pos] || d.pos).join('・');
+      lines.push(`${posStr}など複数ポジションを高水準でこなすユーティリティ性も光り、守備でも首脳陣の信頼を勝ち取った。`);
+    } else if (avgN >= 0.350 && hr >= 20) {
+      lines.push(`高打率と長打力を高次元で両立した、現代MLBでも稀有なコンタクト型スラッガー。`);
+    } else if (avgN >= 0.340) {
+      lines.push(`打率${avg}は現代MLB水準では突出した数字で、相手投手を攻略し続けた証明。`);
+    } else if (hr >= 40) {
+      lines.push(`${hr}本塁打の破壊力は相手投手の戦略を変えるほどで、本物の長距離砲として君臨。`);
+    } else if (sb >= 30 && hr >= 20) {
+      lines.push(`${hr}本塁打・${sb}盗塁の30-30を達成し、パワーとスピードを高次元で両立させた。`);
+    } else if (opsN >= 0.900) {
+      lines.push(`コンタクトと長打力のバランスで、どんな投手にも対応できる打撃の完成度を示した。`);
+    } else if (avgN >= 0.300) {
+      lines.push(`打率${avg}の確実性を軸に、チャンスで勝負強さを発揮し続けた。`);
+    } else if (rbi >= 100) {
+      lines.push(`${rbi}打点はチームの得点力を支えた原動力であり、クラッチ力の高さが光ったシーズン。`);
+    } else {
+      // バリエーション豊かな締め
+      const styleLines = [
+        `打線の軸として毎打席に威圧感を放ち、相手バッテリーの配球を左右し続けた存在だった。`,
+        `選球眼と打撃技術を活かし、チームの得点源として欠かせない役割を担ったシーズン。`,
+        `得点圏での勝負強さとコンタクト能力で、チームの攻撃をたびたび牽引した。`,
+        `粘り強い打席での集中力と走塁センスで、チームに何度も好機をもたらした。`,
+      ];
+      lines.push(styleLines[(hr + rbi) % styleLines.length]);
+    }
+  }
+
+  // 4文：補足（特筆条件のみ・重複回避）
+  const already30_30 = lines.some(l => l.includes('30-30'));
+  if (!isSparsePA && hr >= 60 && obpN >= 0.480) {
+    lines.push(`出塁率${obp}も記録し、打者として全ての指標で頂点に立った歴史的シーズン。`);
+  } else if (!isSparsePA && sb >= 30 && hr >= 30 && !already30_30) {
+    lines.push(`30本塁打・30盗塁を同時達成し、パワーとスピードを高次元で両立させた。`);
+  }
+
+  // 5文：総評
+  if (!isSparsePA && (hr >= 70 || opsN >= 1.3)) {
+    lines.push(`野球史上最高峰の打者の一人として、その活躍は永く語り継がれている。`);
+  } else if (awardsJa.some(a => a.includes('MVP'))) {
+    lines.push(`リーグ最高選手の称号を手にし、チームの核として球団史に刻まれた。`);
+  } else if (isSparsePA) {
+    lines.push(`限られた出場でも実力を見せつけ、次シーズンへの大きな期待を残した。`);
+  } else {
+    const closings = [
+      `そのバットはファンに夢と興奮を与え続け、球場に何度も歓声をもたらした。`,
+      `チームの勝利に貢献し続けた確かな実力と存在感は、ファンの記憶に深く刻まれた。`,
+      `誰もが認めるパフォーマンスでチームを支え、球団にとって誇りある一年を刻んだ。`,
+      `フィールドで発揮し続けた実力と熱さで、ファンとチームメイトの信頼を勝ち取った。`,
+    ];
+    lines.push(closings[(hr + sb) % closings.length]);
+  }
+  return lines.join('\n');
+}
+
+// ── 投手・列伝テキスト生成 ────────────────────────────────────
+function buildPitcherRetsuden(row, year, awardsJa, apiSt) {
+  const wins = parseInt(apiSt.wins           ?? row[3])  || 0;
+  const loss = parseInt(apiSt.losses         ?? row[4])  || 0;
+  const era  = apiSt.era    || row[5]  || '--';
+  const k    = parseInt(apiSt.strikeOuts     ?? row[15]) || 0;
+  const whip = apiSt.whip   || row[17] || '--';
+  const ip   = parseFloat(apiSt.inningsPitched ?? row[10]) || 0;
+  const sv   = parseInt(apiSt.saves          ?? 0)        || 0;
+  const gs   = parseInt(row[7])  || 0;
+  const tg   = parseInt(row[6])  || 1;
+  const isStarter = gs >= tg * 0.5;
+  const hand  = String(row[57] || '').toUpperCase().includes('L') ? '左腕' : '右腕';
+  const eraN  = parseFloat(era) || 99;
+  const ctrl  = safeNum(row[51]) || 0;
+  const strk  = safeNum(row[54]) || 0;
+
+  // ── 通算カード判定（1シーズンで不可能な登板数・イニング数） ──
+  const isCareerCard = !/^\d{4}$/.test(String(year).trim()) || tg >= 90 || ip >= 300;
+
+  if (isCareerCard) {
+    // ── 通算カード向けコメント（最大5行） ──
+    const lines = [];
+    const roleStr = isStarter ? '先発' : 'リリーフ';
+
+    // 行1: 主要スタッツ要約
+    const sp = [];
+    if (tg   > 0) sp.push(`${tg}登板`);
+    if (ip   > 0) sp.push(`${Math.floor(ip)}イニング`);
+    if (wins > 0) sp.push(`${wins}勝`);
+    if (sv   > 0) sp.push(`${sv}セーブ`);
+    lines.push(`通算${sp.join('・')}・防御率${era}を記録した、${roleStr}の柱として時代を支えた名投手。`);
+
+    // 行2: 受賞歴 OR 主要マイルストーン
+    if (awardsJa.length > 0) {
+      lines.push(`${awardsJa.slice(0, 3).join('・')}など栄誉を手にし、MLB投手史に名を刻んだ。`);
+    } else if (k >= 3000) {
+      lines.push(`通算${k}奪三振はMLB史に刻まれる偉業であり、世紀の奪三振マシンとして球史に燦然と輝く。`);
+    } else if (wins >= 300) {
+      lines.push(`通算${wins}勝は殿堂入り投手の証であり、長年にわたってローテーションの絶対的な柱であり続けた。`);
+    } else if (k >= 2000) {
+      lines.push(`通算${k}奪三振を積み上げた剛腕として、時代を超えて語り継がれる存在となった。`);
+    } else if (wins >= 200) {
+      lines.push(`通算${wins}勝でローテーションの軸として長年チームを支え、幾多の勝利を手繰り寄せた。`);
+    } else if (sv >= 300) {
+      lines.push(`通算${sv}セーブはクローザーとして球史に名を刻む偉業であり、守護神の証として輝き続ける。`);
+    }
+
+    // 行3: 防御率安定性（eraN < 3.50 かつ行数に余裕がある場合）
+    if (eraN < 3.50 && lines.length < 3) {
+      lines.push(`通算防御率${era}の安定感は打者にとって常に難攻不落の存在だった証であり、その精度は傑出していた。`);
+    }
+
+    // 行4: MLB歴代順位（最も上位の記録を1件のみ・具体的な順位を明記）
+    const rankChecks = [
+      { cat: 'k',    val: k,    fmt: r => `通算${k}奪三振はMLB${_rankLabel(r)}の記録で、球史に残る奪三振伝説として永く語り継がれる。` },
+      { cat: 'wins', val: wins, fmt: r => `通算${wins}勝はMLB${_rankLabel(r)}の金字塔であり、長年マウンドで圧倒し続けた伝説の勝ち星。` },
+      { cat: 'sv',   val: sv,   fmt: r => `通算${sv}セーブはMLB${_rankLabel(r)}の不滅の記録であり、クローザーとして球史に刻まれた守護神の証。` },
+    ];
+    let topRank = null, topText = null;
+    for (const c of rankChecks) {
+      const r = _mlbCareerRank(c.cat, c.val);
+      if (r && (!topRank || r < topRank)) { topRank = r; topText = c.fmt(r); }
+    }
+    if (topText) lines.push(topText);
+
+    // 最終行: 締め（常に1行）
+    const closings = [
+      `長年にわたりマウンドに立ち続けた姿は、ファンにとって球団の象徴そのものだった。`,
+      `チームの勝利を手繰り寄せ続けた投球は、後進の手本として今も語り継がれている。`,
+      `その闘志と技術はチームメイトを鼓舞し、ファンに数え切れない感動をもたらした。`,
+    ];
+    lines.push(closings[wins % closings.length]);
+    return lines.join('\n');
+  }
+
+  // ── シングルシーズン ──
+  // 球種データを読み込む（row[58+i*3]=球速, row[59+i*3]=球威, row[60+i*3]=使用率）
+  const pitchNames = ['フォーシーム','スライダー','チェンジアップ','カーブ','カットボール','ツーシーム'];
+  const pitches = [];
+  for (let i = 0; i < 6; i++) {
+    const speed = row[58 + i * 3];
+    const power = safeNum(row[59 + i * 3]) ?? 0;
+    const rate  = parseFloat(row[60 + i * 3]) || 0;
+    if (rate > 0) pitches.push({ name: pitchNames[i], speed, power, rate });
+  }
+  pitches.sort((a, b) => b.rate - a.rate);  // 使用率降順
+  const primaryPitch  = pitches[0] || null;
+  const powerPitch    = pitches.length > 0 ? [...pitches].sort((a,b) => b.power - a.power)[0] : null;
+  const hasRichArsenal = pitches.length >= 4;
+
+  const lines = [];
+
+  // 1文：主要成績
+  const p = [];
+  if (wins > 0) p.push(`${wins}勝${loss}敗`);
+  p.push(`防御率${era}`);
+  if (k > 0) p.push(`奪三振${k}`);
+  if (sv > 0) p.push(`${sv}セーブ`);
+  p.push(`WHIP${whip}`);
+  const eraDesc = eraN < 2.5 ? '圧倒的な' : eraN < 3.5 ? '安定した' : '';
+  lines.push(`${year}年、${p.join('・')}という${eraDesc}成績でマウンドに立ち続けた。`);
+
+  // 2文：受賞歴 or 特筆成績
+  if (awardsJa.length > 0) {
+    lines.push(`${awardsJa.slice(0,3).join('・')}を受賞し、リーグ最高の${isStarter ? '先発' : 'リリーフ'}投手として認められたシーズン。`);
+  } else if (k >= 300) {
+    lines.push(`${k}奪三振はリーグ記録に迫る歴史的数字で、打者を三振の山に沈め続けた。`);
+  } else if (wins >= 20) {
+    lines.push(`${wins}勝を達成し、ローテーションの絶対的な柱として全試合でチームに貢献した。`);
+  } else if (eraN < 2.00 && ip >= 80) {
+    lines.push(`防御率${era}は現代MLBでは稀有な数字で、登板するたびに打者を沈黙させた。`);
+  } else if (sv >= 40) {
+    lines.push(`${sv}セーブを記録し、不動のクローザーとして終盤に絶対的な安心感をもたらした。`);
+  } else if (sv >= 30) {
+    lines.push(`${sv}セーブを積み上げ、緊張の終盤を幾度となく締めくくった守護神として君臨した。`);
+  }
+
+  // 3文：球種・スタイル（球種データがある場合は具体的に）
+  if (primaryPitch && primaryPitch.rate >= 40 && powerPitch && powerPitch.power >= 85) {
+    if (primaryPitch.name === powerPitch.name) {
+      lines.push(`使用率${primaryPitch.rate}%の${primaryPitch.name}（球威${powerPitch.power}）を主軸に、相手打者を力でねじ伏せた${hand}エース。`);
+    } else {
+      lines.push(`${primaryPitch.name}を軸としながら、球威${powerPitch.power}の${powerPitch.name}を決め球に使い分け、打者を手玉に取った。`);
+    }
+  } else if (hasRichArsenal) {
+    const pitchList = pitches.slice(0, 3).map(q => `${q.name}(${q.rate}%)`).join('・');
+    lines.push(`${pitchList}と多彩な球種を操り、打者に球種を絞らせない完成度の高い投球スタイルが光った。`);
+  } else if (!isStarter && (sv >= 20 || tg - gs >= 40)) {
+    lines.push(`僅差の終盤に登場し試合を締める不動のクローザーとして、相手打線に恐れられた存在。`);
+  } else if (ip >= 200) {
+    lines.push(`${Math.floor(ip)}イニングを投げ抜くタフネスと制球・球威・緩急の三拍子が揃った万能型エース。`);
+  } else if (ctrl >= 85 && strk >= 80) {
+    lines.push(`制球力（${ctrl}）と奪三振能力（${strk}）を高次元で兼ね備え、あらゆる場面でゲームを支配した。`);
+  } else if (ctrl >= 85) {
+    lines.push(`精密な制球力（${ctrl}）で四球を出さず、打者に的を絞らせない投球でゲームを支配した。`);
+  } else if (strk >= 85) {
+    lines.push(`奪三振能力（${strk}）の高さで打者を圧倒し、三振の量産でチームに勢いをもたらした。`);
+  } else {
+    const styleLines = [
+      `独自の投球術で打者のタイミングを外し続け、凡打の山を築いたシーズン。`,
+      `制球と緩急を活かした頭脳的な投球で、長打を許さない安定感を発揮した。`,
+      `マウンド上の冷静なゲームメイクとキャッチャーとの連携で、チームの勝利を手繰り寄せた。`,
+    ];
+    lines.push(styleLines[wins % styleLines.length]);
+  }
+
+  // 4文：総評
+  if (awardsJa.some(a => a.includes('サイ・ヤング'))) {
+    lines.push(`投手の最高栄誉サイ・ヤング賞を手にし、MLB投手史に燦然と名を刻んだ。`);
+  } else if (k >= 300 || eraN < 2.0) {
+    lines.push(`歴代屈指の投手としてその活躍はMLBの歴史に永く輝き続けるシーズン。`);
+  } else {
+    const closings = [
+      `チームの大黒柱として勝利を手繰り寄せ、ファンに愛され続けたシーズン。`,
+      `マウンド上の闘志と技術がチームを牽引し、勝利への確かな道筋を示し続けた。`,
+      `その存在はチームにとって心強い柱であり、ファンを何度も沸かせた誇りある一年だった。`,
+      `登板のたびにスタジアムを活気づけたその投球は、ファンの記憶に深く刻まれている。`,
+    ];
+    lines.push(closings[(wins + k) % closings.length]);
+  }
+  return lines.join('\n');
+}
+
+// ── MLB データから列伝全体を構築 ────────────────────────────
+function buildRetsudenFromMLBData(row, mlbData) {
+  const year     = String(row[1] || '');
+  const awards   = mlbData?.awards || [];
+  const apiSt    = mlbData?.stats  || {};
+  const awardsJa = awards.map(awardToJa).filter(Boolean);
+  console.log('[MLB] 受賞（日本語）:', awardsJa);
+  if (g_isPitcher) return buildPitcherRetsuden(row, year, awardsJa, apiSt);
+  return buildHitterRetsuden(row, year, awardsJa, apiSt);
+}
+
+// ── 列伝を生成してカードに反映（APIキー不要） ─────────────────
+async function fetchRetsudenFromAPI(row) {
+  // MLB Stats API からシーズン成績・受賞歴を取得
+  let mlbData = { stats: {}, awards: [] };
+  if (g_mlbId && row[1]) {
+    console.log(`[MLB Stats API] ID=${g_mlbId} year=${row[1]} 取得中…`);
+    mlbData = await fetchMlbSeasonData(g_mlbId, row[1], g_isPitcher);
+    console.log('[MLB Stats API] 受賞数:', mlbData.awards.length, '/ stats keys:', Object.keys(mlbData.stats).length);
+  }
+
+  const retsuden = buildRetsudenFromMLBData(row, mlbData);
+  const awardsJa = (mlbData.awards || []).map(awardToJa).filter(Boolean);
+  const cardType  = buildCardType(row, awardsJa);
+
+  return { retsuden, cardType, pitchNicknames: {} };
+}
+
+// カード上のcardTypeラベルと変化球ニックネームを更新
+function updateCardExtras(cardType, pitchNicknames) {
+  // ① 右上の肩書ラベルを更新
+  if (cardType) {
+    const el = document.querySelector('#card-root .card-type');
+    if (el) el.textContent = cardType;
+  }
+  // ② 変化球ニックネームを球種名セルに追記
+  if (pitchNicknames && typeof pitchNicknames === 'object') {
+    Object.entries(pitchNicknames).forEach(([pitchName, nickname]) => {
+      if (!nickname) return;
+      document.querySelectorAll('#card-root td.pn[data-pitch]').forEach(td => {
+        if (td.dataset.pitch === pitchName) {
+          const label = `${pitchName}(${nickname})`;
+          td.textContent = label;
+          // 長くなったフォントを縮小
+          td.style.fontSize = label.length > 10 ? '8px' : label.length > 8 ? '9px' : '';
+          td.style.letterSpacing = '0px';
+        }
+      });
+    });
+  }
+}
+
+// 列伝エリアを更新（カード描画後に呼ぶ）
+function updateRetsuden(text) {
+  const el = document.getElementById('retsuden-area');
+  if (!el) return;
+  // 改行を全角スペース区切りに変換（改行なし・連続テキスト）
+  const normalized = text.replace(/\\n/g, '\n');
+  const lines = escapeHtml(normalized).split('\n').map(l => l.trim()).filter(l => l);
+  const body  = lines.join('　');
+  el.innerHTML = `<strong>【列伝】</strong> ${body}`;
+}
+
+function buildFallbackRetsuden(row) {
+  const year = row[1] || '?';
+  const name = row[0] || '---';
+
+  if (g_isPitcher) {
+    const era  = parseFloat(row[5]) || 99;
+    const wins = row[3]  || 0;
+    const loss = row[4]  || 0;
+    const k    = row[15] || 0;
+    const whip = row[17] || '--';
+    const ip   = row[10] || '--';
+    const totalG = row[6] || 0;
+    const gs     = row[7] || 0;
+    const strk = row[54] || 0;
+    const ctrl = row[51] || 0;
+
+    const isStarter = gs >= totalG * 0.5;
+    const typeLabel = isStarter ? '先発' : 'リリーフ';
+
+    if (!isStarter && era < 2.50) {
+      return `${year}年、防御率${row[5]}・WHIP${whip}・${k}奪三振。チームの勝利の方程式を支えた絶対的${typeLabel}。`;
+    }
+    if (era < 2.50 && wins >= 15) {
+      return `${year}年、${wins}勝${loss}敗・防御率${row[5]}・${k}奪三振。WHIP${whip}でリーグを圧倒。`;
+    }
+    if (strk >= 90) {
+      return `${year}年、${wins}勝・防御率${row[5]}・${k}奪三振。剛腕で相手打線を翻弄したシーズン。`;
+    }
+    return `${year}年、${wins}勝${loss}敗・防御率${row[5]}・${k}奪三振・WHIP${whip}。チームを支えた安定感。`;
+  } else {
+    const avg  = fmtRate(row[15]);
+    const obp  = fmtRate(row[16]);
+    const ops  = fmtOPS(row[17]);
+    const opsN = parseFloat(ops) || 0;
+    const hr   = row[9]  || 0;
+    const rbi  = row[10] || 0;
+    const sb   = getSB(row);
+    const speed  = row[46] || 0;
+
+    if (g_isCatcher) {
+      const lead   = row[53] ?? '--';
+      const csRate = row[54] ?? '--';
+      return `${year}年、打率${avg}・OPS${ops}・打点${rbi}。リード${lead}・盗塁阻止率${csRate}%でバッテリーを統率。`;
+    }
+    if (opsN >= 1.0 || hr >= 50) {
+      return `${year}年、${hr}本塁打・${rbi}打点・OPS${ops}。出塁率${obp}と長打力でチームを牽引したシーズン。`;
+    }
+    if (hr >= 30) {
+      return `${year}年、${hr}本塁打・${rbi}打点・打率${avg}・OPS${ops}。長打と安打でクリーンアップを担った。`;
+    }
+    if (speed >= 80 && sb >= 20) {
+      return `${year}年、打率${avg}・${sb}盗塁・出塁率${obp}。俊足を武器に打線を活性化させたシーズン。`;
+    }
+    return `${year}年、打率${avg}・OPS${ops}・${hr}本塁打・${rbi}打点。チームの中軸として活躍したシーズン。`;
+  }
+}
+
+function updateRetsudenFallback(row) {
+  const el = document.getElementById('retsuden-area');
+  if (!el) return;
+  const text = buildFallbackRetsuden(row);
+  el.innerHTML = `<strong>【列伝】</strong> ${escapeHtml(text)}`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ===== カードHTML保存 =====
+let currentSaveData = null;  // 最後に生成したカードの保存用データ
+
+/**
+ * blob: URL または通常の画像URL を base64 data URL に変換する。
+ * Canvas 経由で描画し JPEG として出力。変換不可の場合は空文字を返す。
+ */
+function imgSrcToDataUrl(src) {
+  return new Promise((resolve) => {
+    if (!src || src === '') { resolve(''); return; }
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width  = img.naturalWidth  || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/jpeg', 0.88));
+      } catch (e) {
+        // tainted canvas（外部ドメイン画像など）は無視
+        resolve('');
+      }
+    };
+    img.onerror = () => resolve('');
+    img.src = src;
+  });
+}
+
+async function saveCardAsHTML() {
+  const msgEl   = document.getElementById('save-msg');
+  const cardRoot = document.getElementById('card-root');
+  if (!cardRoot || !currentSaveData) {
+    msgEl.textContent = '先にカードを生成してください';
+    msgEl.style.color = '#ff8888';
+    return;
+  }
+
+  msgEl.textContent = '⏳ 画像を変換中...';
+  msgEl.style.color = '#ffd700';
+
+  const { theme, playerName, year } = currentSaveData;
+
+  // ── 列伝の最新HTML（AI生成済みがあればそれを使う） ──
+  const retsudenEl  = document.getElementById('retsuden-area');
+  const retsudenHTML = retsudenEl ? retsudenEl.innerHTML : '';
+
+  // ── カードDOMを複製 ──
+  const cardClone = cardRoot.cloneNode(true);
+  const cloneRetsuden = cardClone.querySelector('#retsuden-area');
+  if (cloneRetsuden && retsudenHTML) cloneRetsuden.innerHTML = retsudenHTML;
+
+  // ── img の blob URL / 外部URL → base64 に変換して埋め込み ──
+  const imgs = Array.from(cardClone.querySelectorAll('img'));
+  await Promise.all(imgs.map(async (imgEl) => {
+    const src = imgEl.getAttribute('src');
+    if (!src) return;
+    const dataUrl = await imgSrcToDataUrl(src);
+    if (dataUrl) {
+      imgEl.setAttribute('src', dataUrl);
+      imgEl.removeAttribute('onerror');  // エラーハンドラは不要
+    } else {
+      imgEl.remove();  // 変換できなかった場合は要素ごと削除
+    }
+  }));
+
+  const cardHtml = cardClone.innerHTML;
+  const css = getCardCSS(theme);
+
+  const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>${playerName} ${year} - MLBカード</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  background: radial-gradient(ellipse at center, #1e0a3c 0%, #12001e 70%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+${css}
+</style>
+</head>
+<body>
+<div id="card-root">
+  <div class="card">${cardHtml}</div>
+</div>
+</body>
+</html>`;
+
+  // ── ダウンロード ──
+  const safeName = String(playerName).replace(/[\\/:*?"<>|]/g, '_');
+  const fileName = `${safeName}_${year}_card.html`;
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  msgEl.textContent = `✓ ${fileName} を保存しました（画像埋め込み済み）`;
+  msgEl.style.color = '#77cc88';
+  setTimeout(() => { msgEl.textContent = ''; }, 5000);
+}
+
+// ===== MAIN GENERATE FUNCTION =====
+let currentStars = 5;  // グローバル（updateRetsudenで参照）
+
+function generateCard() {
+  clearError();
+
+  const excelInput = document.getElementById('excel-file');
+  const photoInput = document.getElementById('photo-file');
+
+  if (!excelInput.files || !excelInput.files[0]) {
+    showError('❌ エクセルファイルを選択してください。');
+    return;
+  }
+
+  // すでにg_rowsが読み込まれている場合はそれを使う
+  if (g_rows && g_dataRows) {
+    _doGenerate(photoInput);
+    return;
+  }
+
+  // 未読み込みの場合は読み込む
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb   = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+      if (rows.length < 3) {
+        showError('❌ データが少なすぎます。正しいエクセルファイルか確認してください。');
+        return;
+      }
+      g_rows     = rows;
+      g_headers  = rows.slice(0, 2);
+      g_dataRows = rows.slice(2).filter(r => r[0] && r[0] !== null);
+      g_isPitcher = rows[0][3] === '勝利' || rows[0][3] === '勝';
+      g_isCatcher = !g_isPitcher && g_dataRows.some(r =>
+        r[53] !== null && r[53] !== undefined && r[53] !== '--' && String(r[53]).trim() !== '');
+      _doGenerate(photoInput);
+    } catch (err) {
+      showError('❌ 読み込みエラー: ' + err.message);
+      console.error(err);
+    }
+  };
+  reader.readAsArrayBuffer(excelInput.files[0]);
+}
+
+// ===== カードフリップ =====
+function toggleCardFlip(event) {
+  if (event) event.stopPropagation();
+  const inner = document.getElementById('card-flip-inner');
+  if (!inner) return;
+  const flipping = !inner.classList.contains('flipped');
+  inner.classList.toggle('flipped');
+  _syncFlipPointerEvents(inner, flipping);
+}
+
+// 裏面クリックで表面へ戻る
+function flipToFront() {
+  const inner = document.getElementById('card-flip-inner');
+  if (!inner) return;
+  inner.classList.remove('flipped');
+  _syncFlipPointerEvents(inner, false);
+}
+
+// 表示中の面だけにポインターイベントを許可する
+function _syncFlipPointerEvents(inner, isFlipped) {
+  const front = inner.querySelector('.card-front-face');
+  const back  = inner.querySelector('.card-back-face');
+  if (front) front.style.pointerEvents = isFlipped ? 'none' : 'auto';
+  if (back)  back.style.pointerEvents  = isFlipped ? 'auto' : 'none';
+}
+
+// 複数列名を順番に試してヒットした最初の値を返す
+function getFirstColVal(row, headerRow, names) {
+  for (const name of names) {
+    const v = getColVal(row, headerRow, name);
+    if (v !== '--') return v;
+  }
+  return '--';
+}
+
+/**
+ * 野手裏面カードのチーム表示
+ * 複数球団年（移籍あり）の場合: 最多試合チームコード + 総球団数 例: "NYY3"
+ * 単一球団年の場合: そのままのチームコード 例: "NYY"
+ */
+function hitterTeamDisplay(row, allRows) {
+  const year    = String(row[1] ?? '');
+  const teamRaw = String(row[2] || '').toUpperCase();
+  const sameYear = allRows.filter(r => String(r[1] ?? '') === year);
+  const nonTot   = sameYear.filter(r => String(r[2] || '').toUpperCase() !== 'TOT');
+  if (nonTot.length <= 1) return teamRaw;
+  // 複数球団: G 最多のチームをプライマリとし、球団総数を付与
+  const primary = nonTot.reduce((best, r) =>
+    (parseInt(r[6]) || 0) > (parseInt(best[6]) || 0) ? r : best, nonTot[0]);
+  const primaryCode = String(primary[2] || '').toUpperCase();
+  if (teamRaw === 'TOT') return primaryCode + nonTot.length;
+  return teamRaw;
+}
+
+// 裏面HTMLを生成してDOMに注入
+function buildAndAttachCardBack() {
+  const backFace = document.getElementById('card-back-face');
+  if (!backFace || !g_dataRows || !g_headers) return;
+
+  const hdr  = g_headers[0] || [];
+  const name = (g_dataRows[0] && g_dataRows[0][0]) ? String(g_dataRows[0][0]) : '';
+
+  // 通算行判定: 年度が4桁数字でない行（"通算"/"Career"等）
+  const isCareerRow = r => !/^\d{4}$/.test(String(r[1] ?? '').trim());
+
+  // 通算行のWAR: _doGenerateで事前計算済みの g_careerWAR を使用
+  // （未計算の場合はここで加重平均を再計算してフォールバック）
+  const _careerWAR = g_careerWAR ?? (() => {
+    const yr2r = {};
+    g_dataRows.filter(r => !isCareerRow(r)).forEach(r => {
+      const yr = String(r[1] ?? '');
+      if (yr) { if (!yr2r[yr]) yr2r[yr] = []; yr2r[yr].push(r); }
+    });
+    const cRows = Object.values(yr2r).map(rows => {
+      const tot = rows.find(r => String(r[2] || '').toUpperCase() === 'TOT');
+      return tot || rows[0];
+    });
+    const getWt = r => {
+      if (g_isPitcher) return parseFloat(r[10]) || 0;
+      const ab = parseFloat(getFirstColVal(r, hdr, ['AB','打数','At Bats']));
+      return isNaN(ab) ? 0 : ab;
+    };
+    let wS = 0, wT = 0;
+    cRows.forEach(row => {
+      const raw = resolveWAR(row, hdr, g_isPitcher);
+      const num = parseFloat(String(raw ?? '').replace('~', ''));
+      const w   = getWt(row);
+      if (!isNaN(num) && w > 0) { wS += num * w; wT += w; }
+    });
+    return wT > 0 ? (wS / wT).toFixed(1) : null;
+  })();
+
+  // ── 列定義 ──
+  let cols;
+  if (g_isPitcher) {
+    cols = [
+      { label: '年度',   fn: r => r[1] ?? '--' },
+      { label: 'チーム', fn: r => r[2] ?? '--' },
+      { label: '防御率', fn: r => r[5] ?? '--' },
+      { label: '勝利',   fn: r => r[3] ?? '--' },
+      { label: '敗北',   fn: r => r[4] ?? '--' },
+      { label: 'HLD',    fn: r => getFirstColVal(r, hdr, ['HLD','ホールド','H','Hold']) },
+      { label: 'SV',     fn: r => getColVal(r, hdr, 'SV') },
+      { label: 'IP',     fn: r => r[10] ?? '--' },
+      { label: '被HR',   fn: r => getFirstColVal(r, hdr, ['被本塁打','HR','HRA','HR_A']) },
+      { label: '四死球', fn: r => getFirstColVal(r, hdr, ['四死球','BB','四球','BBI','BB+HBP']) },
+      { label: 'K',      fn: r => r[15] ?? '--' },
+      { label: '被打率', fn: r => getFirstColVal(r, hdr, ['被打率','BAA','AVG Against','OBA']) },
+      { label: 'WHIP',   fn: r => r[17] ?? '--' },
+      { label: 'WAR',    fn: r => isCareerRow(r) ? (_careerWAR ?? '--') : fmtWAR(resolveWAR(r, hdr, true)) },
+    ];
+  } else {
+    cols = [
+      { label: '年度',   fn: r => r[1] ?? '--' },
+      { label: 'チーム', fn: r => hitterTeamDisplay(r, g_dataRows) },
+      { label: '試合',   fn: r => r[6] ?? '--' },
+      { label: '打数',   fn: r => getFirstColVal(r, hdr, ['AB','打数','At Bats']) },
+      { label: '安打',   fn: r => getFirstColVal(r, hdr, ['H','安打','Hits']) },
+      { label: '本塁打', fn: r => r[9] ?? '--' },
+      { label: '打点',   fn: r => r[10] ?? '--' },
+      { label: '四球',   fn: r => getFirstColVal(r, hdr, ['BB','四球','Walks','BB+HBP']) },
+      { label: '三振',   fn: r => getFirstColVal(r, hdr, ['SO','K','三振','Strikeouts']) },
+      { label: '盗塁',   fn: r => getSB(r, hdr) },
+      { label: '打率',   fn: r => fmtRate(r[15]) },
+      { label: '出塁率', fn: r => fmtRate(r[16]) },
+      { label: 'OPS',    fn: r => fmtOPS(r[17]) },
+      { label: 'WAR',    fn: r => isCareerRow(r) ? (_careerWAR ?? '--') : fmtWAR(resolveWAR(r, hdr, false)) },
+    ];
+  }
+
+  // ── ハイライト列の定義 ──
+  // 投手: WARをcb-hi、防御率・勝利・SV・Kをcb-pp
+  // 野手: WAR・OPS・出塁率をcb-hi、打率・本塁打・打点をcb-pp
+  const hiLabels = g_isPitcher
+    ? new Set(['WAR'])
+    : new Set(['WAR', 'OPS', '出塁率']);
+  const ppLabels = g_isPitcher
+    ? new Set(['防御率', '勝利', 'SV', 'K'])
+    : new Set(['打率', '本塁打', '打点']);
+
+  // ── テーブルHTML ──
+  const thead = '<tr>' + cols.map(c => `<th>${escapeHtml(c.label)}</th>`).join('') + '</tr>';
+  const tbody = g_dataRows.map(row => {
+    const cells = cols.map((c, i) => {
+      const v = c.fn(row);
+      const s = (v === null || v === undefined || v === '') ? '--' : String(v);
+      let cls = '';
+      if      (i === 0)              cls = ' class="cb-year"';
+      else if (i === 1)              cls = ' class="cb-team"';
+      else if (hiLabels.has(c.label)) cls = ' class="cb-hi"';
+      else if (ppLabels.has(c.label)) cls = ' class="cb-pp"';
+      return `<td${cls}>${escapeHtml(s)}</td>`;
+    });
+    return '<tr>' + cells.join('') + '</tr>';
+  }).join('');
+
+  backFace.innerHTML =
+    `<div class="card-back-card">` +
+      `<div class="card-back-banner">` +
+        `<span class="card-back-banner-name">${escapeHtml(name)}</span>` +
+        `<span class="card-back-banner-sep">|</span>` +
+        `<span class="card-back-banner-label">年度別成績</span>` +
+      `</div>` +
+      `<div class="card-back-scroll">` +
+        `<table class="card-back-tbl">` +
+          `<thead>${thead}</thead><tbody>${tbody}</tbody>` +
+        `</table>` +
+      `</div>` +
+    `</div>`;
+
+  // 裏面 face 全体をクリック対象にする
+  backFace.style.cursor = 'pointer';
+  backFace.addEventListener('click', flipToFront);
+}
+
+// ===== 名前はみ出し防止 =====
+function fitPlayerNames() {
+  // ① 左パネル 選手名（player-name-ja）
+  const jaEl = document.querySelector('#card-root .player-name-ja');
+  if (jaEl) {
+    const maxW = (jaEl.parentElement ? jaEl.parentElement.offsetWidth : 280) - 12;
+    let fs = 28, ls = 4;
+    jaEl.style.fontSize = fs + 'px';
+    jaEl.style.letterSpacing = ls + 'px';
+    while (jaEl.scrollWidth > maxW && fs > 11) {
+      fs--;
+      if (fs <= 22) ls = 3;
+      if (fs <= 18) ls = 2;
+      if (fs <= 14) ls = 1;
+      jaEl.style.fontSize = fs + 'px';
+      jaEl.style.letterSpacing = ls + 'px';
+    }
+  }
+
+  // ② 左パネル 英語名（player-name-en）
+  const enEl = document.querySelector('#card-root .player-name-en');
+  if (enEl && enEl.textContent.trim()) {
+    const maxW = (enEl.parentElement ? enEl.parentElement.offsetWidth : 280) - 12;
+    let fs = 12, ls = 2;
+    enEl.style.fontSize = fs + 'px';
+    enEl.style.letterSpacing = ls + 'px';
+    while (enEl.scrollWidth > maxW && fs > 9) {
+      fs--;
+      if (fs <= 10) ls = 1;
+      enEl.style.fontSize = fs + 'px';
+      enEl.style.letterSpacing = ls + 'px';
+    }
+  }
+
+  // ③ 右パネル 選手名（player-full-name）
+  const fnEl = document.querySelector('#card-root .player-full-name');
+  if (fnEl) {
+    const headerRow = fnEl.closest('.header-row');
+    const posBadge   = headerRow && headerRow.querySelector('.position-badge');
+    const seasonRight = headerRow && headerRow.querySelector('.season-badge');
+    const usedW = (posBadge   ? posBadge.offsetWidth   + 10 : 70)
+                + (seasonRight ? seasonRight.offsetWidth + 10 : 100)
+                + 30; // gap 等の余裕
+    const maxW = Math.max(80, (headerRow ? headerRow.offsetWidth : 420) - usedW);
+    let fs = 22, ls = 2;
+    fnEl.style.fontSize = fs + 'px';
+    fnEl.style.letterSpacing = ls + 'px';
+    while (fnEl.scrollWidth > maxW && fs > 11) {
+      fs--;
+      if (fs <= 18) ls = 1;
+      if (fs <= 14) ls = 0;
+      fnEl.style.fontSize = fs + 'px';
+      fnEl.style.letterSpacing = ls + 'px';
+    }
+  }
+}
+
+function _doGenerate(photoInput) {
+  try {
+    // 選択年のデータ行を取得
+    const selYearEl = document.getElementById('year-select');
+    let selectedRow;
+    if (selYearEl && selYearEl.value && g_dataRows) {
+      selectedRow = g_dataRows.find(r => String(r[1]) === String(selYearEl.value));
+    }
+    if (!selectedRow) {
+      // フォールバック: ピーク年を自動検出
+      if (g_isPitcher) {
+        selectedRow = g_dataRows.reduce((best, r) => {
+          const era = parseFloat(r[5]), bestEra = parseFloat(best[5]);
+          return (!isNaN(era) && (isNaN(bestEra) || era < bestEra)) ? r : best;
+        }, g_dataRows[0]);
+      } else {
+        selectedRow = g_dataRows.reduce((best, r) => {
+          const opsCur  = parseFloat(fmtOPS(r[17])) || 0;
+          const opsBest = parseFloat(fmtOPS(best[17])) || 0;
+          return opsCur > opsBest ? r : best;
+        }, g_dataRows[0]);
+      }
+    }
+
+    // ピーク年かどうかのフラグ
+    const isPeakRow = String(selectedRow[1]) === String(g_peakYear);
+
+    // 通算行WARの事前計算（表面・裏面・総合力スコアで共有）
+    {
+      const _isCareer = r => !/^\d{4}$/.test(String(r[1] ?? '').trim());
+      if (_isCareer(selectedRow) && g_headers && g_dataRows) {
+        const hdr = g_headers[0] || [];
+        const yr2r = {};
+        g_dataRows.filter(r => !_isCareer(r)).forEach(r => {
+          const yr = String(r[1] ?? '');
+          if (yr) { if (!yr2r[yr]) yr2r[yr] = []; yr2r[yr].push(r); }
+        });
+        const cRows = Object.values(yr2r).map(rows => {
+          const tot = rows.find(r => String(r[2] || '').toUpperCase() === 'TOT');
+          return tot || rows[0];
+        });
+        const getWt = r => {
+          if (g_isPitcher) return parseFloat(r[10]) || 0;
+          const ab = parseFloat(getFirstColVal(r, hdr, ['AB','打数','At Bats']));
+          return isNaN(ab) ? 0 : ab;
+        };
+        let wS = 0, wT = 0;
+        cRows.forEach(r => {
+          const raw = resolveWAR(r, hdr, g_isPitcher);
+          const num = parseFloat(String(raw ?? '').replace('~', ''));
+          const w   = getWt(r);
+          if (!isNaN(num) && w > 0) { wS += num * w; wT += w; }
+        });
+        g_careerWAR = wT > 0 ? (wS / wT).toFixed(1) : null;
+      } else {
+        g_careerWAR = null;
+      }
+    }
+
+    // 総合力 → 星数 → テーマ（キャップなし・100超で6星ホログラム）
+    let overallScore;
+    if (g_isPitcher) {
+      const realWarP = g_careerWAR ?? (g_headers ? resolveWAR(selectedRow, g_headers[0], true) : '--');
+      overallScore = calcPitcherOverall(selectedRow, realWarP);
+    } else {
+      const realWarG = g_careerWAR ?? (g_headers ? resolveWAR(selectedRow, g_headers[0], false) : '--');
+      overallScore = calcHitterOverall(selectedRow, g_isCatcher, realWarG);
+    }
+
+    const stars = overallScore > 99 ? 6
+                : overallScore >= 90 ? 5
+                : overallScore >= 80 ? 4
+                : overallScore >= 70 ? 3
+                : overallScore >= 60 ? 2
+                : overallScore >= 50 ? 1 : 0;
+    currentStars = stars;
+    const theme  = getThemeVars(stars);
+
+    // カードHTML生成（英語名を渡す）
+    const nameEn = g_mlbNameEn || '';
+    let cardContent;
+    if (g_isPitcher) {
+      cardContent = buildPitcherCard(selectedRow, g_rows, '__PHOTO__', theme, isPeakRow, nameEn);
+    } else {
+      cardContent = buildHitterCard(selectedRow, g_rows, '__PHOTO__', theme, g_isCatcher, isPeakRow, nameEn);
+    }
+
+    // 写真の差し込み
+    // 優先順位: ① 手動アップロード写真 → ② MLB.com ヘッドショット → ③ なし
+    if (photoInput && photoInput.files && photoInput.files[0]) {
+      const photoURL = URL.createObjectURL(photoInput.files[0]);
+      cardContent = cardContent.replace(/__PHOTO__/g, photoURL);
+    } else if (g_mlbHeadshot) {
+      cardContent = cardContent.replace(/__PHOTO__/g, g_mlbHeadshot);
+    } else {
+      cardContent = cardContent.replace(/__PHOTO__/g, '');
+    }
+
+    // スコープ付き CSS をページに注入
+    let styleEl = document.getElementById('card-dynamic-css');
+    if (styleEl) styleEl.remove();
+    styleEl = document.createElement('style');
+    styleEl.id = 'card-dynamic-css';
+    styleEl.textContent = getCardCSS(theme);
+    document.head.appendChild(styleEl);
+
+    // カード描画（フリップ構造）
+    const area = document.getElementById('card-area');
+    area.innerHTML =
+      `<div id="card-root">` +
+        `<div class="card-flip-scene">` +
+          `<div class="card-flip-inner" id="card-flip-inner">` +
+            `<div class="card-face card-front-face"><div class="card">${cardContent}</div></div>` +
+            `<div class="card-face card-back-face" id="card-back-face"></div>` +
+          `</div>` +
+        `</div>` +
+      `</div>`;
+
+    // 名前はみ出し防止 ＋ 裏面構築（描画後に測定）
+    requestAnimationFrame(() => {
+      fitPlayerNames();
+      // フリップ内の高さを表面カードに合わせる
+      const flipInner = document.getElementById('card-flip-inner');
+      const frontCard = flipInner && flipInner.querySelector('.card-front-face .card');
+      if (flipInner && frontCard) {
+        flipInner.style.height = frontCard.offsetHeight + 'px';
+      }
+      // 裏面HTML構築
+      buildAndAttachCardBack();
+      // 初期状態: 裏面はポインターイベント無効
+      if (flipInner) _syncFlipPointerEvents(flipInner, false);
+      // 表面全体クリック → 裏返し
+      const frontFace = flipInner && flipInner.querySelector('.card-front-face');
+      if (frontFace) {
+        frontFace.style.cursor = 'pointer';
+        frontFace.addEventListener('click', () => toggleCardFlip(null));
+      }
+    });
+
+    // 保存ボタンを表示・保存データをセット
+    currentSaveData = {
+      theme,
+      playerName: selectedRow[0] || 'player',
+      year      : selectedRow[1] || '0000',
+    };
+    document.getElementById('save-area').style.display = 'flex';
+    document.getElementById('save-msg').textContent = '';
+
+    area.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // AI列伝生成（非同期）― JSON形式で retsuden / cardType / pitchNicknames を取得
+    fetchRetsudenFromAPI(selectedRow)
+      .then(result => {
+        updateRetsuden(result.retsuden || result);
+        updateCardExtras(result.cardType || null, result.pitchNicknames || {});
+      })
+      .catch(err => {
+        console.warn('AI列伝エラー（統計テキストで代替）:', err.message);
+        // エラー内容を画面に表示（原因特定のため）
+        const retEl = document.getElementById('retsuden-area');
+        if (retEl) retEl.innerHTML = `<strong>【列伝】</strong> <span style="color:#ff8888">⚠️ MLB情報取得失敗: ${escapeHtml(err.message)}</span><br><span style="font-size:10px;color:#aaa">※ MLB IDが設定されているか、またはインターネット接続を確認してください</span>`;
+        updateRetsudenFallback(selectedRow);
+      });
+
+  } catch (err) {
+    showError('❌ カード生成エラー: ' + err.message);
+    console.error(err);
+  }
+}
+
+// ===== テスト用ヘルパー（開発時のみ使用） =====
+window._injectTestData = function(rows, isPitcher, isCatcher, peakYear) {
+  g_rows      = rows;
+  g_headers   = rows.slice(0, 2);
+  g_dataRows  = rows.slice(2).filter(r => r[0] != null);
+  g_isPitcher = !!isPitcher;
+  g_isCatcher = !!isCatcher;
+  g_peakYear  = peakYear || (g_dataRows[0] && g_dataRows[0][1]);
+  const yearSel = document.getElementById('year-select');
+  if (yearSel && g_dataRows.length > 0) {
+    yearSel.innerHTML = g_dataRows.map(r =>
+      `<option value="${r[1]}">${r[1]}${r[1] == g_peakYear ? ' ★ピーク' : ''}</option>`
+    ).join('');
+    yearSel.value = String(g_peakYear);
+  }
+  document.getElementById('year-selector-section').style.display = 'block';
+  clearError();
+  _doGenerate(null);
+};
+</script>
+</body>
+</html>
