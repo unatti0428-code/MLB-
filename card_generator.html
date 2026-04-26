@@ -1985,8 +1985,113 @@ function _mlbCareerRank(category, value) {
 /** 順位テキスト（1位→"歴代最多"、2位以降→"歴代N位"） */
 function _rankLabel(r) { return r === 1 ? '歴代最多' : `歴代${r}位`; }
 
+// ── AL/NL チームコード → リーグ情報 ──────────────────────────
+const _AL_TEAM_CODES = new Set([
+  'NYY','NEW','BOS','BAL','TOR','TBR','TBD','TB',
+  'CWS','CHW','CLE','CLG','DET','MIN','KCR','KC',
+  'HOU','LAA','ANA','OAK','ATH','SEA','TEX',
+]);
+function getLeagueInfo(teamCode) {
+  const isAL = _AL_TEAM_CODES.has(String(teamCode || '').toUpperCase().trim());
+  return { leagueId: isAL ? 103 : 104, leagueLabel: isAL ? 'ア・リーグ' : 'ナ・リーグ' };
+}
+
+/** MLB Stats API からリーグ年度別ランキングを取得（無料・APIキー不要） */
+async function fetchLeagueLeaders(year, isPitcher, leagueId) {
+  const cats = isPitcher
+    ? 'earnedRunAverage,strikeouts,wins,whip'
+    : 'battingAverage,homeRuns,rbi,onBasePlusSlugging,stolenBases';
+  try {
+    const url = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=${cats}&season=${year}&sportId=1&leagueId=${leagueId}&limit=20`;
+    const res = await fetch(url);
+    if (!res.ok) return {};
+    const data = await res.json();
+    const result = {};
+    (data.leagueLeaders || []).forEach(cat => {
+      result[cat.leaderCategory] = (cat.leaders || []).map(l => ({
+        rank: parseInt(l.rank) || 99,
+        value: l.value,
+        personId: l.person?.id,
+      }));
+    });
+    return result;
+  } catch { return {}; }
+}
+
+/** リーグリーダーデータから選手の順位情報を構築 */
+function buildRankData(leaders, mlbId, leagueLabel) {
+  const result = { leagueLabel };
+  const catMap = {
+    earnedRunAverage: 'era', strikeouts: 'k', wins: 'wins', whip: 'whip',
+    battingAverage: 'avg', homeRuns: 'hr', rbi: 'rbi',
+    onBasePlusSlugging: 'ops', stolenBases: 'sb',
+  };
+  for (const [apiKey, shortKey] of Object.entries(catMap)) {
+    const list = leaders[apiKey] || [];
+    const entry = list.find(e => e.personId === mlbId);
+    if (entry && entry.rank <= 10) {
+      result[shortKey] = { rank: entry.rank, value: entry.value };
+    }
+  }
+  return result;
+}
+
+/**
+ * 前年比較によるキャリア軌跡を分析（g_dataRows を参照）
+ * @returns {{ isBreakthrough, isImprovement, isPeakSeason, isFirstYear,
+ *             yearsInLeague, prevMetric, curMetric }}
+ */
+function analyzeCareerTrajectory(currentRow) {
+  if (!g_dataRows || g_dataRows.length < 2) return {};
+  const curYear = parseInt(currentRow[1]);
+  if (isNaN(curYear)) return {};
+
+  const sorted = g_dataRows
+    .filter(r => /^\d{4}$/.test(String(r[1] ?? '')))
+    .map(r => ({ year: parseInt(r[1]), row: r }))
+    .sort((a, b) => a.year - b.year);
+
+  const idx = sorted.findIndex(y => y.year === curYear);
+  if (idx < 0) return {};
+
+  const prev        = idx > 0 ? sorted[idx - 1] : null;
+  const debutYear   = sorted[0]?.year;
+  const yearsInLeague = debutYear ? (curYear - debutYear + 1) : null;
+  const isFirstYear = idx === 0;
+
+  if (g_isPitcher) {
+    const curERA   = parseFloat(currentRow[5]) || 99;
+    const prevERA  = prev ? (parseFloat(prev.row[5]) || 99) : null;
+    const improve  = prevERA !== null ? +(prevERA - curERA).toFixed(2) : 0;
+    const isPeak   = sorted.every(y => (parseFloat(y.row[5]) || 99) >= curERA);
+    return {
+      isBreakthrough: prevERA !== null && prevERA >= 4.00 && curERA < 3.00,
+      isImprovement:  improve > 0.70 && curERA < 4.00,
+      isPeakSeason:   isPeak,
+      isFirstYear,
+      yearsInLeague,
+      prevMetric: prevERA,
+      curMetric:  curERA,
+    };
+  } else {
+    const curOPS  = parseFloat(fmtOPS(currentRow[17])) || 0;
+    const prevOPS = prev ? (parseFloat(fmtOPS(prev.row[17])) || 0) : null;
+    const improve = prevOPS !== null ? +(curOPS - prevOPS).toFixed(3) : 0;
+    const isPeak  = sorted.every(y => (parseFloat(fmtOPS(y.row[17])) || 0) <= curOPS);
+    return {
+      isBreakthrough: prevOPS !== null && prevOPS < 0.750 && curOPS > 0.900,
+      isImprovement:  improve > 0.100,
+      isPeakSeason:   isPeak,
+      isFirstYear,
+      yearsInLeague,
+      prevMetric: prevOPS,
+      curMetric:  curOPS,
+    };
+  }
+}
+
 // ── 野手・列伝テキスト生成 ────────────────────────────────────
-function buildHitterRetsuden(row, year, awardsJa, apiSt) {
+function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajectory = {}) {
   const hr    = parseInt(apiSt.homeRuns    ?? row[9])  || 0;
   const rbi   = parseInt(apiSt.rbi         ?? row[10]) || 0;
   const avg   = apiSt.avg  || fmtRate(row[15]);
@@ -2077,8 +2182,9 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt) {
   const isUtility = multiPosList.length >= 2;
 
   const lines = [];
+  const lgLabel = rankData?.leagueLabel || 'リーグ';
 
-  // 1文：主要成績（試合数少ない場合は注記）
+  // 行1：主要成績（試合数少ない場合は注記）
   const p = [];
   if (hr > 0)  p.push(`${hr}本塁打`);
   if (rbi > 0) p.push(`${rbi}打点`);
@@ -2090,20 +2196,33 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt) {
     lines.push(`${year}年、${p.join('・')}・OPS${ops}という成績でシーズンを戦い抜いた。`);
   }
 
-  // 2文：受賞歴 or 特筆成績（少出場時は受賞歴のみ）
-  if (awardsJa.length > 0) {
+  // 行2：リーグ順位 OR 受賞歴 OR 特筆成績（少出場時は受賞歴のみ）
+  if (!isSparsePA) {
+    // リーグ年度別順位（上位5位以内を最大2カテゴリ）
+    const rankParts = [];
+    if (rankData?.hr?.rank  <= 5) rankParts.push(`本塁打${rankData.hr.rank}位（${rankData.hr.value}本）`);
+    if (rankData?.ops?.rank <= 5) rankParts.push(`OPS${rankData.ops.rank}位（${rankData.ops.value}）`);
+    if (rankData?.avg?.rank <= 5) rankParts.push(`打率${rankData.avg.rank}位（${rankData.avg.value}）`);
+    if (rankData?.rbi?.rank <= 5) rankParts.push(`打点${rankData.rbi.rank}位（${rankData.rbi.value}打点）`);
+    if (rankData?.sb?.rank  <= 5) rankParts.push(`盗塁${rankData.sb.rank}位（${rankData.sb.value}個）`);
+    if (rankParts.length > 0) {
+      lines.push(`${year}年${lgLabel}${rankParts.slice(0, 2).join('・')}という傑出した成績で、リーグ屈指の打者として名を轟かせた。`);
+    } else if (awardsJa.length > 0) {
+      lines.push(`${awardsJa.slice(0,3).join('・')}を受賞し、リーグ最高の打者として名を刻んだシーズン。`);
+    } else if (hr >= 50) {
+      lines.push(`${hr}本塁打という圧倒的な長打力でリーグ全投手を震え上がらせた。`);
+    } else if (opsN >= 1.05) {
+      lines.push(`OPS${ops}はリーグ屈指の数字で、対戦投手が苦しめられ続けたシーズン。`);
+    } else if (obpN >= 0.420) {
+      lines.push(`出塁率${obp}の選球眼で塁上を賑わせ、得点圏での存在感は別格だった。`);
+    } else if (sb >= 30) {
+      lines.push(`${sb}盗塁で相手バッテリーに的を絞らせず、攻撃のダイナモとして機能した。`);
+    }
+  } else if (awardsJa.length > 0) {
     lines.push(`${awardsJa.slice(0,3).join('・')}を受賞し、リーグ最高の打者として名を刻んだシーズン。`);
-  } else if (!isSparsePA && hr >= 50) {
-    lines.push(`${hr}本塁打という圧倒的な長打力でリーグ全投手を震え上がらせた。`);
-  } else if (!isSparsePA && opsN >= 1.05) {
-    lines.push(`OPS${ops}はリーグ屈指の数字で、対戦投手が苦しめられ続けたシーズン。`);
-  } else if (!isSparsePA && obpN >= 0.420) {
-    lines.push(`出塁率${obp}の選球眼で塁上を賑わせ、得点圏での存在感は別格だった。`);
-  } else if (!isSparsePA && sb >= 30) {
-    lines.push(`${sb}盗塁で相手バッテリーに的を絞らせず、攻撃のダイナモとして機能した。`);
   }
 
-  // 3文：記録・スタイル（少出場時は省略）
+  // 行3：記録・スタイル（少出場時は省略）
   if (!isSparsePA) {
     if (hr >= 73) {
       lines.push(`マーク・マグワイアの70本塁打記録を超え、MLB史上最多のシングルシーズン本塁打記録を樹立。`);
@@ -2133,7 +2252,6 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt) {
     } else if (rbi >= 100) {
       lines.push(`${rbi}打点はチームの得点力を支えた原動力であり、クラッチ力の高さが光ったシーズン。`);
     } else {
-      // バリエーション豊かな締め
       const styleLines = [
         `打線の軸として毎打席に威圧感を放ち、相手バッテリーの配球を左右し続けた存在だった。`,
         `選球眼と打撃技術を活かし、チームの得点源として欠かせない役割を担ったシーズン。`,
@@ -2144,15 +2262,24 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt) {
     }
   }
 
-  // 4文：補足（特筆条件のみ・重複回避）
-  const already30_30 = lines.some(l => l.includes('30-30'));
-  if (!isSparsePA && hr >= 60 && obpN >= 0.480) {
-    lines.push(`出塁率${obp}も記録し、打者として全ての指標で頂点に立った歴史的シーズン。`);
-  } else if (!isSparsePA && sb >= 30 && hr >= 30 && !already30_30) {
-    lines.push(`30本塁打・30盗塁を同時達成し、パワーとスピードを高次元で両立させた。`);
+  // 行4：軌跡ストーリー OR 特筆補足（lines.length < 4 のときのみ）
+  if (!isSparsePA && lines.length < 4) {
+    const traj = trajectory || {};
+    if (hr >= 60 && obpN >= 0.480) {
+      lines.push(`出塁率${obp}も記録し、打者として全指標で頂点に立った歴史的シーズン。`);
+    } else if (traj.isBreakthrough && traj.prevMetric != null) {
+      lines.push(`前年OPS${traj.prevMetric.toFixed(3)}から大幅改善し、打撃が覚醒した転機のシーズン。`);
+    } else if (traj.isImprovement && traj.prevMetric != null) {
+      const diff = (traj.curMetric - traj.prevMetric).toFixed(3);
+      lines.push(`前年比OPS+${diff}という急成長で、一流打者へと変貌を遂げたシーズン。`);
+    } else if (traj.isPeakSeason && (traj.yearsInLeague ?? 0) > 1) {
+      lines.push(`キャリアを通じてのベストシーズンであり、打者として真価を発揮した一年。`);
+    } else if (sb >= 30 && hr >= 30 && !lines.some(l => l.includes('30-30'))) {
+      lines.push(`30本塁打・30盗塁を同時達成し、パワーとスピードを高次元で両立させた。`);
+    }
   }
 
-  // 5文：総評
+  // 行5（最終）：総評
   if (!isSparsePA && (hr >= 70 || opsN >= 1.3)) {
     lines.push(`野球史上最高峰の打者の一人として、その活躍は永く語り継がれている。`);
   } else if (awardsJa.some(a => a.includes('MVP'))) {
@@ -2172,7 +2299,7 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt) {
 }
 
 // ── 投手・列伝テキスト生成 ────────────────────────────────────
-function buildPitcherRetsuden(row, year, awardsJa, apiSt) {
+function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajectory = {}) {
   const wins = parseInt(apiSt.wins           ?? row[3])  || 0;
   const loss = parseInt(apiSt.losses         ?? row[4])  || 0;
   const era  = apiSt.era    || row[5]  || '--';
@@ -2248,23 +2375,32 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt) {
   }
 
   // ── シングルシーズン ──
-  // 球種データを読み込む（row[58+i*3]=球速, row[59+i*3]=球威, row[60+i*3]=使用率）
+  // 球種データを読み込む（row[58+i*3]=球速mph, row[59+i*3]=球威, row[60+i*3]=使用率）
   const pitchNames = ['フォーシーム','スライダー','チェンジアップ','カーブ','カットボール','ツーシーム'];
   const pitches = [];
   for (let i = 0; i < 6; i++) {
-    const speed = row[58 + i * 3];
-    const power = safeNum(row[59 + i * 3]) ?? 0;
-    const rate  = parseFloat(row[60 + i * 3]) || 0;
-    if (rate > 0) pitches.push({ name: pitchNames[i], speed, power, rate });
+    const spd  = parseFloat(row[58 + i * 3]);
+    const pwr  = safeNum(row[59 + i * 3]) ?? 0;
+    const rate = parseFloat(row[60 + i * 3]) || 0;
+    if (rate > 0) pitches.push({
+      name:  pitchNames[i],
+      speed: (!isNaN(spd) && spd >= 60 && spd <= 105) ? spd : null,  // mphとして妥当な範囲のみ
+      power: pwr,
+      rate,
+    });
   }
-  pitches.sort((a, b) => b.rate - a.rate);  // 使用率降順
-  const primaryPitch  = pitches[0] || null;
-  const powerPitch    = pitches.length > 0 ? [...pitches].sort((a,b) => b.power - a.power)[0] : null;
+  pitches.sort((a, b) => b.rate - a.rate);
+  const primaryPitch   = pitches[0] || null;
+  const powerPitch     = pitches.length > 0 ? [...pitches].sort((a,b) => b.power - a.power)[0] : null;
   const hasRichArsenal = pitches.length >= 4;
 
-  const lines = [];
+  // 球速テキスト生成ヘルパー（"最速98mph・"など）
+  const spdTxt = s => (s !== null && s >= 60) ? `最速${Math.round(s)}mph・` : '';
 
-  // 1文：主要成績
+  const lines = [];
+  const lgLabel = rankData?.leagueLabel || 'リーグ';
+
+  // 行1：主要成績
   const p = [];
   if (wins > 0) p.push(`${wins}勝${loss}敗`);
   p.push(`防御率${era}`);
@@ -2274,27 +2410,47 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt) {
   const eraDesc = eraN < 2.5 ? '圧倒的な' : eraN < 3.5 ? '安定した' : '';
   lines.push(`${year}年、${p.join('・')}という${eraDesc}成績でマウンドに立ち続けた。`);
 
-  // 2文：受賞歴 or 特筆成績
-  if (awardsJa.length > 0) {
-    lines.push(`${awardsJa.slice(0,3).join('・')}を受賞し、リーグ最高の${isStarter ? '先発' : 'リリーフ'}投手として認められたシーズン。`);
-  } else if (k >= 300) {
-    lines.push(`${k}奪三振はリーグ記録に迫る歴史的数字で、打者を三振の山に沈め続けた。`);
-  } else if (wins >= 20) {
-    lines.push(`${wins}勝を達成し、ローテーションの絶対的な柱として全試合でチームに貢献した。`);
-  } else if (eraN < 2.00 && ip >= 80) {
-    lines.push(`防御率${era}は現代MLBでは稀有な数字で、登板するたびに打者を沈黙させた。`);
-  } else if (sv >= 40) {
-    lines.push(`${sv}セーブを記録し、不動のクローザーとして終盤に絶対的な安心感をもたらした。`);
-  } else if (sv >= 30) {
-    lines.push(`${sv}セーブを積み上げ、緊張の終盤を幾度となく締めくくった守護神として君臨した。`);
+  // 行2：リーグ順位 OR 受賞歴 OR 特筆成績（最も具体的な情報を優先）
+  {
+    const rankParts = [];
+    if (rankData?.era?.rank  <= 5) rankParts.push(`防御率${rankData.era.rank}位（${rankData.era.value}）`);
+    if (rankData?.k?.rank    <= 5) rankParts.push(`奪三振${rankData.k.rank}位（${rankData.k.value}個）`);
+    if (rankData?.wins?.rank <= 5) rankParts.push(`${rankData.wins.value}勝でリーグ${rankData.wins.rank}位`);
+    if (rankData?.whip?.rank <= 3) rankParts.push(`WHIP${rankData.whip.rank}位（${rankData.whip.value}）`);
+    if (rankParts.length > 0) {
+      lines.push(`${year}年${lgLabel}${rankParts.slice(0, 2).join('・')}という傑出した成績で、シーズンを席巻した。`);
+    } else if (awardsJa.length > 0) {
+      lines.push(`${awardsJa.slice(0,3).join('・')}を受賞し、リーグ最高の${isStarter ? '先発' : 'リリーフ'}投手として認められたシーズン。`);
+    } else if (k >= 300) {
+      lines.push(`${k}奪三振はリーグ記録に迫る歴史的数字で、打者を三振の山に沈め続けた。`);
+    } else if (wins >= 20) {
+      lines.push(`${wins}勝を達成し、ローテーションの絶対的な柱として全試合でチームに貢献した。`);
+    } else if (eraN < 2.00 && ip >= 80) {
+      lines.push(`防御率${era}は現代MLBでは稀有な数字で、登板するたびに打者を沈黙させた。`);
+    } else if (sv >= 40) {
+      lines.push(`${sv}セーブを記録し、不動のクローザーとして終盤に絶対的な安心感をもたらした。`);
+    } else if (sv >= 30) {
+      lines.push(`${sv}セーブを積み上げ、緊張の終盤を幾度となく締めくくった守護神として君臨した。`);
+    }
   }
 
-  // 3文：球種・スタイル（球種データがある場合は具体的に）
-  if (primaryPitch && primaryPitch.rate >= 40 && powerPitch && powerPitch.power >= 85) {
-    if (primaryPitch.name === powerPitch.name) {
-      lines.push(`使用率${primaryPitch.rate}%の${primaryPitch.name}（球威${powerPitch.power}）を主軸に、相手打者を力でねじ伏せた${hand}エース。`);
+  // 行3：球種・スタイル（球速付きで具体的に）
+  if (primaryPitch && powerPitch) {
+    const sp = spdTxt(primaryPitch.speed);
+    const sw = spdTxt(powerPitch.speed);
+    if (primaryPitch.name !== powerPitch.name && powerPitch.power >= 85) {
+      if (primaryPitch.rate >= 40) {
+        lines.push(`使用率${primaryPitch.rate}%の${sp}${primaryPitch.name}を軸に、${sw}球威${powerPitch.power}の${powerPitch.name}で打者を仕留めるスタイルが光った。`);
+      } else {
+        lines.push(`${sp}${primaryPitch.name}と${sw}球威${powerPitch.power}の${powerPitch.name}を組み合わせ、打者を翻弄し続けた。`);
+      }
+    } else if (primaryPitch.power >= 85) {
+      lines.push(`${sp}球威${primaryPitch.power}の${primaryPitch.name}（使用率${primaryPitch.rate}%）で打者を圧倒した。`);
+    } else if (hasRichArsenal) {
+      const pitchList = pitches.slice(0, 3).map(q => `${spdTxt(q.speed)}${q.name}(${q.rate}%)`).join('・');
+      lines.push(`${pitchList}と多彩な球種で打者に球種を絞らせない完成度の高い投球スタイルが光った。`);
     } else {
-      lines.push(`${primaryPitch.name}を軸としながら、球威${powerPitch.power}の${powerPitch.name}を決め球に使い分け、打者を手玉に取った。`);
+      lines.push(`${sp}${primaryPitch.name}（使用率${primaryPitch.rate}%）を軸に攻める投球で打者を翻弄した。`);
     }
   } else if (hasRichArsenal) {
     const pitchList = pitches.slice(0, 3).map(q => `${q.name}(${q.rate}%)`).join('・');
@@ -2318,7 +2474,22 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt) {
     lines.push(styleLines[wins % styleLines.length]);
   }
 
-  // 4文：総評
+  // 行4：軌跡ストーリー（lines.length < 4 のときのみ）
+  if (lines.length < 4) {
+    const traj = trajectory || {};
+    if (traj.isBreakthrough && traj.prevMetric != null) {
+      lines.push(`前年防御率${traj.prevMetric.toFixed(2)}から大幅に改善し、制球力を磨き上げて覚醒した転機のシーズン。`);
+    } else if (traj.isImprovement && traj.prevMetric != null) {
+      const diff = (traj.prevMetric - traj.curMetric).toFixed(2);
+      lines.push(`前年比ERA${diff}向上という急成長で、球界屈指のエースへと変貌を遂げたシーズン。`);
+    } else if (traj.isPeakSeason && (traj.yearsInLeague ?? 0) > 1) {
+      lines.push(`キャリアを通じてのベストシーズンであり、真のエースとして球界に君臨した一年。`);
+    } else if (traj.isFirstYear) {
+      lines.push(`メジャー${traj.yearsInLeague ? traj.yearsInLeague + '年目' : '初年度'}にして即戦力として台頭し、将来のエース候補として球界を驚かせた。`);
+    }
+  }
+
+  // 行5（最終）：締め
   if (awardsJa.some(a => a.includes('サイ・ヤング'))) {
     lines.push(`投手の最高栄誉サイ・ヤング賞を手にし、MLB投手史に燦然と名を刻んだ。`);
   } else if (k >= 300 || eraN < 2.0) {
@@ -2336,19 +2507,19 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt) {
 }
 
 // ── MLB データから列伝全体を構築 ────────────────────────────
-function buildRetsudenFromMLBData(row, mlbData) {
+function buildRetsudenFromMLBData(row, mlbData, rankData = {}, trajectory = {}) {
   const year     = String(row[1] || '');
   const awards   = mlbData?.awards || [];
   const apiSt    = mlbData?.stats  || {};
   const awardsJa = awards.map(awardToJa).filter(Boolean);
   console.log('[MLB] 受賞（日本語）:', awardsJa);
-  if (g_isPitcher) return buildPitcherRetsuden(row, year, awardsJa, apiSt);
-  return buildHitterRetsuden(row, year, awardsJa, apiSt);
+  if (g_isPitcher) return buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData, trajectory);
+  return buildHitterRetsuden(row, year, awardsJa, apiSt, rankData, trajectory);
 }
 
 // ── 列伝を生成してカードに反映（APIキー不要） ─────────────────
 async function fetchRetsudenFromAPI(row) {
-  // MLB Stats API からシーズン成績・受賞歴を取得
+  // ① MLB Stats API からシーズン成績・受賞歴を取得
   let mlbData = { stats: {}, awards: [] };
   if (g_mlbId && row[1]) {
     console.log(`[MLB Stats API] ID=${g_mlbId} year=${row[1]} 取得中…`);
@@ -2356,7 +2527,29 @@ async function fetchRetsudenFromAPI(row) {
     console.log('[MLB Stats API] 受賞数:', mlbData.awards.length, '/ stats keys:', Object.keys(mlbData.stats).length);
   }
 
-  const retsuden = buildRetsudenFromMLBData(row, mlbData);
+  // ② リーグ年度別ランキングを取得（MLB Stats API 無料エンドポイント）
+  let rankData = {};
+  const yearStr = String(row[1] || '');
+  if (/^\d{4}$/.test(yearStr) && g_mlbId) {
+    try {
+      const teamCode = String(row[2] || '').toUpperCase().trim();
+      const { leagueId, leagueLabel } = getLeagueInfo(teamCode);
+      const leaders = await fetchLeagueLeaders(yearStr, g_isPitcher, leagueId);
+      rankData = buildRankData(leaders, g_mlbId, leagueLabel);
+      const foundCats = Object.keys(rankData).filter(k => k !== 'leagueLabel');
+      console.log(`[League Leaders] ${leagueLabel}${yearStr}年 ランクイン:`, foundCats);
+    } catch (e) {
+      console.warn('[League Leaders] 取得失敗:', e);
+    }
+  }
+
+  // ③ 前年比較による軌跡分析（同期・g_dataRows 使用）
+  const trajectory = analyzeCareerTrajectory(row);
+  if (trajectory.isBreakthrough) console.log('[Trajectory] 覚醒シーズン検出');
+  else if (trajectory.isImprovement) console.log('[Trajectory] 成長シーズン検出');
+  else if (trajectory.isPeakSeason) console.log('[Trajectory] キャリアベスト検出');
+
+  const retsuden = buildRetsudenFromMLBData(row, mlbData, rankData, trajectory);
   const awardsJa = (mlbData.awards || []).map(awardToJa).filter(Boolean);
   const cardType  = buildCardType(row, awardsJa);
 
