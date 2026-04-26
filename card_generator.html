@@ -1985,6 +1985,91 @@ function _mlbCareerRank(category, value) {
 /** 順位テキスト（1位→"歴代最多"、2位以降→"歴代N位"） */
 function _rankLabel(r) { return r === 1 ? '歴代最多' : `歴代${r}位`; }
 
+// ── 球威の品質表現 ────────────────────────────────────────────
+// 数値をそのまま出さず「圧倒的な球威を誇る」等の定性表現に変換
+function _pwrDesc(power) {
+  if (power >= 95) return '圧倒的な球威を誇る';
+  if (power >= 88) return '鋭い球威を持つ';
+  if (power >= 80) return '球威ある';
+  return '切れ味ある';
+}
+// 修飾語として前置きするバージョン（「球威抜群の」等）
+function _pwrAdj(power) {
+  if (power >= 95) return '球威抜群の';
+  if (power >= 88) return '球威ある';
+  if (power >= 80) return '鋭い';
+  return '';
+}
+
+// ── 選手固有エピソードDB（英語名小文字キー）────────────────────
+const _PLAYER_LORE = {
+  // ── ビッグレッドマシン（1970年代シンシナティ・レッズ）──
+  'johnny bench':    { ep: 'ビッグレッドマシン（1970年代シンシナティ・レッズ）の正捕手として黄金期を支え、史上最高の捕手と称される不世出の名選手。' },
+  'joe morgan':      { ep: 'ビッグレッドマシンの二塁手として2年連続MVP（1975–76年）を受賞。歴代最高の二塁手の一人と称される。' },
+  'pete rose':       { ep: 'ビッグレッドマシンの中核を担い、MLB通算最多4256安打の金字塔を打ち立てた"チャーリー・ハッスル"。' },
+  'tony perez':      { ep: 'ビッグレッドマシンの中軸として通算379本塁打を放ち、殿堂入りした勝負強い一塁手。' },
+  'george foster':   { ep: 'ビッグレッドマシンの4番として本塁打王2回・打点王3回を記録した恐怖の長距離砲。' },
+  'ken griffey':     { ep: 'ビッグレッドマシンの外野手として活躍。後にシアトル・マリナーズのスーパースター、ジュニアの父としても知られる。' },
+  // ── ヤンキース黄金期 ──
+  'babe ruth':       { ep: '"スルタン・オブ・スワット"の異名を持ち、60本塁打の当時記録を樹立したヤンキース黄金期の象徴。通算OPS1.164はMLB歴代1位。' },
+  'lou gehrig':      { ep: '"鉄人"として2130試合連続出場記録を樹立。ヤンキース最強打線「殺人打線」の中核を担った悲運の大打者。' },
+  'joe dimaggio':    { ep: '56試合連続安打という不滅の記録を樹立した"ヤンキー・クリッパー"。選手として最高の品格と実力を兼ね備えた球界の紳士。' },
+  'mickey mantle':   { ep: '3冠王達成・通算536本塁打のヤンキース黄金期の象徴。長打力と俊足を兼ね備えた史上最高の5ツールプレーヤーの一人。' },
+  'derek jeter':     { ep: '"ザ・キャプテン"として5度のワールドシリーズ制覇に貢献したヤンキースの象徴。その勝負強さとリーダーシップで球界を代表した遊撃手。' },
+  'mariano rivera':  { ep: '"サンドマン"の異名を持ち、カットファストボール1球種で歴代最多652セーブを記録したMLB史上最高のクローザー。' },
+  // ── 投手レジェンド ──
+  'nolan ryan':      { ep: '"テキサス・エクスプレス"として7度のノーヒッターとMLB通算最多5714奪三振を達成。最速100mph超の剛腕で球史に燦然と輝く。' },
+  'sandy koufax':    { ep: '1963–66年の4年間でサイ・ヤング賞3度受賞、防御率1.86の圧倒的成績を残したドジャース伝説の左腕エース。' },
+  'randy johnson':   { ep: '"ビッグユニット"の異名を持つ左腕怪物。完全試合達成・歴代2位4875奪三振で史上最高の左腕投手と称される。' },
+  'roger clemens':   { ep: '"ザ・ロケット"として7度のサイ・ヤング賞を受賞した史上最多受賞の剛腕右腕。通算4672奪三振はMLB歴代3位。' },
+  'greg maddux':     { ep: '"プロフェッサー"の異名を持つ頭脳派右腕。1992–95年4年連続サイ・ヤング賞という歴史的偉業を達成した精密機械。' },
+  'pedro martinez':  { ep: '1999–2000年にサイ・ヤング賞2年連続受賞。2000年の防御率1.74・WHIP0.74は現代MLBでも語り継がれる伝説のシーズン。' },
+  'walter johnson':  { ep: '"ビッグ・トレイン"として通算417勝・3508奪三振を誇る球史最初期の大投手。その剛球は「打てない」と対戦打者が証言した。' },
+  'cy young':        { ep: 'MLB通算511勝という不滅の記録を残した"投手の神様"。その名を冠したサイ・ヤング賞は今も最高の投手賞として語り継がれる。' },
+  'bob gibson':      { ep: '1968年に防御率1.12という衝撃の数字を残したカーディナルスのエース。その圧倒的シーズンがMLBのマウンド高さ変更ルールを招いた。' },
+  'clayton kershaw': { ep: 'ドジャースのエースとして3度のサイ・ヤング賞（2011・13・14年）に加えMVPも獲得。現代最高の左腕投手として球史に名を刻む。' },
+  // ── 打撃レジェンド ──
+  'ted williams':    { ep: 'MLB最後の4割打者（1941年.406）として名を刻む"スプレンディッド・スプリンター"。長打力と選球眼を兼ね備えた史上最高の打者の一人。' },
+  'willie mays':     { ep: '"セイ・ヘイ・キッド"の愛称で親しまれ、通算660本塁打と最高のセンター守備を誇る史上最高の5ツールプレーヤー。' },
+  'hank aaron':      { ep: '"ハンマリング・ハンク"として通算755本塁打を放ち、長年の本塁打記録保持者に。公民権運動の時代に差別と闘い続けた球界の英雄。' },
+  'stan musial':     { ep: '"スタン・ザ・マン"の愛称でカーディナルス一筋22年。通算3630安打・3度のMVPで球団の歴史そのものとなった伝説の打者。' },
+  'barry bonds':     { ep: '通算762本塁打・2004年出塁率.609等の圧倒的数字で「史上最高の打者候補」の一人。通算OPS1.051はMLB歴代4位の記録。' },
+  'alex rodriguez':  { ep: '"A-ロッド"として通算696本塁打・2086打点でMLB歴代3位の打点記録を誇るスーパースター遊撃手。' },
+  'mike trout':      { ep: '3度のMVP受賞（2014・16・19年）でMLB最高の選手の一人として認められた"エンゼルスの至宝"。守備・打撃・走塁すべてで圧倒的パフォーマンス。' },
+  'albert pujols':   { ep: '"ザ・マシーン"として3度のMVP・通算700本塁打超を達成したカーディナルスの至宝。2000年代最強打者として球史に名を刻む。' },
+  'rickey henderson':{ ep: 'MLB通算1406盗塁という歴代最多記録を持つ"盗塁の神様"。リードオフマンとして圧倒的な出塁力と機動力を誇る球史最高の1番打者。' },
+  'cal ripken jr':   { ep: '"鉄人"として2632試合連続出場という世界記録を樹立したオリオールズの象徴。タフネスと実力を兼ね備えた史上最高の遊撃手の一人。' },
+  'cal ripken':      { ep: '"鉄人"として2632試合連続出場という世界記録を樹立したオリオールズの象徴。タフネスと実力を兼ね備えた史上最高の遊撃手の一人。' },
+  'mike schmidt':    { ep: '548本塁打・3度のMVP受賞のフィリーズの英雄。守備・打撃ともに歴代最高の三塁手の一人として殿堂入りした大選手。' },
+  'george brett':    { ep: '1980年に打率.390でリーグを席巻したカンサスシティ・ロイヤルズの永遠の顔。3度の首位打者・通算3154安打の殿堂入り打者。' },
+  'tony gwynn':      { ep: '"ミスター・パドレ"としてパドレス一筋22年。8度の首位打者・通算打率.338でMLB最高のコンタクトヒッターと称される。' },
+  'frank thomas':    { ep: '"ビッグ・ハート"として2年連続MVP（1993–94年）を受賞したホワイトソックスの大黒柱。出塁率と長打率の両立で現代野球の先駆けとなった。' },
+  'ken griffey jr':  { ep: '"ザ・キッド"の愛称で親しまれたマリナーズのスーパースター。父ケン・グリフィー・シニア（ビッグレッドマシン）と史上初の親子メジャーリーガーとして話題になった。' },
+  'wade boggs':      { ep: '5度の首位打者に輝いた"打率の魔術師"。通算打率.328・選球眼と技術で史上最高のコンタクトヒッターの一人として殿堂入り。' },
+  'tony perez':      { ep: 'ビッグレッドマシンの中軸として通算379本塁打を放ち、殿堂入りした勝負強い一塁手。' },
+  'jackie robinson': { ep: 'MLB初の黒人選手として1947年に歴史を変えた先駆者。新人王・MVP獲得し、その勇気と実力で野球の歴史を永遠に変えた球界の革命児。' },
+  // ── 日本人選手 ──
+  'shohei ohtani':   { ep: 'ベーブ・ルース以来100年ぶりの2桁勝利・2桁本塁打を達成した史上初の本格的二刀流選手。MLBの常識を覆し世界中のファンを魅了した令和の怪物。' },
+  'ichiro suzuki':   { ep: 'マリナーズで10年連続200安打・2004年通算最多262安打を記録。日本人初のポジションプレーヤーとしてMLBを席巻した速打の達人。' },
+  'hideo nomo':      { ep: '"トルネード投法"でMLBデビューし1995年新人王を獲得。日本人投手がMLBで活躍する道を切り開いた先駆者。' },
+  'hideki matsui':   { ep: '"ゴジラ"の愛称でヤンキースの4番に定着し2009年ワールドシリーズMVPを獲得。日本人打者の地位を世界に示した不世出の強打者。' },
+  'masahiro tanaka': { ep: '2013年楽天でシーズン無敗（24勝0敗）を達成後MLB入り。ヤンキースのエースとして日米両リーグで卓越した存在感を示した。' },
+  'yu darvish':      { ep: '7球種以上を操る「変化球の魔術師」として日米で高い評価を受けるエース投手。勝負球のスプリットは世界最高水準と称される。' },
+};
+
+/** 英語名（部分一致可）から選手エピソードを取得 */
+function getPlayerLore(nameEn) {
+  if (!nameEn) return null;
+  const key = nameEn.toLowerCase().trim();
+  // 完全一致優先
+  if (_PLAYER_LORE[key]) return _PLAYER_LORE[key];
+  // 部分一致（キーが名前に含まれる、または名前がキーに含まれる）
+  for (const [k, v] of Object.entries(_PLAYER_LORE)) {
+    if (key.includes(k) || k.includes(key)) return v;
+  }
+  return null;
+}
+
 // ── AL/NL チームコード → リーグ情報 ──────────────────────────
 const _AL_TEAM_CODES = new Set([
   'NYY','NEW','BOS','BAL','TOR','TBR','TBD','TB',
@@ -2150,8 +2235,11 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     }
     if (topText) lines.push(topText);
 
-    // 行4: 副次的な特筆（行3で記録行を使った場合はスキップ、まだ行数に余裕がある場合のみ）
-    if (!topText && opsN >= 0.900 && lines.length < 4) {
+    // 行4: lore OR 副次的な特筆
+    const loreH = getPlayerLore(g_mlbNameEn);
+    if (loreH && lines.length < 4) {
+      lines.push(loreH.ep);
+    } else if (!topText && opsN >= 0.900 && lines.length < 4) {
       lines.push(`通算OPS${ops}はキャリアを通じて一線級打者だった証明で、対戦投手を常に苦しめ続けた。`);
     }
 
@@ -2262,9 +2350,10 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     }
   }
 
-  // 行4：軌跡ストーリー OR 特筆補足（lines.length < 4 のときのみ）
+  // 行4：lore OR 軌跡ストーリー OR 特筆補足（lines.length < 4 のときのみ）
   if (!isSparsePA && lines.length < 4) {
-    const traj = trajectory || {};
+    const traj  = trajectory || {};
+    const loreS = getPlayerLore(g_mlbNameEn);
     if (hr >= 60 && obpN >= 0.480) {
       lines.push(`出塁率${obp}も記録し、打者として全指標で頂点に立った歴史的シーズン。`);
     } else if (traj.isBreakthrough && traj.prevMetric != null) {
@@ -2276,6 +2365,8 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
       lines.push(`キャリアを通じてのベストシーズンであり、打者として真価を発揮した一年。`);
     } else if (sb >= 30 && hr >= 30 && !lines.some(l => l.includes('30-30'))) {
       lines.push(`30本塁打・30盗塁を同時達成し、パワーとスピードを高次元で両立させた。`);
+    } else if (loreS) {
+      lines.push(loreS.ep);
     }
   }
 
@@ -2364,6 +2455,10 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     }
     if (topText) lines.push(topText);
 
+    // lore（歴代エピソード）が未追加で余裕があれば追加
+    const lorePC = getPlayerLore(g_mlbNameEn);
+    if (lorePC && lines.length < 4) lines.push(lorePC.ep);
+
     // 最終行: 締め（常に1行）
     const closings = [
       `長年にわたりマウンドに立ち続けた姿は、ファンにとって球団の象徴そのものだった。`,
@@ -2434,26 +2529,26 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     }
   }
 
-  // 行3：球種・スタイル（球速付きで具体的に）
+  // 行3：球種・スタイル（球速付きで具体的に・数値は品質表現に変換）
   if (primaryPitch && powerPitch) {
     const sp = spdTxt(primaryPitch.speed);
     const sw = spdTxt(powerPitch.speed);
     if (primaryPitch.name !== powerPitch.name && powerPitch.power >= 85) {
       if (primaryPitch.rate >= 40) {
-        lines.push(`使用率${primaryPitch.rate}%の${sp}${primaryPitch.name}を軸に、${sw}球威${powerPitch.power}の${powerPitch.name}で打者を仕留めるスタイルが光った。`);
+        lines.push(`${sp}${primaryPitch.name}を主軸に、${sw}${_pwrAdj(powerPitch.power)}${powerPitch.name}で打者を仕留めるスタイルが光った。`);
       } else {
-        lines.push(`${sp}${primaryPitch.name}と${sw}球威${powerPitch.power}の${powerPitch.name}を組み合わせ、打者を翻弄し続けた。`);
+        lines.push(`${sp}${primaryPitch.name}と${sw}${_pwrAdj(powerPitch.power)}${powerPitch.name}を組み合わせ、打者を翻弄し続けた。`);
       }
     } else if (primaryPitch.power >= 85) {
-      lines.push(`${sp}球威${primaryPitch.power}の${primaryPitch.name}（使用率${primaryPitch.rate}%）で打者を圧倒した。`);
+      lines.push(`${sp}${_pwrDesc(primaryPitch.power)}${primaryPitch.name}を主軸に、打者を力でねじ伏せた。`);
     } else if (hasRichArsenal) {
-      const pitchList = pitches.slice(0, 3).map(q => `${spdTxt(q.speed)}${q.name}(${q.rate}%)`).join('・');
+      const pitchList = pitches.slice(0, 3).map(q => `${spdTxt(q.speed)}${q.name}`).join('・');
       lines.push(`${pitchList}と多彩な球種で打者に球種を絞らせない完成度の高い投球スタイルが光った。`);
     } else {
-      lines.push(`${sp}${primaryPitch.name}（使用率${primaryPitch.rate}%）を軸に攻める投球で打者を翻弄した。`);
+      lines.push(`${sp}${primaryPitch.name}を軸に攻める投球で、打者を翻弄し続けた。`);
     }
   } else if (hasRichArsenal) {
-    const pitchList = pitches.slice(0, 3).map(q => `${q.name}(${q.rate}%)`).join('・');
+    const pitchList = pitches.slice(0, 3).map(q => `${spdTxt(q.speed)}${q.name}`).join('・');
     lines.push(`${pitchList}と多彩な球種を操り、打者に球種を絞らせない完成度の高い投球スタイルが光った。`);
   } else if (!isStarter && (sv >= 20 || tg - gs >= 40)) {
     lines.push(`僅差の終盤に登場し試合を締める不動のクローザーとして、相手打線に恐れられた存在。`);
@@ -2474,9 +2569,10 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     lines.push(styleLines[wins % styleLines.length]);
   }
 
-  // 行4：軌跡ストーリー（lines.length < 4 のときのみ）
+  // 行4：軌跡ストーリー OR lore（lines.length < 4 のときのみ）
   if (lines.length < 4) {
-    const traj = trajectory || {};
+    const traj  = trajectory || {};
+    const lorePS = getPlayerLore(g_mlbNameEn);
     if (traj.isBreakthrough && traj.prevMetric != null) {
       lines.push(`前年防御率${traj.prevMetric.toFixed(2)}から大幅に改善し、制球力を磨き上げて覚醒した転機のシーズン。`);
     } else if (traj.isImprovement && traj.prevMetric != null) {
@@ -2486,6 +2582,8 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
       lines.push(`キャリアを通じてのベストシーズンであり、真のエースとして球界に君臨した一年。`);
     } else if (traj.isFirstYear) {
       lines.push(`メジャー${traj.yearsInLeague ? traj.yearsInLeague + '年目' : '初年度'}にして即戦力として台頭し、将来のエース候補として球界を驚かせた。`);
+    } else if (lorePS) {
+      lines.push(lorePS.ep);
     }
   }
 
