@@ -932,11 +932,12 @@ async function processFile(filePath, catcherData = null) {
 
     if (globalOrder.length > 0) {
       if (isCareer) {
-        // 通算行: 年度別加重平均（Inn加重）で算出した値を書き込む
+        // 通算行: 年度別加重平均（Inn加重）で算出した値を書き込む（-30 下限補正）
         globalOrder.forEach((gpos, i) => {
           const data = careerPosRatings[gpos.label];
           if (!data || data.sumInn === 0) return;
-          purpleCell(ws.getCell(rn, DEF_START_COL + i), Math.round(data.sumWeighted / data.sumInn), fontSize);
+          const careerRating = Math.max(-30, Math.round(data.sumWeighted / data.sumInn));
+          purpleCell(ws.getCell(rn, DEF_START_COL + i), careerRating, fontSize);
         });
       } else {
         // 年別行: 計算して書き込みつつ加重平均用に累積
@@ -957,7 +958,9 @@ async function processFile(filePath, catcherData = null) {
             if (defInnPct < 2) return;
             const rating = yp === yearPos[0] ? calcDefMain(yp.inn, yp.drs) : calcDefSub(yp.inn, yp.drs, mainInn);
             if (rating != null) {
-              const finalRating = Math.round(rating) + dhPenalty;
+              const raw = Math.round(rating) + dhPenalty;
+              // DH専属でない年のみ -30 下限補正（DH専属年は補正なし）
+              const finalRating = dhPenalty === 0 ? Math.max(-30, raw) : raw;
               purpleCell(ws.getCell(rn, DEF_START_COL + i), finalRating, fontSize);
               // Inn加重平均用に累積
               if (!careerPosRatings[gpos.label]) careerPosRatings[gpos.label] = { sumWeighted: 0, sumInn: 0 };
