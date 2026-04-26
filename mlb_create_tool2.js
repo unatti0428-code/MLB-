@@ -81,43 +81,47 @@ function fmtAvg(val) {
   return s;
 }
 
-// 投球率: normalize all 7 values to sum to 100 (largest-remainder method)
-// Input: array of 7 raw pct values (can be '--', "0.251", "25.1", "25.1%", etc.)
-// Output: array of 7 integer strings summing to 100 (or '--' for missing)
+// 投球率: 5%未満マスク後の有効な球種の合計が100になるよう再分配して整数化する。
+// Input : array of 7 raw pct values (形式: '--', "45.4", "45.4%", etc.)
+// Output: array of 7 integer strings (or '--' for masked/missing entries)
+// アルゴリズム: Largest Remainder Method
+//   ① 有効値のみ合計 → スケール係数 = 100 / 合計
+//   ② 各値を floor で切り捨て → 余り = 100 - floor合計
+//   ③ 小数部の大きい順に +1 して合計をちょうど100にする
+// 例) FF=45.4, SL=15.1, CU=18.7, FC=15.8 (合計95.0) →
+//     スケール: FF=47.79, SL=15.89, CU=19.68, FC=16.63 →
+//     floor:  FF=47,    SL=15,    CU=19,    FC=16   (合計97)
+//     +1 を小数部大順3個: SL(0.89), FF(0.79), CU(0.68) → FF=48, SL=16, CU=20, FC=16 (合計100)
 function normalizePctToSum100(pctVals) {
-  const nums = pctVals.map(v => {
+  // ─ Step 1: 有効値を解析 ─
+  const parsed = pctVals.map(v => {
     if (!v || v === '--') return null;
     const s = String(v).replace('%', '').trim();
     const n = parseFloat(s);
-    if (isNaN(n) || n < 0) return null;
-    if (n === 0) return 0;
-    if (n <= 1.0) return n * 100;   // decimal fraction: 0.251 → 25.1
-    return n;                         // already percentage: 25.1
+    return (isNaN(n) || n <= 0) ? null : n;
   });
 
-  const anyValid = nums.some(n => n !== null && n > 0);
-  if (!anyValid) return pctVals.map(() => '--');
+  const total = parsed.reduce((s, n) => s + (n ?? 0), 0);
+  if (total <= 0) return pctVals.map(() => '--');
 
-  const sum = nums.reduce((s, n) => s + (n || 0), 0);
-  if (sum === 0) return pctVals.map(() => '--');
+  // ─ Step 2: 100 にスケーリングして floor ─
+  const scaled  = parsed.map(n => (n === null) ? null : (n * 100 / total));
+  const floors  = scaled.map(n => (n === null) ? null : Math.floor(n));
+  const floorSum = floors.reduce((s, n) => s + (n ?? 0), 0);
+  let   toAdd   = 100 - floorSum;
 
-  const scaled  = nums.map(n => n !== null ? n / sum * 100 : null);
-  const floors  = scaled.map(n => n !== null ? Math.floor(n) : 0);
-  let remainder = 100 - floors.reduce((s, n) => s + n, 0);
-
-  // Distribute remainder to items with largest fractional part
-  const byFrac = scaled
-    .map((n, i) => n !== null ? { i, frac: n - Math.floor(n) } : null)
-    .filter(Boolean)
+  // ─ Step 3: 小数部が大きい順に +1 ─
+  const order = parsed
+    .map((n, i) => ({ i, frac: (n === null) ? -1 : (scaled[i] - floors[i]) }))
     .sort((a, b) => b.frac - a.frac);
 
-  for (const { i } of byFrac) {
-    if (remainder <= 0) break;
-    floors[i]++;
-    remainder--;
+  const result = [...floors];
+  for (const { i } of order) {
+    if (toAdd <= 0) break;
+    if (result[i] !== null) { result[i]++; toAdd--; }
   }
 
-  return nums.map((n, i) => n !== null ? String(floors[i]) : '--');
+  return result.map(n => (n === null) ? '--' : String(n));
 }
 
 // イニング文字列 → 小数: "200.1" → 200.333...
@@ -135,6 +139,28 @@ function ipToOuts(ip) {
   return (parseInt(w) || 0) * 3 + (parseInt(f || 0));
 }
 
+// ── スタミナ計算式 (守備.ods AC3 の等価実装) ──────────────────────────────
+// 守備.ods AC3 の数式:
+//   IFERROR(IFS(V3>=230, ROUND(V3/W3*12.5), V3>=210, ROUND(V3/W3*13.1),
+//               V3>=86,  ROUND(V3/W3*13.5), V3>=65,  ROUND(V3/W3*20),
+//               V3>=50,  ROUND(V3/W3*21),   V3<=49,  ROUND(V3/W3*22)), "")
+// V3 = 換算イニング(K列), W3 = 試合数(G列)
+// GS補正: H列(GS)/G列(試合数) > 0.5 の場合、IP>=65 の係数を 20→13 に変更
+function calcStaminaFromIP(ip, g, gs) {
+  if (!ip || isNaN(ip) || ip < 0) return '';
+  if (!g  || isNaN(g)  || g  <= 0) return '';
+  const ratio = ip / g;
+  if (ip >= 230) return Math.round(ratio * 12.5);
+  if (ip >= 210) return Math.round(ratio * 13.1);
+  if (ip >= 86)  return Math.round(ratio * 13.5);
+  if (ip >= 65) {
+    const mult = (gs > 0 && (gs / g) > 0.5) ? 13 : 20;
+    return Math.round(ratio * mult);
+  }
+  if (ip >= 50)  return Math.round(ratio * 21);
+  return Math.round(ratio * 22);  // ip <= 49
+}
+
 // ── 制球計算式 (守備.ods AC2 の等価実装) ─────────────────────────────────────
 // 守備.ods AC2 の数式:
 //   IFERROR(IFS(V2>=4.2, ROUND(60-(V2-4.2)/0.16),
@@ -148,48 +174,461 @@ function calcSeikyuFromBB9(bb9) {
   return Math.round(100 - bb9 / 0.08);
 }
 
+// ── 精神計算式 (守備.ods AE2 の等価実装) ─────────────────────────────────────
+// W2 = 防御率(F列)
+function calcSeisinFromERA(era) {
+  if (era == null || isNaN(era) || era < 0) return '';
+  if (era >= 8.2) return Math.round(55 - (era - 8.2) / 0.35);
+  if (era >= 6.6) return Math.round(60 - (era - 6.6) / 0.32);
+  if (era >= 5.2) return Math.round(65 - (era - 5.2) / 0.28);
+  if (era >= 4.0) return Math.round(70 - (era - 4.0) / 0.24);
+  if (era >= 3.2) return Math.round(75 - (era - 3.2) / 0.16);
+  if (era >= 2.5) return Math.round(80 - (era - 2.5) / 0.14);
+  if (era >= 1.9) return Math.round(85 - (era - 1.9) / 0.12);
+  if (era >= 1.4) return Math.round(90 - (era - 1.4) / 0.1);
+  if (era >= 1.0) return Math.round(95 - (era - 1.0) / 0.08);
+  return Math.round(100 - (era - 0.7) / 0.06);
+}
+
+// ── 奪三振計算式 (守備.ods AF2 の等価実装) ────────────────────────────────────
+// X2 = 奪三振(P列) / 換算イニング × 9  (= K/9)
+function calcSanshinFromK9(k9) {
+  if (k9 == null || isNaN(k9) || k9 < 0) return '';
+  if (k9 <= 6)  return Math.round(40 + (k9 - 6)  / 0.2);
+  if (k9 <= 10) return Math.round(80 + (k9 - 10) / 0.1);
+  if (k9 <= 16) return Math.round(100 + (k9 - 14) / 0.2);
+  return '';
+}
+
+// ── 重さ計算式 (守備.ods AG2 の等価実装) ─────────────────────────────────────
+// Y2 = 被本塁打(N列) / 換算イニング × 9  (= HR/9)
+function calcOmosaFromHR9(hr9) {
+  if (hr9 == null || isNaN(hr9) || hr9 < 0) return '';
+  if (hr9 >= 2.2)  return Math.round(50  - (hr9 - 2.2)  / 0.1);
+  if (hr9 >= 1.8)  return Math.round(55  - (hr9 - 1.8)  / 0.08);
+  if (hr9 >= 1.5)  return Math.round(60  - (hr9 - 1.5)  / 0.06);
+  if (hr9 >= 1.3)  return Math.round(65  - (hr9 - 1.3)  / 0.04);
+  if (hr9 >= 1.0)  return Math.round(80  - (hr9 - 1.0)  / 0.02);
+  if (hr9 >= 0.25) return Math.round(105 - (hr9 - 0.25) / 0.03);
+  if (hr9 >= 0.1)  return Math.round(110 - (hr9 - 0.1)  / 0.03);
+  return '';
+}
+
+// ── 対左計算式 (守備.ods AH2 の等価実装) ─────────────────────────────────────
+// Z2 = 被打率(Q列) - 対左被打率(S列)  ※どちらも整数形式（.275→275）
+function calcTaiHidariFromDiff(z) {
+  if (z == null || isNaN(z)) return '';
+  if (z < -60) return Math.round(-15 + (60 + z) / 8);
+  if (z > 60)  return Math.round(15 + (z - 60) / 8);
+  return Math.round(z / 4);
+}
+
+// ── 対盗塁計算式 (守備.ods AI2=AJ2+AK2 の等価実装) ──────────────────────────
+// AA2=SB(T列), AA3=PK(U列), AB2=換算IP(K列), AB3=CS(V列)
+function calcTaiTouruiFromSBData(sb, pk, ip, cs) {
+  if (!ip || ip <= 0) return '';
+  const sb9 = (sb / ip) * 9;
+  let aj;
+  if (sb9 >= 1)      aj = -7;
+  else if (sb9 >= 0) aj = Math.round(11 - sb9 * 18);
+  else               return '';
+  const denom = sb + cs;
+  if (denom <= 0) return '';
+  const ratio = (sb - pk) / denom;
+  let ak;
+  if (ratio >= 0.85)      ak = -10;
+  else if (ratio <= 0.35) ak = 18;
+  else ak = Math.round((0.65 - ratio) * 60);
+  return aj + ak;
+}
+
 // ── Cell styling ──────────────────────────────────────────────────────────────
-const PURPLE_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7030A0' } };
+const PURPLE_FILL     = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7030A0' } };
+const RED_PURPLE_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCC3399' } };
 function purpleCell(cell, value, fs) {
   cell.value = value;
   cell.fill  = { ...PURPLE_FILL };
   cell.font  = { bold: true, color: { argb: 'FFFFFFFF' }, size: fs };
   cell.alignment = { horizontal: 'center', vertical: 'middle' };
 }
+function redPurpleCell(cell, value, fs) {
+  cell.value = value;
+  cell.fill  = { ...RED_PURPLE_FILL };
+  cell.font  = { bold: true, color: { argb: 'FFFFFFFF' }, size: fs };
+  cell.alignment = { horizontal: 'center', vertical: 'middle' };
+}
 
-// ── Add 制球 column to pitcher Excel ────────────────────────────────────────
-// Col 51 = AY = 制球 (22 主要成績 + 7×4=28 球種列 + 1)
-const SEIKYU_COL = 51;
+// ── 球種グループ (守備.ods 行14〜20 対応) ────────────────────────────────────
+const PITCH_GROUPS = [
+  { idx: 0, name: 'フォーシーム',   startCol: 23 },
+  { idx: 1, name: 'スライダー',     startCol: 27 },
+  { idx: 2, name: 'チェンジアップ', startCol: 31 },
+  { idx: 3, name: 'カーブ',         startCol: 35 },
+  { idx: 4, name: 'カットボール',   startCol: 39 },
+  { idx: 5, name: 'ツーシーム',     startCol: 43 },
+  { idx: 6, name: 'スプリット',     startCol: 47 },
+];
+const PITCH_ABILITY_START_COL = 59;
 
-async function addSeikyuToFile(xlsxPath) {
+function calcKyuSoku(velo) {
+  if (velo == null || isNaN(velo) || velo < 10) return '';
+  if (velo > 11) return Math.round(velo * 1.6 + 4);
+  return '';
+}
+function calcAH_pitch(idx, p) {
+  if (p == null || isNaN(p)) return '';
+  switch (idx) {
+    case 0:
+      if (p >= 300) return Math.round(55  - (p-300)/4);
+      if (p >= 250) return Math.round(80  - (p-250)/2);
+      if (p >= 235) return Math.round(85  - (p-235)/3);
+      if (p >= 215) return Math.round(90  - (p-215)/4);
+      if (p >= 190) return Math.round(95  - (p-190)/5);
+      if (p >= 150) return Math.round(100 - (p-150)/8);
+      if (p >= 70)  return Math.round(105 - (p-70)/16);
+      return '';
+    case 1:
+      if (p >= 300) return Math.round(55  - (p-300)/6);
+      if (p >= 200) return Math.round(80  - (p-200)/4);
+      if (p >= 150) return Math.round(90  - (p-150)/5);
+      if (p >= 120) return Math.round(95  - (p-120)/6);
+      if (p >= 60)  return Math.round(105 - (p-60)/6);
+      return '';
+    case 2: case 3:
+      if (p >= 300) return Math.round(55  - (p-300)/6);
+      if (p >= 200) return Math.round(80  - (p-200)/4);
+      if (p >= 150) return Math.round(90  - (p-150)/5);
+      if (p >= 120) return Math.round(95  - (p-120)/6);
+      if (p >= 80)  return Math.round(100 - (p-80)/8);
+      if (p >= 30)  return Math.round(100 - (p-80)/12);
+      return '';
+    case 4:
+      if (p >= 290) return Math.round(55  - (p-290)/4);
+      if (p >= 240) return Math.round(80  - (p-240)/2);
+      if (p >= 225) return Math.round(85  - (p-225)/3);
+      if (p >= 205) return Math.round(90  - (p-205)/4);
+      if (p >= 180) return Math.round(95  - (p-180)/5);
+      if (p >= 80)  return Math.round(105 - (p-80)/10);
+      return '';
+    case 5:
+      if (p >= 330) return Math.round(50  - (p-330)/6);
+      if (p >= 310) return Math.round(55  - (p-310)/4);
+      if (p >= 260) return Math.round(80  - (p-260)/2);
+      if (p >= 245) return Math.round(85  - (p-245)/3);
+      if (p >= 220) return Math.round(90  - (p-220)/5);
+      if (p >= 195) return Math.round(95  - (p-195)/5);
+      if (p >= 150) return Math.round(100 - (p-150)/9);
+      if (p >= 70)  return Math.round(105 - (p-70)/16);
+      return '';
+    case 6:
+      if (p >= 285) return Math.round(55  - (p-285)/5);
+      if (p >= 245) return Math.round(65  - (p-245)/4);
+      if (p >= 200) return Math.round(80  - (p-200)/3);
+      if (p >= 110) return Math.round(95  - (p-110)/6);
+      if (p >= 30)  return Math.round(105 - (p-30)/8);
+      return '';
+    default: return '';
+  }
+}
+function calcAI_pitch(idx, q) {
+  if (q == null || isNaN(q)) return '';
+  switch (idx) {
+    case 0: case 4: case 5:
+      if (q >= 570) return Math.round(60  - (q-570)/10);
+      if (q >= 500) return Math.round(70  - (q-500)/7);
+      if (q >= 300) return Math.round(90  - (q-300)/10);
+      if (q >= 100) return Math.round(100 - (q-100)/20);
+      if (q >= 50)  return Math.round(105 - (q-50)/10);
+      return '';
+    case 1: case 2: case 3:
+      if (q >= 470) return Math.round(65  - (q-470)/8);
+      if (q >= 420) return Math.round(70  - (q-420)/10);
+      if (q >= 300) return Math.round(80  - (q-300)/12);
+      if (q >= 250) return Math.round(90  - (q-250)/5);
+      if (q >= 215) return Math.round(95  - (q-215)/7);
+      if (q >= 180) return Math.round(100 - (q-180)/7);
+      if (q >= 100) return Math.round(105 - (q-100)/16);
+      if (q >= 50)  return Math.round(110 - (q-50)/10);
+      return '';
+    case 6:
+      if (q >= 310) return Math.round(80  - (q-310)/6);
+      if (q >= 270) return Math.round(85  - (q-270)/8);
+      if (q >= 32)  return Math.round(102 - (q-32)/14);
+      return '';
+    default: return '';
+  }
+}
+function calcAK_pitch(idx, aj, r) {
+  if (aj === '' || aj == null || aj === 0) return 0;
+  const typeA = (idx === 0 || idx === 4 || idx === 5);
+  if (typeA) {
+    if (aj >= 80) {
+      if (r >= 65) return 8/3;  if (r >= 60) return 7/3;  if (r >= 55) return 6/3;
+      if (r >= 50) return 5/3;  if (r >= 45) return 4/3;  if (r >= 40) return 3/3;
+      if (r >= 35) return 2/3;  if (r >= 30) return 1/3;  if (r >= 18.5) return 0;
+      if (r >= 18) return -1;   if (r >= 16) return -2;   if (r >= 14) return -4;
+      if (r >= 12) return -6;   if (r >= 10) return -8;   if (r >= 8)  return -10;
+    } else if (aj >= 70) {
+      if (r >= 65) return 4;    if (r >= 60) return 3.5;  if (r >= 55) return 3;
+      if (r >= 50) return 2.5;  if (r >= 45) return 2;    if (r >= 40) return 1.5;
+      if (r >= 35) return 1;    if (r >= 30) return 0.5;  if (r >= 18.5) return 0;
+      if (r >= 18) return -1/3; if (r >= 16) return -2/3; if (r >= 14) return -4/3;
+      if (r >= 12) return -6/3; if (r >= 10) return -8/3; if (r >= 8)  return -10/3;
+    } else if (aj >= 40) {
+      if (r >= 65) return 8; if (r >= 60) return 7; if (r >= 55) return 6;
+      if (r >= 50) return 5; if (r >= 45) return 4; if (r >= 40) return 3;
+      if (r >= 35) return 2; if (r >= 30) return 1;
+    }
+  } else {
+    if (aj >= 80) {
+      if (r >= 65) return 6;    if (r >= 60) return 16/3; if (r >= 55) return 14/3;
+      if (r >= 50) return 4;    if (r >= 45) return 10/3; if (r >= 40) return 8/3;
+      if (r >= 35) return 2;    if (r >= 30) return 4/3;  if (r >= 25) return 2/3;
+      if (r >= 18.5) return 0;  if (r >= 18) return -2;   if (r >= 16) return -4;
+      if (r >= 14)  return -6;  if (r >= 12) return -8;   if (r >= 10) return -10;
+      if (r >= 8)  return -12;
+    } else if (aj >= 70) {
+      if (r >= 65) return 9;    if (r >= 60) return 8;    if (r >= 55) return 7;
+      if (r >= 50) return 6;    if (r >= 45) return 5;    if (r >= 40) return 4;
+      if (r >= 35) return 3;    if (r >= 30) return 2;    if (r >= 25) return 1;
+      if (r >= 18.5) return 0;  if (r >= 18) return -1;   if (r >= 16) return -2;
+      if (r >= 14)  return -3;  if (r >= 12) return -4;   if (r >= 10) return -5;
+      if (r >= 8)  return -6;
+    } else if (aj >= 40) {
+      if (r >= 65) return 18; if (r >= 60) return 16; if (r >= 55) return 14;
+      if (r >= 50) return 12; if (r >= 45) return 10; if (r >= 40) return 8;
+      if (r >= 35) return 6;  if (r >= 30) return 4;  if (r >= 25) return 2;
+      if (r >= 20) return 1;
+    }
+  }
+  return 0;
+}
+function calcKyuI(aj, ak, r) {
+  if (aj === '' || aj == null || aj === 0) return '';
+  const sum = aj + ak;
+  if (r <= 8 && sum >= 85) return 85;
+  return Math.ceil(sum);
+}
+
+// ── 緩急計算 (守備.ods 盗塁能シート参照) ─────────────────────────────────────
+// 線形補外付きテーブル参照（範囲外は端点の傾きで外挿）
+function _tblLookup(value, t, v) {
+  if (value == null || isNaN(value)) return null;
+  const n = t.length;
+  const asc = t[1] > t[0];
+  if (asc) {
+    if (value < t[0])     return v[0] + (v[1] - v[0]) / (t[1] - t[0]) * (value - t[0]);
+    if (value > t[n - 1]) return v[n-1] + (v[n-1] - v[n-2]) / (t[n-1] - t[n-2]) * (value - t[n-1]);
+    let r = v[0]; for (let i = 0; i < n; i++) { if (value >= t[i]) r = v[i]; } return r;
+  } else {
+    if (value > t[0])     return v[0] + (v[1] - v[0]) / (t[1] - t[0]) * (value - t[0]);
+    if (value < t[n - 1]) return v[n-1] + (v[n-1] - v[n-2]) / (t[n-1] - t[n-2]) * (value - t[n-1]);
+    for (let i = 0; i < n; i++) { if (value >= t[i]) return v[i]; } return v[n - 1];
+  }
+}
+// ① ERA → 緩急スコア (A13:M14)  ERA降順テーブル
+function _kERA(era) {
+  const t = [5.50, 5.00, 4.50, 4.00, 3.50, 3.00, 2.50, 2.00, 1.50, 1.00, 0.50, 0.00];
+  const v = [  25,   28,   30,   33,   35,   38,   40,   43,   45,   48,   50,   53];
+  return _tblLookup(era, t, v);
+}
+// ② 制球 → 緩急スコア (A16:N17)  昇順テーブル
+function _kSeikyu(s) {
+  const t = [ 50,  55,  60,  65,  70,  75,  80,  85,  90,  95, 100, 105, 110];
+  const v = [ 25,  28,  30,  33,  35,  38,  40,  43,  45,  48,  50,  53,  55];
+  return _tblLookup(s, t, v);
+}
+// ③-CH: チェンジアップ威力 → 緩急スコア (A19:N20)
+function _kCH(p) {
+  const t = [ 50,  55,  60,  65,  70,  75,  80,  85,  90,  95, 100, 105, 110];
+  const v = [ 50,  55,  60,  65,  70,  75,  80,  85,  90,  95, 100, 105, 110];
+  return _tblLookup(p, t, v);
+}
+// ③-CU: カーブ威力 → 緩急スコア (A22:N23)
+function _kCU(p) {
+  const t = [  50,   55,   60,   65,   70,   75,   80,   85,   90,   95,  100,  105,  110];
+  const v = [  45, 49.5,   54, 58.5,   63, 67.5,   72, 76.5,   81, 85.5,   90, 94.5,   99];
+  return _tblLookup(p, t, v);
+}
+// ③-SL/FS: スライダー・スプリット威力 → 緩急スコア (A25:N26)
+function _kSLFS(p) {
+  const t = [ 50,  55,  60,  65,  70,  75,  80,  85,  90,  95, 100, 105, 110];
+  const v = [ 40,  44,  48,  52,  56,  60,  64,  68,  72,  76,  80,  84,  88];
+  return _tblLookup(p, t, v);
+}
+// 緩急メイン: ROUND((①+②+③)÷2)
+// eraStr = 防御率文字列、seikyu = 制球能力値(数値 or '')、pitchData = {[idx]:{ba,slg,pct}}
+function calcKankyuu(eraStr, seikyu, pitchData) {
+  const v1 = _kERA(parseFloat(String(eraStr || '').trim()));
+  if (v1 === null) return '';
+  const v2 = _kSeikyu(seikyu !== '' && seikyu != null ? Number(seikyu) : NaN);
+  if (v2 === null) return '';
+
+  // 各変化球の球威を計算してテーブルで変換、最大値を③に採用
+  const kyuiOf = (idx, pd) => {
+    if (!pd) return null;
+    const pctStr = String(pd.pct ?? '').trim();
+    const pctNum = Number(pctStr);
+    if (!pctStr || pctStr === '--' || isNaN(pctNum) || pctNum <= 0) return null;
+    const baNum  = pd.ba  != null && String(pd.ba)  !== '--' ? Number(pd.ba)  : NaN;
+    const slgNum = pd.slg != null && String(pd.slg) !== '--' ? Number(pd.slg) : NaN;
+    const ah = calcAH_pitch(idx, baNum);
+    const ai = calcAI_pitch(idx, slgNum);
+    if (ah === '' || ai === '') return null;
+    const aj = (Number(ah) + Number(ai)) / 2;
+    const ki = calcKyuI(aj, calcAK_pitch(idx, aj, pctNum), pctNum);
+    return ki !== '' ? Number(ki) : null;
+  };
+
+  const cands = [];
+  const chK = kyuiOf(2, pitchData[2]); if (chK !== null) { const s = _kCH(chK);   if (s !== null) cands.push(s); }
+  const cuK = kyuiOf(3, pitchData[3]); if (cuK !== null) { const s = _kCU(cuK);   if (s !== null) cands.push(s); }
+  const slK = kyuiOf(1, pitchData[1]); if (slK !== null) { const s = _kSLFS(slK); if (s !== null) cands.push(s); }
+  const fsK = kyuiOf(6, pitchData[6]); if (fsK !== null) { const s = _kSLFS(fsK); if (s !== null) cands.push(s); }
+  if (cands.length === 0) return '';
+  return Math.round((v1 + v2 + 2 * Math.max(...cands)) / 3);
+}
+
+// ── 能力値列を追加 ────────────────────────────────────────────────────────────
+// AY (Col 51) = スタミナ   AZ (Col 52) = 制球   BA (Col 53) = 緩急
+// BB (Col 54) = 精神       BC (Col 55) = 奪三振
+// BD (Col 56) = 重さ       BE (Col 57) = 対左   BF (Col 58) = 対盗塁
+const STAMINA_COL   = 51;
+const SEIKYU_COL    = 52;
+const KANKYUU_COL   = 53;
+const SEISIN_COL    = 54;
+const SANSHIN_COL   = 55;
+const OMOSA_COL     = 56;
+const TAILEFT_COL   = 57;
+const TAITOURUI_COL = 58;
+
+async function addAbilityToFile(xlsxPath) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(xlsxPath);
   const ws = wb.worksheets[0];
   const fontSize = ws.getCell(1, 1).font?.size || 11;
 
-  // 制球ヘッダー (Row 1)
-  purpleCell(ws.getCell(1, SEIKYU_COL), '制球', fontSize);
+  // ヘッダー (Row 1)
+  purpleCell(ws.getCell(1, STAMINA_COL),   'スタミナ', fontSize);
+  purpleCell(ws.getCell(1, SEIKYU_COL),    '制球',     fontSize);
+  purpleCell(ws.getCell(1, KANKYUU_COL),   '緩急',     fontSize);
+  purpleCell(ws.getCell(1, SEISIN_COL),    '精神',     fontSize);
+  purpleCell(ws.getCell(1, SANSHIN_COL),   '奪三振',   fontSize);
+  purpleCell(ws.getCell(1, OMOSA_COL),     '重さ',     fontSize);
+  purpleCell(ws.getCell(1, TAILEFT_COL),   '対左',     fontSize);
+  purpleCell(ws.getCell(1, TAITOURUI_COL), '対盗塁',   fontSize);
 
   const dataRows = [];
+  const pitchActiveSet = new Set();
   ws.eachRow((row, rn) => {
     if (rn <= 2) return;
     const yr = row.getCell(2).value;
     if (!yr) return;
-    const ipRaw = row.getCell(11).value;  // K列: イニング
+    const ipRaw = row.getCell(11).value;
     if (ipRaw == null || ipRaw === '' || ipRaw === '--') return;
-    const bb = Number(row.getCell(15).value) || 0; // O列: 四死球
-    dataRows.push({ rn, ipRaw, bb });
+    const g      = Number(row.getCell(7).value)  || 0;
+    const gs     = Number(row.getCell(8).value)  || 0;
+    const bb     = Number(row.getCell(15).value) || 0;
+    const eraRaw = row.getCell(6).value;
+    const hr     = Number(row.getCell(14).value) || 0;
+    const so     = Number(row.getCell(16).value) || 0;
+    const avgRaw = row.getCell(17).value;
+    const vsLRaw = row.getCell(19).value;
+    const sb     = Number(row.getCell(20).value) || 0;
+    const pk     = Number(row.getCell(21).value) || 0;
+    const cs     = Number(row.getCell(22).value) || 0;
+    const pitchData = {};
+    for (const pg of PITCH_GROUPS) {
+      const velo = row.getCell(pg.startCol + 0).value;
+      const ba   = row.getCell(pg.startCol + 1).value;
+      const slg  = row.getCell(pg.startCol + 2).value;
+      const pct  = row.getCell(pg.startCol + 3).value;
+      const pctStr = String(pct == null ? '' : pct).trim();
+      const pctNum = Number(pctStr);
+      if (pctStr && pctStr !== '--' && !isNaN(pctNum) && pctNum > 0) pitchActiveSet.add(pg.idx);
+      pitchData[pg.idx] = { velo, ba, slg, pct };
+    }
+    dataRows.push({ rn, ipRaw, g, gs, bb, eraRaw, hr, so, avgRaw, vsLRaw, sb, pk, cs, pitchData });
+  });
+
+  const activePitchList = PITCH_GROUPS.filter(pg => pitchActiveSet.has(pg.idx));
+
+  activePitchList.forEach((pg, i) => {
+    const base = PITCH_ABILITY_START_COL + i * 3;
+    redPurpleCell(ws.getCell(1, base), pg.name, fontSize);
+    try { ws.mergeCells(1, base, 1, base + 2); } catch {}
+    redPurpleCell(ws.getCell(2, base + 0), '球速', fontSize);
+    redPurpleCell(ws.getCell(2, base + 1), '球威', fontSize);
+    redPurpleCell(ws.getCell(2, base + 2), '割合', fontSize);
   });
 
   let count = 0;
-  for (const { rn, ipRaw, bb } of dataRows) {
+  for (const { rn, ipRaw, g, gs, bb, eraRaw, hr, so, avgRaw, vsLRaw, sb, pk, cs, pitchData } of dataRows) {
     const ip = parseIP(ipRaw);
     if (!ip) continue;
-    // V2 = 四死球 / 換算イニング × 9
-    const bb9 = bb / ip * 9;
-    const seikyu = calcSeikyuFromBB9(bb9);
-    if (seikyu === '') continue;
-    purpleCell(ws.getCell(rn, SEIKYU_COL), seikyu, fontSize);
+
+    const stamina = calcStaminaFromIP(ip, g, gs);
+    if (stamina !== '') purpleCell(ws.getCell(rn, STAMINA_COL), stamina, fontSize);
+
+    const seikyu = calcSeikyuFromBB9(bb / ip * 9);
+    if (seikyu !== '') purpleCell(ws.getCell(rn, SEIKYU_COL), seikyu, fontSize);
+
+    const eraStr = String(eraRaw || '').trim();
+
+    // 緩急 (①ERA + ②制球 + ③変化球威力MAX) ÷ 2
+    const kankyuu = calcKankyuu(eraStr, seikyu, pitchData);
+    if (kankyuu !== '') purpleCell(ws.getCell(rn, KANKYUU_COL), kankyuu, fontSize);
+
+    // 精神
+    if (eraStr && eraStr !== '--') {
+      const seisin = calcSeisinFromERA(Number(eraStr));
+      if (seisin !== '') purpleCell(ws.getCell(rn, SEISIN_COL), seisin, fontSize);
+    }
+
+    const sanshin = calcSanshinFromK9(so / ip * 9);
+    if (sanshin !== '') purpleCell(ws.getCell(rn, SANSHIN_COL), sanshin, fontSize);
+
+    const omosa = calcOmosaFromHR9(hr / ip * 9);
+    if (omosa !== '') purpleCell(ws.getCell(rn, OMOSA_COL), omosa, fontSize);
+
+    const avgStr = String(avgRaw || '').trim();
+    const vsLStr = String(vsLRaw || '').trim();
+    if (avgStr && avgStr !== '--' && vsLStr && vsLStr !== '--') {
+      const taileft = calcTaiHidariFromDiff(Number(avgStr) - Number(vsLStr));
+      if (taileft !== '') purpleCell(ws.getCell(rn, TAILEFT_COL), taileft, fontSize);
+    }
+
+    const taitourui = calcTaiTouruiFromSBData(sb, pk, ip, cs);
+    if (taitourui !== '') purpleCell(ws.getCell(rn, TAITOURUI_COL), taitourui, fontSize);
+
+    // 球種能力値
+    activePitchList.forEach((pg, i) => {
+      const pd = pitchData[pg.idx];
+      const pctStr = String(pd.pct == null ? '' : pd.pct).trim();
+      const pctNum = Number(pctStr);
+      if (!pctStr || pctStr === '--' || isNaN(pctNum) || pctNum <= 0) return;
+
+      const veloNum = parseFloat(String(pd.velo || ''));
+      const baStr   = String(pd.ba  == null ? '' : pd.ba).trim();
+      const slgStr  = String(pd.slg == null ? '' : pd.slg).trim();
+      const baNum   = (baStr  && baStr  !== '--') ? Number(baStr)  : NaN;
+      const slgNum  = (slgStr && slgStr !== '--') ? Number(slgStr) : NaN;
+
+      const base = PITCH_ABILITY_START_COL + i * 3;
+
+      const kyusoku = calcKyuSoku(veloNum);
+      if (kyusoku !== '') redPurpleCell(ws.getCell(rn, base + 0), kyusoku, fontSize);
+
+      const ah = calcAH_pitch(pg.idx, baNum);
+      const ai = calcAI_pitch(pg.idx, slgNum);
+      const aj = (ah !== '' && ai !== '') ? (Number(ah) + Number(ai)) / 2 : '';
+      const ak = calcAK_pitch(pg.idx, aj, pctNum);
+      const kyui = calcKyuI(aj, ak, pctNum);
+      if (kyui !== '') redPurpleCell(ws.getCell(rn, base + 1), kyui, fontSize);
+
+      redPurpleCell(ws.getCell(rn, base + 2), pctNum, fontSize);
+    });
+
     count++;
   }
 
@@ -279,21 +718,58 @@ async function fetchPitchingStats(id, y1, y2) {
 // ── Pitch type config ─────────────────────────────────────────────────────────
 const PITCH_KEYS     = ['ff', 'sl', 'ch', 'cu', 'fc', 'si', 'fs'];
 const PITCH_NAMES_JA = ['4シーム', 'スライダー', 'チェンジアップ', 'カーブ', 'カット', 'シンカー', 'スプリット'];
+
+// Baseball Savant pitch name → 球種キー
 const PITCH_MAP_P    = {
   '4-Seam Fastball': 'ff', '4-seam Fastball': 'ff', 'Four-Seam Fastball': 'ff',
-  'Slider': 'sl', 'Sweeper': 'sl',
+  'Four Seamer': 'ff', 'Four-Seamer': 'ff', '4-Seamer': 'ff', '4 Seamer': 'ff',
+  'Fastball': 'ff',        // 初期Statcat年代の汎用分類
+  'Riding Fastball': 'ff', 'Rising Fastball': 'ff',  // 高スピン4シームの新分類名
+  'Slider': 'sl', 'Sweeper': 'sl', 'Hard Slider': 'sl',
   'Changeup': 'ch', 'Change-up': 'ch',
-  'Curveball': 'cu', 'Knuckle Curve': 'cu', 'Knuckleball': 'cu',
+  'Curveball': 'cu', 'Knuckle Curve': 'cu', 'Knuckleball': 'cu', 'Slow Curve': 'cu',
   'Cutter': 'fc',
   'Sinker': 'si', 'Two-Seam Fastball': 'si', '2-Seam Fastball': 'si',
   'Split-Finger': 'fs', 'Splitter': 'fs', 'Split Finger': 'fs',
+};
+
+// brooksbaseball.net pitch name → 球種キー（Twoseam は フォーシーム優先）
+const PITCH_MAP_B = {
+  'Fourseam':    'ff', 'Four-Seam': 'ff', 'Four Seam': 'ff', 'FA': 'ff',
+  'Twoseam':     'ff', 'Two-Seam':  'ff', 'Two Seam':  'ff', 'FT': 'ff',
+  'Sinker':      'si', 'SI': 'si',
+  'Slider':      'sl', 'SL': 'sl', 'Sweeper': 'sl',
+  'Changeup':    'ch', 'CH': 'ch', 'Change-up': 'ch',
+  'Curveball':   'cu', 'CU': 'cu', 'Knuckle Curve': 'cu', 'KC': 'cu', 'KnuckleCurve': 'cu',
+  'Cutter':      'fc', 'FC': 'fc',
+  'Splitter':    'fs', 'FS': 'fs', 'Split-Finger': 'fs', 'Split Finger': 'fs', 'SplitFinger': 'fs',
+};
+
+// Baseball Savant JSON API pitch_type コード → 球種キー
+const PITCH_TYPE_JSON = {
+  'FF': 'ff', 'FA': 'ff', 'FT': 'ff',       // 4-Seam / generic / Two-seam（4S優先）
+  'SI': 'si',                                  // Sinker
+  'SL': 'sl', 'ST': 'sl', 'SV': 'sl',       // Slider / Sweeper / Slurve
+  'CH': 'ch', 'SC': 'ch',                    // Changeup / Screwball
+  'CU': 'cu', 'KC': 'cu', 'CS': 'cu',       // Curveball / Knuckle-curve
+  'FC': 'fc',                                  // Cutter
+  'FS': 'fs', 'FO': 'fs',                    // Split-finger / Forkball
 };
 
 const emptyPitchP = () => Object.fromEntries(
   PITCH_KEYS.map(k => [k, { velo: '--', ba: '--', slg: '--', pct: '--' }])
 );
 
-// ── Baseball Savant browser scraping ─────────────────────────────────────────
+// ── ユーティリティ ──────────────────────────────────────────────────────────
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ── Baseball Savant + brooksbaseball.net browser scraping ────────────────────
+// 設計:
+//  Step1: Baseball Savant JSON API を in-page fetch で直接叩く（HTMLパース不要・最高精度）
+//  Step2: JSON API が失敗した年は HTMLテーブルにフォールバック
+//         → pct列は「同一年の合計≈100」ヒューリスティックで特定（列名マッチング廃止）
+//  Step3: Statcastが存在しない年(2015以前等)や BA/SLG が欠損している年は
+//         brooksbaseball.net で補完
 async function fetchBrowserData(slug, id, years, onProgress) {
   const chromePath = findChrome();
   if (!chromePath) throw new Error('Chromeが見つかりません。Google ChromeまたはEdgeをインストールしてください。');
@@ -316,81 +792,278 @@ async function fetchBrowserData(slug, id, years, onProgress) {
       window.chrome = { runtime: {} };
     });
 
-    const y1 = years[0], y2 = years[years.length - 1];
     const rawPitch = {};
     for (const yr of years) rawPitch[yr] = emptyPitchP();
 
+    // ── ヘルパー ─────────────────────────────────────────────────────────────
+    const yearHasPct = (yr) => PITCH_KEYS.some(k => {
+      const p = rawPitch[yr]?.[k]?.pct;
+      return p && p !== '--' && !isNaN(parseFloat(String(p)));
+    });
+
+    // rawPitch[yr] に HTML パース結果をマージ（上書きしない）
+    const mergeHtmlData = (htmlData, yr) => {
+      for (const [ptName, vals] of Object.entries(htmlData)) {
+        const key = PITCH_MAP_P[ptName];
+        if (!key) continue;
+        const cur = rawPitch[yr][key];
+        rawPitch[yr][key] = {
+          velo: (cur.velo && cur.velo !== '--') ? cur.velo : (vals.velo || '--'),
+          ba:   (cur.ba   && cur.ba   !== '--') ? cur.ba   : (vals.ba   || '--'),
+          slg:  (cur.slg  && cur.slg  !== '--') ? cur.slg  : (vals.slg  || '--'),
+          pct:  (cur.pct  && cur.pct  !== '--') ? cur.pct  : (vals.pct  || '--'),
+        };
+      }
+    };
+
+    // ── Step 1: Baseball Savant キャリアページ 1 回ナビゲート ────────────────
+    // Baseball Savant のキャリアページには全年分の Pitch Tracking テーブルが含まれる。
+    // 「Year」列（/^\d{4}$/ にマッチするセル群）を検出し、年別にデータを抽出する。
+    // ?season= パラメータは効かないため年別ナビゲーションは行わない。
     try {
-      onProgress('Baseball Savant (投手) を読み込み中...');
-      const savantUrl = `https://baseballsavant.mlb.com/savant-player/${slug}-${id}` +
-        `?stats=statcast&player_type=pitcher&startSeason=${y1}&endSeason=${y2}`;
+      onProgress('Baseball Savant を読み込み中...');
+      const savantUrl = `https://baseballsavant.mlb.com/savant-player/${slug}-${id}?stats=statcast-r-pitching-mlb`;
       await page.goto(savantUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
-      const savantRaw = await page.evaluate(() => {
-        try {
-          const tables = document.querySelectorAll('table');
-          let pitchTable = null;
-          for (const t of tables) {
-            const txt = t.innerText || '';
-            if (txt.includes('4-Seam') || txt.includes('Sinker') || txt.includes('Slider') ||
-                txt.includes('Fastball') || txt.includes('Curveball')) {
-              pitchTable = t; break;
+      // テーブル描画を待機（最大20秒）
+      try {
+        await page.waitForFunction(
+          () => [...document.querySelectorAll('table')].some(t =>
+            /\d{4}/.test(t.innerText || '') &&
+            ['4-Seam','Fastball','Sinker','Slider','Riding'].some(k => (t.innerText||'').includes(k))
+          ),
+          { timeout: 20000 }
+        );
+      } catch { /* テーブルが見つからなくても続行 */ }
+      await sleep(2000);
+
+      // キャリアページの多年度 Pitch Tracking テーブルを一括パース
+      // ── 設計方針 ────────────────────────────────────────────────────────────
+      // 投球率(%) の取得戦略:
+      //   ① `%` 列ヘッダーが存在すれば直接読む
+      //   ② `#` / `pitches` 列（投球数）があれば 年間合計で除して計算（最も信頼性が高い）
+      //   ヒューリスティック（合計≈100）は廃止。K%・xwOBA等が誤検知されるため。
+      const careerData = await page.evaluate((yrs) => {
+        const KWDS = ['4-Seam','Fastball','Four Seam','Seamer','Riding','Rising',
+                      'Sinker','Slider','Changeup','Change-up','Curveball','Cutter','Split',
+                      'Sweeper','Knuckle','Two-Seam','2-Seam','Hard Slider','Slow Curve'];
+        function hasPK(t) { return t && KWDS.some(k => t.includes(k)); }
+
+        const result = {};  // { "2021": { "4-Seam Fastball": {velo,ba,slg,pct} } }
+
+        for (const tbl of document.querySelectorAll('table')) {
+          const tblText = tbl.innerText || '';
+          // 球種名キーワードと4桁年を両方含むテーブルのみ対象
+          if (!hasPK(tblText) || !/\d{4}/.test(tblText)) continue;
+
+          const allRows = [...tbl.querySelectorAll('tbody tr')]
+            .map(r => [...r.querySelectorAll('td')])
+            .filter(c => c.length >= 3);
+          if (allRows.length < 2) continue;
+
+          const nCols = Math.max(0, ...allRows.map(c => c.length));
+
+          // ── 年列検出: /^\d{4}$/ にマッチするセルが最も多い列 ──
+          let yearCol = -1, bestYearCnt = 0;
+          for (let col = 0; col < nCols; col++) {
+            const cnt = allRows.filter(c =>
+              /^\d{4}$/.test((c[col]?.innerText || '').trim())
+            ).length;
+            if (cnt > bestYearCnt) { bestYearCnt = cnt; yearCol = col; }
+          }
+          if (yearCol < 0 || bestYearCnt < 1) continue;
+
+          // ── 球種名列検出 ──
+          let pitchCol = -1;
+          for (let col = 0; col < nCols; col++) {
+            if (col === yearCol) continue;
+            if (allRows.some(c => hasPK((c[col]?.innerText || '')))) {
+              pitchCol = col; break;
             }
           }
-          if (!pitchTable) return { pitchData: {}, debug: 'no_table' };
+          if (pitchCol < 0) continue;
 
-          const headers = [...pitchTable.querySelectorAll('thead th,thead td')]
-            .map(h => h.innerText.trim().toLowerCase());
+          // ── ヘッダー取得（ソートアイコン等の特殊文字を除去）──
+          // Baseball Savant のテーブルヘッダーには ↕ などのソートアイコンが含まれるため
+          // 英数字・%・#・スペース 以外の文字を除去してから比較する
+          const hdrRow = tbl.querySelector('thead tr') || tbl.querySelector('tr');
+          const hdr = hdrRow
+            ? [...hdrRow.querySelectorAll('th,td')].map(h => {
+                return h.innerText.trim().toLowerCase()
+                  .replace(/[^\w%#\s]/g, '')   // 矢印・特殊記号を除去
+                  .replace(/\s+/g, ' ')
+                  .trim();
+              })
+            : [];
 
-          let yearIdx  = headers.findIndex(h => h === 'year' || h === 'season');
-          let pitchIdx = headers.findIndex(h => h === 'pitch' || h === 'pitch name' || h === 'pitch type' || h === 'type');
-          let veloIdx  = headers.findIndex(h => h.includes('velo') || h.includes('velocity') || h === 'avg velo' || h === 'mph');
-          let baIdx    = headers.findIndex(h => h === 'ba' || h === 'avg' || h === 'batting avg' || h === 'batting average');
-          let slgIdx   = headers.findIndex(h => h === 'slg' || h === 'slugging' || h.startsWith('slg'));
-          let pctIdx   = headers.findIndex(h => h === '%' || h === 'usage' || h === 'usage%' || h === 'pct' ||
-                           (h.includes('%') && !h.includes('k%') && !h.includes('bb%') && !h.includes('zone')));
+          // 各列のインデックス（ソートアイコン除去後のヘッダーで一致）
+          const veloIdx = hdr.findIndex(h =>
+            h === 'mph' || h.includes('velo') || h.includes('velocity') || h.includes('speed'));
+          const baIdx   = hdr.findIndex(h =>
+            h === 'ba' || h === 'avg' || h === 'batting avg' || h === 'batting average');
+          const slgIdx  = hdr.findIndex(h =>
+            h === 'slg' || h === 'slg%' || h === 'slugging' || h.startsWith('slg'));
 
-          if (pitchIdx < 0) pitchIdx = 1;
-          if (yearIdx < 0)  yearIdx  = 0;
+          // 投球割合: ヘッダーが正確に "%" の列のみ使用
+          // ※ Baseball Savant の Pitch Movement テーブル (Table 6) には % 列がなく、
+          //    MPH の左列は "#"（投球数）。veloIdx-1 フォールバックは廃止。
+          // ※ Run Values テーブル (Table 7) に明示的な "%" ヘッダーがある。
+          const pctIdx = hdr.findIndex(h => h === '%');
 
-          const pitchData = {};
-          for (const row of pitchTable.querySelectorAll('tbody tr')) {
-            const cells = [...row.querySelectorAll('td')];
-            if (cells.length < 2) continue;
-            const yr = cells[yearIdx]?.innerText.trim();
-            const pt = cells[pitchIdx]?.innerText.trim();
-            if (!yr || !pt) continue;
-            if (!pitchData[yr]) pitchData[yr] = {};
-            pitchData[yr][pt] = {
-              velo: veloIdx >= 0 ? cells[veloIdx]?.innerText.trim() : '--',
-              ba:   baIdx   >= 0 ? cells[baIdx]?.innerText.trim()   : '--',
-              slg:  slgIdx  >= 0 ? cells[slgIdx]?.innerText.trim()  : '--',
-              pct:  pctIdx  >= 0 ? cells[pctIdx]?.innerText.trim()  : '--',
+          // ── 行データを年別に抽出（複数テーブルのフィールドをマージ）──
+          for (const cells of allRows) {
+            const yr = (cells[yearCol]?.innerText || '').trim();
+            if (!yrs.includes(yr)) continue;
+            const pt = (cells[pitchCol]?.innerText || '').trim();
+            if (!pt || !hasPK(pt)) continue;
+
+            const g = (idx) => (idx >= 0 && idx < cells.length)
+              ? (cells[idx]?.innerText.trim() || '--') : '--';
+
+            // velo / ba / slg はヘッダーマッチした列から（既存値があれば上書きしない）
+            if (!result[yr]) result[yr] = {};
+            const cur = result[yr][pt] || { velo: '--', ba: '--', slg: '--', pct: '--' };
+            result[yr][pt] = {
+              velo: (cur.velo && cur.velo !== '--') ? cur.velo : g(veloIdx),
+              ba:   (cur.ba   && cur.ba   !== '--') ? cur.ba   : g(baIdx),
+              slg:  (cur.slg  && cur.slg  !== '--') ? cur.slg  : g(slgIdx),
+              // pct: "%" ヘッダーがある列から直接読む（Run Values テーブルの "%" 列）
+              // 既に他のテーブルで取得済みの場合は上書きしない
+              pct:  (cur.pct  && cur.pct  !== '--') ? cur.pct  : (pctIdx >= 0 ? g(pctIdx) : '--'),
             };
           }
-          return { pitchData };
-        } catch (e) {
-          return { pitchData: {}, error: e.message };
+          // break しない: 複数テーブルから全フィールドを収集する（Pitch Movement で velo、Run Values で ba/slg/pct）
         }
+
+        return result;
+      }, years);
+
+      // careerData を rawPitch にマージ
+      for (const [yr, pitchMap] of Object.entries(careerData)) {
+        mergeHtmlData(pitchMap, yr);
+      }
+      const gotYears = Object.keys(careerData).filter(y => Object.keys(careerData[y]).length > 0);
+      onProgress(`Baseball Savant: ${gotYears.length} 年分のピッチデータを取得`);
+
+    } catch (e) {
+      onProgress('⚠ Baseball Savant 取得失敗: ' + e.message);
+    }
+
+    // ── Step 2: brooksbaseball.net 補完 ──────────────────────────────────────
+    // ・Statcast が存在しない年（2015以前）: pct が全て '--' → Brooks を主ソースとして使用
+    // ・データはあるが BA/SLG が欠けている球種がある年: Brooks で補完
+    // ・Brooks の pct 列も「合計≈100」ヒューリスティックで特定
+    const BROOKS_KW = ['Fourseam','Four-Seam','Four Seam','Twoseam','Two-Seam','Two Seam',
+                       'Sinker','Slider','Changeup','Change-up','Curveball','KnuckleCurve',
+                       'Knuckle Curve','Cutter','Splitter','Split-Finger','Split Finger',
+                       'Sweeper','FA','FT','SI','SL','CH','CU','FC','FS','KC'];
+
+    for (const yr of years) {
+      const hasAnyPct = PITCH_KEYS.some(k => {
+        const d = rawPitch[yr][k];
+        if (!d || !d.pct || d.pct === '--') return false;
+        return !isNaN(parseFloat(String(d.pct).replace('%', ''))) &&
+               parseFloat(String(d.pct).replace('%', '')) > 0;
       });
+      const hasMissingStats = PITCH_KEYS.some(k => {
+        const d = rawPitch[yr][k];
+        if (!d || !d.pct || d.pct === '--') return false;
+        const pn = parseFloat(String(d.pct).replace('%', ''));
+        if (isNaN(pn) || pn <= 0) return false;
+        return (!d.ba || d.ba === '--' || !d.slg || d.slg === '--');
+      });
+      // Savantデータ完全 → Brooks不要。それ以外（未カバー年 or 欠損あり）→ Brooks補完
+      if (hasAnyPct && !hasMissingStats) continue;
 
-      if (savantRaw.error) onProgress('⚠ Baseball Savant エラー: ' + savantRaw.error);
+      try {
+        onProgress(`brooksbaseball.net から ${yr} 年のデータを補完中...`);
+        const brooksUrl =
+          `http://www.brooksbaseball.net/tabs.php?player=${id}&time=season` +
+          `&startDate=01/01/${yr}&endDate=12/31/${yr}&tgt=pitch_type&pitchSel=&prevGame=0&prevAB=0&s_type=3`;
+        await page.goto(brooksUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        await sleep(3000);
 
-      for (const yr of years) {
-        const yrData = savantRaw.pitchData?.[yr] || {};
-        for (const [ptName, vals] of Object.entries(yrData)) {
-          const key = PITCH_MAP_P[ptName];
+        // brooksbaseball.net がリダイレクトで別ドメインに飛んだ場合はスキップ
+        const finalBrooksUrl = page.url();
+        if (!finalBrooksUrl.includes('brooksbaseball')) {
+          onProgress(`⚠ brooksbaseball.net ${yr}: 別サイトにリダイレクト、スキップ`);
+          continue;
+        }
+
+        const brooksRaw = await page.evaluate((kws) => {
+          function hasBrooksKw(txt) { return kws.some(kw => txt.includes(kw)); }
+          const result = {};
+          for (const tbl of document.querySelectorAll('table')) {
+            if (!hasBrooksKw(tbl.innerText || '')) continue;
+            const rows = [...tbl.querySelectorAll('tr')];
+            if (rows.length < 2) continue;
+            const headers = [...rows[0].querySelectorAll('th,td')]
+              .map(c => c.innerText.trim().toLowerCase());
+            let pitchIdx = headers.findIndex(h =>
+              h === 'pitch type' || h === 'pitch name' || h === 'pitch' || h === 'type' || h === 'name');
+            if (pitchIdx < 0) pitchIdx = 0;
+            let veloIdx = headers.findIndex(h => h.includes('velo') || h.includes('mph') || h === 'avg velo');
+            let baIdx   = headers.findIndex(h => h === 'ba' || h === 'avg' || h.includes('batting avg'));
+            let slgIdx  = headers.findIndex(h => h === 'slg' || h === 'slg%' || h.startsWith('slg') || h.includes('slugging'));
+
+            // pct 列検出:
+            // 1) ヘッダーで明示的な "%" / "pct" / "freq" / "usage" を探す
+            // 2) なければ 左→右 スキャンで合計≈100 の最初の列（右→左だと K% 等を拾いやすい）
+            const allCells = rows.slice(1).map(r => [...r.querySelectorAll('td,th')]);
+            const nCols = Math.max(0, ...allCells.map(c => c.length));
+            let pctIdx = -1;
+
+            // Step1: ヘッダー名で完全一致または部分一致
+            const explicitPct = headers.findIndex(h =>
+              h === '%' || h === 'pct' || h === 'freq' || h === 'usage' ||
+              h === 'pitch%' || h === 'pitch %' || h === 'usage%' ||
+              (h.includes('pitch') && h.includes('%'))
+            );
+            if (explicitPct >= 0 && explicitPct !== pitchIdx) {
+              pctIdx = explicitPct;
+            }
+
+            // Step2: 明示的ヘッダーが見つからない場合 → 左→右スキャン（usage% は左寄り）
+            if (pctIdx < 0) {
+              for (let col = 0; col < nCols; col++) {
+                if (col === pitchIdx || col === veloIdx || col === baIdx || col === slgIdx) continue;
+                let sum = 0, cnt = 0;
+                for (const cells of allCells) {
+                  if (col >= cells.length) continue;
+                  const v = parseFloat((cells[col]?.innerText || '').replace('%', '').trim());
+                  if (!isNaN(v) && v > 0 && v <= 100) { sum += v; cnt++; }
+                }
+                if (cnt >= 2 && sum >= 85 && sum <= 115) { pctIdx = col; break; }
+              }
+            }
+
+            for (let ri = 1; ri < rows.length; ri++) {
+              const cells = [...rows[ri].querySelectorAll('td,th')];
+              if (cells.length < 2) continue;
+              const pt = cells[pitchIdx]?.innerText.trim();
+              if (!pt || !hasBrooksKw(pt)) continue;
+              const g = (idx) => idx >= 0 ? (cells[idx]?.innerText.trim() || '--') : '--';
+              result[pt] = { velo: g(veloIdx), ba: g(baIdx), slg: g(slgIdx), pct: g(pctIdx) };
+            }
+            if (Object.keys(result).length > 0) break;
+          }
+          return result;
+        }, BROOKS_KW);
+
+        for (const [ptName, vals] of Object.entries(brooksRaw)) {
+          const key = PITCH_MAP_B[ptName];
           if (!key) continue;
+          const cur = rawPitch[yr][key];
           rawPitch[yr][key] = {
-            velo: vals.velo || '--',
-            ba:   vals.ba   || '--',
-            slg:  vals.slg  || '--',
-            pct:  vals.pct  || '--',
+            velo: (cur.velo && cur.velo !== '--') ? cur.velo : (vals.velo || '--'),
+            ba:   (cur.ba   && cur.ba   !== '--') ? cur.ba   : (vals.ba   || '--'),
+            slg:  (cur.slg  && cur.slg  !== '--') ? cur.slg  : (vals.slg  || '--'),
+            pct:  (cur.pct  && cur.pct  !== '--') ? cur.pct  : (vals.pct  || '--'),
           };
         }
+      } catch (e) {
+        onProgress(`⚠ brooksbaseball.net ${yr} 年取得失敗: ` + e.message);
       }
-    } catch (e) {
-      onProgress('⚠ Baseball Savant 取得失敗（空データで続行）: ' + e.message);
     }
 
     return { rawPitch };
@@ -431,9 +1104,46 @@ async function buildExcel(playerName, years, basic, vsLeftByYear, rawPitch) {
       velo: wAvg('velo', false),
       ba:   wAvg('ba',   true),
       slg:  wAvg('slg',  true),
-      pct:  wAvg('pct',  true),
+      pct:  wAvg('pct',  false),  // % 形式で保存（decimal変換しない）
     };
   }
+
+  // 通算平均で穴埋め: pct が有効なのに velo / ba / slg が欠けている年を補完
+  for (const yr of years) {
+    for (const key of PITCH_KEYS) {
+      const d = rawPitch[yr]?.[key];
+      if (!d) continue;
+      const pn = parseFloat(String(d.pct ?? '').replace('%', ''));
+      if (isNaN(pn) || pn <= 0) continue;          // 使用率0の球種は補完不要
+      const career = careerPitch[key];
+      if (!career) continue;
+      if ((!d.velo || d.velo === '--') && career.velo && career.velo !== '--')
+        rawPitch[yr][key].velo = career.velo;
+      if ((!d.ba   || d.ba   === '--') && career.ba   && career.ba   !== '--')
+        rawPitch[yr][key].ba   = career.ba;
+      if ((!d.slg  || d.slg  === '--') && career.slg  && career.slg  !== '--')
+        rawPitch[yr][key].slg  = career.slg;
+    }
+  }
+
+  // 投球率が 5% 未満・0・'--'・不明 の球種をすべてマスク（velo/ba/slg/pct → '--'）
+  // ※ pct は % 形式（0〜100）。"0.9"=0.9%、"45.4"=45.4% — decimal 変換しない。
+  // ※ pct が '--' の場合でも velo/ba/slg に値が残ることがある（例: 2023年シンカーの.000等）。
+  //    この場合も全フィールドをマスクして表上に不要なデータが残らないようにする。
+  function maskLowUsage(src) {
+    for (const key of PITCH_KEYS) {
+      const d = src[key];
+      if (!d) continue;
+      const pctStr = String(d.pct ?? '').replace('%', '').trim();
+      const pn     = parseFloat(pctStr);
+      // マスク条件: pct が '--' / '' / NaN / 0以下 / 5%未満 のいずれか
+      if (pctStr === '--' || pctStr === '' || isNaN(pn) || pn < 5.0) {
+        src[key] = { velo: '--', ba: '--', slg: '--', pct: '--' };
+      }
+    }
+  }
+  for (const yr of years) maskLowUsage(rawPitch[yr]);
+  maskLowUsage(careerPitch);
 
   // Pre-compute normalized usage% for all years + career (total = 100)
   const normalizedPct = {};
@@ -534,21 +1244,21 @@ async function runCreateJob(jobId, params) {
     upd('Excel ファイルを生成中...');
     const outFile = await buildExcel(params.name, years, basic, vsLeftByYear, rawPitch);
 
-    upd('制球を計算中...');
-    let seikyuRows = 0;
+    upd('スタミナ・制球を計算中...');
+    let abilityRows = 0;
     try {
-      seikyuRows = await addSeikyuToFile(outFile);
-      upd(`制球追加完了: ${seikyuRows} 行`);
+      abilityRows = await addAbilityToFile(outFile);
+      upd(`スタミナ・制球追加完了: ${abilityRows} 行`);
     } catch (e) {
-      upd('⚠ 制球追加失敗: ' + e.message);
+      upd('⚠ スタミナ・制球追加失敗: ' + e.message);
     }
 
     const j = jobs.get(jobId);
     if (j) {
-      j.status   = 'done';
-      j.result   = path.basename(outFile);
-      j.seikyuRows = seikyuRows;
-      j.progress = '完了';
+      j.status      = 'done';
+      j.result      = path.basename(outFile);
+      j.abilityRows = abilityRows;
+      j.progress    = '完了';
     }
   } catch (e) {
     const j = jobs.get(jobId);
@@ -663,7 +1373,7 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
         <span style="font-size:14px;color:#aaa;align-self:center">→</span>
         <span class="badge red">7球種 × 4項目</span>
         <span style="font-size:14px;color:#aaa;align-self:center">→</span>
-        <span class="badge">制球（AY列）自動追加</span>
+        <span class="badge">スタミナ〜対盗塁（AY〜BE）自動追加</span>
       </div>
       <button class="btn-p" id="btnCreate" onclick="doCreate()">▶ 成績ファイルを作成</button>
     </div>
@@ -672,7 +1382,7 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
     <div class="err"  id="cErr"></div>
     <div class="note">
       ※ Chromeが自動起動します（Baseball Savant へのアクセス）<br>
-      ※ 制球（AY列）は守備.ods AC2 相当の計算式で自動追加されます<br>
+      ※ AY=スタミナ・AZ=制球・BA=精神・BB=奪三振・BC=重さ・BD=対左・BE=対盗塁 を自動追加<br>
       ※ 出力先: このツールと同じフォルダ
     </div>
   </div>
@@ -748,7 +1458,7 @@ async function pollCreate(jobId) {
     document.getElementById('btnCreate').disabled=false;
     const el=document.getElementById('cDone'); el.style.display='block';
     let msg = '✓ 完了: ' + j.result + ' を作成しました';
-    if (j.seikyuRows > 0) msg += '（制球: ' + j.seikyuRows + ' 行追加）';
+    if (j.abilityRows > 0) msg += '（スタミナ・制球: ' + j.abilityRows + ' 行追加）';
     el.textContent = msg;
   } else if (j.status==='error') {
     clearInterval(cTimer);
@@ -795,7 +1505,7 @@ if (req.method === 'GET' && url.pathname.startsWith('/api/job/')) {
       try {
         const params = JSON.parse(body);
         const jobId  = crypto.randomUUID();
-        jobs.set(jobId, { status:'running', progress:'開始中...', result:null, seikyuRows:0, error:null });
+        jobs.set(jobId, { status:'running', progress:'開始中...', result:null, abilityRows:0, error:null });
         runCreateJob(jobId, params);
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ jobId }));
