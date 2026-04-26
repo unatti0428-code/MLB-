@@ -2103,20 +2103,50 @@ async function fetchLeagueLeaders(year, isPitcher, leagueId) {
   } catch { return {}; }
 }
 
-/** リーグリーダーデータから選手の順位情報を構築 */
-function buildRankData(leaders, mlbId, leagueLabel) {
+/**
+ * リーグリーダーデータから選手の順位情報を構築
+ * localStats: ローカルExcelの統計値 { avg, hr, rbi, ops, era, k, wins, sb, whip }
+ *   APIの値とローカル値を比較し乖離が大きい場合はそのカテゴリをスキップ
+ */
+function buildRankData(leaders, mlbId, leagueLabel, localStats = {}) {
   const result = { leagueLabel };
   const catMap = {
     earnedRunAverage: 'era', strikeouts: 'k', wins: 'wins', whip: 'whip',
     battingAverage: 'avg', homeRuns: 'hr', rbi: 'rbi',
     onBasePlusSlugging: 'ops', stolenBases: 'sb',
   };
+  // 小数統計の許容誤差（絶対値）
+  const decimalTol = { avg: 0.020, era: 0.030, ops: 0.030, whip: 0.030 };
+
   for (const [apiKey, shortKey] of Object.entries(catMap)) {
     const list = leaders[apiKey] || [];
     const entry = list.find(e => e.personId === mlbId);
-    if (entry && entry.rank <= 10) {
-      result[shortKey] = { rank: entry.rank, value: entry.value };
+    if (!entry || entry.rank > 10) continue;
+
+    // クロスバリデーション
+    const localVal = localStats[shortKey];
+    if (localVal !== undefined && localVal !== null && localVal !== '--') {
+      const apiNum   = parseFloat(entry.value);
+      const localNum = parseFloat(String(localVal).replace(/[^0-9.\-]/g, ''));
+      if (!isNaN(apiNum) && !isNaN(localNum)) {
+        const tol = decimalTol[shortKey];
+        if (tol !== undefined) {
+          // 小数統計：絶対差が許容誤差を超えたらスキップ
+          if (Math.abs(apiNum - localNum) > tol) {
+            console.warn(`[CrossVal] ${shortKey} skip: API=${apiNum} local=${localNum} diff=${Math.abs(apiNum - localNum).toFixed(3)}`);
+            continue;
+          }
+        } else {
+          // 整数統計：差が1.5超でスキップ
+          if (Math.abs(apiNum - localNum) > 1.5) {
+            console.warn(`[CrossVal] ${shortKey} skip: API=${apiNum} local=${localNum} diff=${Math.abs(apiNum - localNum)}`);
+            continue;
+          }
+        }
+      }
     }
+
+    result[shortKey] = { rank: entry.rank, value: entry.value };
   }
   return result;
 }
@@ -2633,7 +2663,22 @@ async function fetchRetsudenFromAPI(row) {
       const teamCode = String(row[2] || '').toUpperCase().trim();
       const { leagueId, leagueLabel } = getLeagueInfo(teamCode);
       const leaders = await fetchLeagueLeaders(yearStr, g_isPitcher, leagueId);
-      rankData = buildRankData(leaders, g_mlbId, leagueLabel);
+
+      // ローカルExcel値を抽出してクロスバリデーションに使う
+      const localStats = g_isPitcher ? {
+        era:  parseFloat(row[5])  || null,
+        wins: parseInt(row[3])    || null,
+        k:    parseInt(row[10])   || null,
+        whip: parseFloat(row[9])  || null,
+      } : {
+        avg: parseFloat(String(fmtRate(row[15])).replace(/^\./,'0.')) || null,
+        hr:  parseInt(row[9])   || null,
+        rbi: parseInt(row[10])  || null,
+        ops: parseFloat(fmtOPS(row[17])) || null,
+        sb:  parseInt(getSB(row, g_headers ? g_headers[0] : [])) || null,
+      };
+
+      rankData = buildRankData(leaders, g_mlbId, leagueLabel, localStats);
       const foundCats = Object.keys(rankData).filter(k => k !== 'leagueLabel');
       console.log(`[League Leaders] ${leagueLabel}${yearStr}年 ランクイン:`, foundCats);
     } catch (e) {
