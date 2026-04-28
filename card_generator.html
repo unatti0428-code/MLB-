@@ -2161,6 +2161,65 @@ function _pwrAdj(power) {
   return '';
 }
 
+// ── 変化球異名DB（英語名小文字キー → { 球種名: 異名 }）────────────────────
+// 球種名はExcelに記録される日本語名と一致させること
+const _PITCH_NICKNAMES = {
+  // チェンジアップ系
+  'devin williams':    { 'チェンジアップ': 'エアベンダー' },
+  'trevor hoffman':    { 'チェンジアップ': '消える魔球' },
+  'pedro martinez':    { 'チェンジアップ': '必殺チェンジ' },
+  'cole hamels':       { 'チェンジアップ': 'ハメルズ・チェンジ' },
+  'felix hernandez':   { 'チェンジアップ': 'エル・カンビオ' },
+  'johan santana':     { 'チェンジアップ': 'サンタナ魔球' },
+  // カーブ系
+  'barry zito':        { 'カーブ': '12-6カーブ' },
+  'sandy koufax':      { 'カーブ': '神のカーブ' },
+  'bert blyleven':     { 'カーブ': '縦割れカーブ' },
+  'clayton kershaw':   { 'カーブ': 'カーショウ曲線' },
+  'rich hill':         { 'カーブ': 'ヒルのカーブ' },
+  'mike mussina':      { 'カーブ': 'ムーシのナックルカーブ' },
+  // スライダー系
+  'randy johnson':     { 'スライダー': '必殺スライダー' },
+  'steve carlton':     { 'スライダー': 'カールトン・スライダー' },
+  'chris sale':        { 'スライダー': 'セールのスライダー' },
+  'dylan cease':       { 'スライダー': '超高速スライダー' },
+  // カットボール系
+  'mariano rivera':    { 'カットボール': '魔球カッター' },
+  'kenley jansen':     { 'カットボール': '必殺カッター' },
+  // フォーシーム系
+  'nolan ryan':        { 'フォーシーム': 'エクスプレス砲' },
+  'randy johnson':     { 'フォーシーム': 'ビッグユニット砲' },
+  'bob gibson':        { 'フォーシーム': 'ギブソン砲' },
+  // スプリット/フォーク系
+  'hideo nomo':        { 'スプリット': 'トルネード落球' },
+  'john smoltz':       { 'スプリット': 'スモルツのスプリット' },
+  'shohei ohtani':     { 'スプリット': '魔球スプリット' },
+  'koji uehara':       { 'スプリット': 'コウジ落球' },
+  // ツーシーム系
+  'greg maddux':       { 'ツーシーム': 'マダックス・ムービング' },
+  // ナックル
+  'tim wakefield':     { 'フォーシーム': 'ナックルボール' },
+  'ra dickey':         { 'フォーシーム': 'ナックルボール' },
+  'phil niekro':       { 'フォーシーム': 'ニークロのナックル' },
+  // スクリューボール
+  'fernando valenzuela': { 'チェンジアップ': 'スクリューボール' },
+  'carl hubbell':        { 'チェンジアップ': 'スクリューボール' },
+};
+
+/**
+ * 選手名から変化球異名マップを返す
+ * @returns {{ pitchName: nickname } | null}
+ */
+function getPitchNicknames(nameEn) {
+  if (!nameEn) return null;
+  const key = nameEn.toLowerCase().trim();
+  if (_PITCH_NICKNAMES[key]) return _PITCH_NICKNAMES[key];
+  for (const [k, v] of Object.entries(_PITCH_NICKNAMES)) {
+    if (key.includes(k) || k.includes(key)) return v;
+  }
+  return null;
+}
+
 // ── 選手固有エピソードDB（英語名小文字キー）────────────────────
 const _PLAYER_LORE = {
   // ── ビッグレッドマシン（1970年代シンシナティ・レッズ）──
@@ -2688,6 +2747,11 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   const powerPitch     = pitches.length > 0 ? [...pitches].sort((a,b) => b.power - a.power)[0] : null;
   const hasRichArsenal = pitches.length >= 4;
 
+  // 変化球異名マップ取得
+  const nickMap = getPitchNicknames(g_mlbNameEn) || {};
+  // 球種名に異名があれば「チェンジアップ（エアベンダー）」形式に変換するヘルパー
+  const pName = p => nickMap[p.name] ? `${p.name}（${nickMap[p.name]}）` : p.name;
+
   // 球速テキスト生成ヘルパー（"最速98mph・"など）
   const spdTxt = s => (s !== null && s >= 60) ? `最速${Math.round(s)}mph・` : '';
 
@@ -2738,20 +2802,20 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     const sw = spdTxt(powerPitch.speed);
     if (primaryPitch.name !== powerPitch.name && powerPitch.power >= 85) {
       if (primaryPitch.rate >= 40) {
-        lines.push(`${sp}${primaryPitch.name}を主軸に、${sw}${_pwrAdj(powerPitch.power)}${powerPitch.name}で打者を仕留めるスタイルが光った。`);
+        lines.push(`${sp}${pName(primaryPitch)}を主軸に、${sw}${_pwrAdj(powerPitch.power)}${pName(powerPitch)}で打者を仕留めるスタイルが光った。`);
       } else {
-        lines.push(`${sp}${primaryPitch.name}と${sw}${_pwrAdj(powerPitch.power)}${powerPitch.name}を組み合わせ、打者を翻弄し続けた。`);
+        lines.push(`${sp}${pName(primaryPitch)}と${sw}${_pwrAdj(powerPitch.power)}${pName(powerPitch)}を組み合わせ、打者を翻弄し続けた。`);
       }
     } else if (primaryPitch.power >= 85) {
-      lines.push(`${sp}${_pwrDesc(primaryPitch.power)}${primaryPitch.name}を主軸に、打者を力でねじ伏せた。`);
+      lines.push(`${sp}${_pwrDesc(primaryPitch.power)}${pName(primaryPitch)}を主軸に、打者を力でねじ伏せた。`);
     } else if (hasRichArsenal) {
-      const pitchList = pitches.slice(0, 3).map(q => `${spdTxt(q.speed)}${q.name}`).join('・');
+      const pitchList = pitches.slice(0, 3).map(q => `${spdTxt(q.speed)}${pName(q)}`).join('・');
       lines.push(`${pitchList}と多彩な球種で打者に球種を絞らせない完成度の高い投球スタイルが光った。`);
     } else {
-      lines.push(`${sp}${primaryPitch.name}を軸に攻める投球で、打者を翻弄し続けた。`);
+      lines.push(`${sp}${pName(primaryPitch)}を軸に攻める投球で、打者を翻弄し続けた。`);
     }
   } else if (hasRichArsenal) {
-    const pitchList = pitches.slice(0, 3).map(q => `${spdTxt(q.speed)}${q.name}`).join('・');
+    const pitchList = pitches.slice(0, 3).map(q => `${spdTxt(q.speed)}${pName(q)}`).join('・');
     lines.push(`${pitchList}と多彩な球種を操り、打者に球種を絞らせない完成度の高い投球スタイルが光った。`);
   } else if (!isStarter && (sv >= 20 || tg - gs >= 40)) {
     lines.push(`僅差の終盤に登場し試合を締める不動のクローザーとして、相手打線に恐れられた存在。`);
@@ -2841,7 +2905,10 @@ async function fetchRetsudenFromAPI(row) {
   const awardsJa = (mlbData.awards || []).map(awardToJa).filter(Boolean);
   const cardType  = buildCardType(row, awardsJa);
 
-  return { retsuden, cardType, pitchNicknames: {} };
+  // 変化球異名（投手のみ）
+  const pitchNicknames = g_isPitcher ? (getPitchNicknames(g_mlbNameEn) || {}) : {};
+
+  return { retsuden, cardType, pitchNicknames };
 }
 
 // カード上のcardTypeラベルと変化球ニックネームを更新
@@ -2851,17 +2918,23 @@ function updateCardExtras(cardType, pitchNicknames) {
     const el = document.querySelector('#card-root .card-type');
     if (el) el.textContent = cardType;
   }
-  // ② 変化球ニックネームを球種名セルに追記
+  // ② 変化球ニックネームを球種名セルに追記（2行表示・!important対応）
   if (pitchNicknames && typeof pitchNicknames === 'object') {
     Object.entries(pitchNicknames).forEach(([pitchName, nickname]) => {
       if (!nickname) return;
       document.querySelectorAll('#card-root td.pn[data-pitch]').forEach(td => {
         if (td.dataset.pitch === pitchName) {
-          const label = `${pitchName}(${nickname})`;
-          td.textContent = label;
-          // 長くなったフォントを縮小
-          td.style.fontSize = label.length > 10 ? '8px' : label.length > 8 ? '9px' : '';
-          td.style.letterSpacing = '0px';
+          // 球種名を1行目、異名を2行目に小さく表示
+          // innerHTML を使い2行レイアウトにする（overflow対策）
+          td.innerHTML =
+            `<span style="display:block;line-height:1.2;">${escapeHtml(pitchName)}</span>` +
+            `<span style="display:block;font-size:8px;color:#ffd080;letter-spacing:0;` +
+            `line-height:1.2;font-style:italic;">（${escapeHtml(nickname)}）</span>`;
+          // !important を上書きするには setProperty の第3引数 'important' を使う
+          td.style.setProperty('font-size', '11px', 'important');
+          td.style.setProperty('letter-spacing', '-0.3px', 'important');
+          td.style.setProperty('line-height', '1', 'important');
+          td.style.setProperty('padding', '2px 4px', 'important');
         }
       });
     });
