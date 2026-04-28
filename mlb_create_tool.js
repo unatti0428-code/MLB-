@@ -168,7 +168,7 @@ const emptyPitch = () => ({
   fc:{ba:'--',pa:0}, fs:{ba:'--',pa:0},
 });
 
-async function fetchBrowserData(slug, id, playerFullName, years, onProgress) {
+async function fetchBrowserData(slug, id, playerFullName, years, onProgress, splitsRaw = {}) {
   const chromePath = findChrome();
   if (!chromePath) throw new Error('Chromeが見つかりません。Google ChromeまたはMicrosoft Edgeをインストールしてください。');
 
@@ -457,6 +457,154 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress) {
       onProgress('⚠ FanGraphs 取得失敗（空データで続行）: ' + e.message);
     }
 
+    // ── Baseball Reference フォールバック（歴代選手・DRS欠損/スプリット欠損時）────
+    // FanGraphs でフィールディングデータが取れなかった年が1つ以上ある、
+    // または MLB Stats API でスプリットが全て空の場合に BB-Ref を参照する。
+    const bbRefSplits = {}; // { [yr]: { vsLAB, vsLH, rispAB, rispH } }
+    const missingFieldingYears = years.filter(yr => Object.keys(fieldingByYear[yr]).length === 0);
+    const allSplitsEmpty = years.every(yr => !(splitsRaw[yr]?.vsLAB) && !(splitsRaw[yr]?.rispAB));
+    if (missingFieldingYears.length > 0 || allSplitsEmpty) {
+      try {
+        onProgress('Baseball Reference からデータを取得中...');
+
+        // BB-Ref URL スラッグ構築（姓5文字 + 名2文字 + 01）
+        // 例: "Babe Ruth" → ruthba01 / "Kyle Higashioka" → higasky01
+        const SUFFIXES = new Set(['jr.', 'sr.', 'ii', 'iii', 'iv', 'v', 'jr', 'sr']);
+        const cleanName = (playerFullName || '').normalize('NFD')
+          .replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z ]/g, '').trim();
+        const nameParts = cleanName.split(/\s+/).filter(p => !SUFFIXES.has(p));
+        const firstName = nameParts[0] || '';
+        const lastName  = nameParts[nameParts.length - 1] || '';
+        let bbSlug = lastName.slice(0, 5) + firstName.slice(0, 2) + '01';
+
+        // 指定スラッグが正しい選手ページか確認し、違えば 02〜05 まで試みる
+        const checkBBRef = async (slug) => {
+          try {
+            const url = `https://www.baseball-reference.com/players/${slug[0]}/${slug}.shtml`;
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+            return await page.evaluate((name) => {
+              const h1 = document.querySelector('#info h1') || document.querySelector('h1');
+              if (!h1) return false;
+              const t = h1.textContent.trim().toLowerCase();
+              return name.toLowerCase().split(' ').filter(p => p.length > 1).every(p => t.includes(p));
+            }, playerFullName);
+          } catch { return false; }
+        };
+
+        let bbFound = await checkBBRef(bbSlug);
+        if (!bbFound) {
+          for (let n = 2; n <= 5 && !bbFound; n++) {
+            bbSlug = lastName.slice(0, 5) + firstName.slice(0, 2) + String(n).padStart(2, '0');
+            bbFound = await checkBBRef(bbSlug);
+          }
+        }
+
+        if (bbFound) {
+          onProgress(`Baseball Reference 選手確認: ${bbSlug}`);
+
+          // ── 守備データ（standard_fielding テーブル）→ DRS推定 ─────────────────
+          if (missingFieldingYears.length > 0) {
+            const bbFieldRaw = await page.evaluate(() => {
+              const table = document.querySelector('#standard_fielding');
+              if (!table) return null;
+              const result = {};
+              for (const row of table.querySelectorAll('tbody tr:not(.thead)')) {
+                const get = s => row.querySelector(`[data-stat="${s}"]`)?.textContent.trim() || '';
+                const yr  = get('year_ID').replace(/[^0-9]/g, '');
+                const pos = get('pos');
+                if (!yr || yr.length !== 4 || !pos) continue;
+                result[yr] = result[yr] || {};
+                // 複数チーム行は後の行（合計行）が上書きするので最後が残る
+                result[yr][pos] = {
+                  inn:    get('inn_outs') || get('inn'),
+                  ch:     parseInt(get('chances'))              || 0,
+                  e:      parseInt(get('e'))                    || 0,
+                  fld:    parseFloat(get('fielding_perc'))      || 0,
+                  lgFld:  parseFloat(get('lg_fielding_perc'))   || 0,
+                  rf9:    parseFloat(get('range_factor_9inn'))  || 0,
+                  lgRf9:  parseFloat(get('lg_range_factor_9inn')) || 0,
+                };
+              }
+              return result;
+            });
+
+            if (bbFieldRaw) {
+              for (const yr of missingFieldingYears) {
+                const posMap = bbFieldRaw[yr];
+                if (!posMap) continue;
+                for (const [pos, d] of Object.entries(posMap)) {
+                  // BB-Ref Inn: "1350.1" = 1350⅓ innings
+                  const innStr   = String(d.inn || '0').replace(/[,\s]/g, '');
+                  const innMatch = innStr.match(/^(\d+)(?:\.(\d))?$/);
+                  const innFull  = innMatch ? parseInt(innMatch[1]) : 0;
+                  const innFrac  = innMatch ? parseInt(innMatch[2] || '0') : 0;
+                  const innDec   = innFull + innFrac / 3;
+                  const innFmt   = innFull + '.' + innFrac;
+                  if (innDec < 1 || !d.lgRf9) continue;
+                  // DRS 推定: レンジ成分 (RF/9差×Inn/9×0.75) + エラー成分 (守備率差×機会×0.5)
+                  const rangeDRS = (d.rf9 - d.lgRf9) * innDec / 9 * 0.75;
+                  const errorDRS = d.ch > 0 ? d.ch * (d.fld - d.lgFld) * 0.5 : 0;
+                  const estDRS   = Math.round(rangeDRS + errorDRS);
+                  fieldingByYear[yr][pos] = { inn: innFmt, drs: estDRS };
+                }
+                if (Object.keys(fieldingByYear[yr]).length > 0)
+                  onProgress(`BB-Ref 守備推定 ${yr}: ${Object.keys(fieldingByYear[yr]).join(', ')}`);
+              }
+            }
+          }
+
+          // ── スプリット取得（通算データ → 年別欠損の補完値として使用）─────────
+          try {
+            const splitUrl =
+              `https://www.baseball-reference.com/players/split.fcgi?id=${bbSlug}&year=all&t=b`;
+            await page.goto(splitUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+            const bbSplit = await page.evaluate(() => {
+              for (const table of document.querySelectorAll('table')) {
+                let vsLRow = null, rispRow = null;
+                for (const row of table.querySelectorAll('tbody tr')) {
+                  const th  = row.querySelector('th') || row.querySelector('[data-stat="split"]');
+                  const txt = (th?.textContent || '').trim().toLowerCase();
+                  if (!vsLRow  && (txt === 'vs. lhp' || txt === 'lhp' || txt === 'left'))
+                    vsLRow = row;
+                  if (!rispRow && (txt === 'risp'    || txt.includes('scoring position')))
+                    rispRow = row;
+                }
+                if (vsLRow || rispRow) {
+                  const getN = (row, stat) => {
+                    if (!row) return 0;
+                    const c = row.querySelector(`[data-stat="${stat}"]`);
+                    return parseInt(c?.textContent.trim() || '0') || 0;
+                  };
+                  return {
+                    vsLAB:  getN(vsLRow,  'AB'),
+                    vsLH:   getN(vsLRow,  'H'),
+                    rispAB: getN(rispRow, 'AB'),
+                    rispH:  getN(rispRow, 'H'),
+                  };
+                }
+              }
+              return null;
+            });
+
+            if (bbSplit && (bbSplit.vsLAB > 0 || bbSplit.rispAB > 0)) {
+              for (const yr of years) bbRefSplits[yr] = bbSplit;
+              onProgress(`BB-Ref スプリット(通算): 対左 ${bbSplit.vsLAB}AB / RISP ${bbSplit.rispAB}AB`);
+            } else {
+              onProgress('BB-Ref スプリット: データなし');
+            }
+          } catch (e) {
+            onProgress('⚠ BB-Ref スプリット取得失敗: ' + e.message);
+          }
+
+        } else {
+          onProgress(`⚠ Baseball Reference: 選手ページ未発見 (${playerFullName})`);
+        }
+      } catch (e) {
+        onProgress('⚠ Baseball Reference 取得失敗: ' + e.message);
+      }
+    }
+
     // ── MLB The Show Speed (Method 2: Baseball Savantデータがない年度のみ取得) ──────
     const mlbTheShowSpeed = {};
     const yearsWithoutSS = years.filter(yr => sprintSpeed[yr] == null);
@@ -497,7 +645,7 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress) {
       }
     }
 
-    return { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming };
+    return { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming, bbRefSplits };
   } finally {
     await browser.close();
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
@@ -988,8 +1136,18 @@ async function runCreateJob(jobId, params) {
     const { years, basic, splitsRaw, catcherFielding } = await fetchMLBStats(params.id, params.y1, params.y2);
 
     upd('ブラウザを起動して Baseball Savant / FanGraphs を取得中...');
-    const { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming } =
-      await fetchBrowserData(params.slug, params.id, params.fullName, years, upd);
+    const { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming, bbRefSplits } =
+      await fetchBrowserData(params.slug, params.id, params.fullName, years, upd, splitsRaw);
+
+    // BB-Ref 通算スプリットで MLB Stats API の欠損年を補完
+    // （歴代選手など sitCodes API が空を返す場合に使用）
+    for (const yr of years) {
+      const d  = splitsRaw[yr];
+      const bb = bbRefSplits?.[yr];
+      if (!d || !bb) continue;
+      if (!d.vsLAB  && bb.vsLAB)  { d.vsLAB  = bb.vsLAB;  d.vsLH   = bb.vsLH;  }
+      if (!d.rispAB && bb.rispAB) { d.rispAB = bb.rispAB; d.rispH  = bb.rispH; }
+    }
 
     upd('Excel ファイルを生成中...');
     const outFile = await buildExcel(params.name, years, basic, splitsRaw, sprintSpeed, mlbTheShowSpeed, rawPitch, fieldingByYear);
