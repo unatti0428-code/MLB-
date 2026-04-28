@@ -3071,7 +3071,6 @@ ${css}
   }
   var inner = document.getElementById('card-flip-inner');
   if(!inner) return;
-  // 高さを表面カードに合わせる
   var frontCard = inner.querySelector('.card-front-face .card');
   if(frontCard) inner.style.height = frontCard.offsetHeight + 'px';
   syncPE(inner, false);
@@ -3080,7 +3079,7 @@ ${css}
     syncPE(inner, isFlipped);
   });
 })();
-</script>
+<\/script>
 </body>
 </html>`;
 
