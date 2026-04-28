@@ -368,9 +368,9 @@
   <div id="year-selector-section">
     <div class="input-group">
       <label class="input-label">📅 生成する年代</label>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-        <select id="year-select" onchange="onYearChange()" style="flex:0 0 auto;"></select>
-        <button class="btn-generate" id="btn-gen-year" onclick="generateCard()" style="margin:0;padding:10px 20px;font-size:13px;">カード生成</button>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:nowrap;">
+        <select id="year-select" onchange="onYearChange()" style="flex:0 0 auto;width:auto;"></select>
+        <button class="btn-generate" id="btn-gen-year" onclick="generateCard()" style="flex-shrink:0;margin:0;padding:10px 20px;font-size:13px;white-space:nowrap;">カード生成</button>
       </div>
     </div>
     <div id="year-info"></div>
