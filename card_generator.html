@@ -349,11 +349,29 @@
     </div>
   </div>
 
+  <!-- Baseball-Reference ID（Excel読込後に表示） -->
+  <div id="bref-section" style="display:none; margin-bottom:10px;">
+    <div class="input-group">
+      <label class="input-label">📚 Baseball-Reference ID（省略可）— WAR・FIP取得に使用</label>
+      <div class="mlb-search-row">
+        <input id="bref-id-input" type="text"
+               placeholder="例: suzukic01 / willide03（URLの末尾部分）"
+               style="flex:1;"
+               oninput="onBrefIdInput(this.value)">
+        <button class="btn-mlb-search" onclick="loadBRefData()">📥 取得</button>
+      </div>
+      <div id="bref-status" style="font-size:11px;color:#88aac8;margin-top:4px;"></div>
+    </div>
+  </div>
+
   <!-- 年代選択パネル（Excel読込後に表示） -->
   <div id="year-selector-section">
     <div class="input-group">
       <label class="input-label">📅 生成する年代</label>
-      <select id="year-select" onchange="onYearChange()"></select>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <select id="year-select" onchange="onYearChange()" style="flex:0 0 auto;"></select>
+        <button class="btn-generate" id="btn-gen-year" onclick="generateCard()" style="margin:0;padding:10px 20px;font-size:13px;">カード生成</button>
+      </div>
     </div>
     <div id="year-info"></div>
   </div>
@@ -386,6 +404,10 @@ let g_mlbNameEn   = null;   // 英語正式名称 (例: "Dylan Cease")
 let g_mlbHeadshot = null;   // ヘッドショット画像URL
 let g_mlbPos      = null;   // ポジション略称
 let g_mlbTeam     = null;   // 現所属チーム名
+
+// Baseball-Reference 連携（省略可）
+let g_brefId     = null;    // BR選手ID (例: "willide03" / "suzukic01")
+const _brefCache = {};      // { brefId: { "2023": { war:"3.2", fip:"2.84" }, ... } }
 
 // ===== MLB.com 連携 =====
 async function mlbSearch() {
@@ -618,16 +640,121 @@ function estimatePitcherWAR(row) {
   return Math.round(war * 10) / 10;
 }
 
+// ===== Baseball-Reference データ取得 =====
+/**
+ * Baseball-Reference の選手ページを CORS プロキシ経由で取得し、
+ * 年度別の WAR・FIP をキャッシュする。
+ * @param {string} brefId  例: "willide03" / "suzukic01"
+ * @param {boolean} isPitcher
+ */
+async function fetchBRefData(brefId, isPitcher) {
+  if (!brefId || _brefCache[brefId]) return;
+  _brefCache[brefId] = {};  // 空でもセットしてリトライを防ぐ
+  try {
+    const pageUrl = `https://www.baseball-reference.com/players/${brefId[0]}/${brefId}.shtml`;
+    const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(pageUrl)}`;
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) { console.warn('[BRef] HTTP', res.status); return; }
+    const text = await res.text();
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+
+    // コメントアウトされた hidden テーブルを取り出す（BRefの一部テーブルは<!-- -->で隠れている）
+    const allHtml = text.replace(/<!--([\s\S]*?)-->/g, '$1');
+    const doc2 = new DOMParser().parseFromString(allHtml, 'text/html');
+
+    const tableId = isPitcher ? 'pitching_standard' : 'batting_standard';
+    const table = doc2.getElementById(tableId) || doc.getElementById(tableId);
+    if (!table) { console.warn('[BRef] テーブルが見つかりません:', tableId); return; }
+
+    table.querySelectorAll('tbody tr').forEach(tr => {
+      if (tr.classList.contains('thead') || tr.classList.contains('minors_table')) return;
+      const yearTh = tr.querySelector('th[data-stat="year_ID"]');
+      const year   = yearTh ? yearTh.textContent.replace(/\D/g,'').trim() : '';
+      if (!year || year.length !== 4) return;
+
+      const get = (stat) => {
+        const td = tr.querySelector(`td[data-stat="${stat}"]`);
+        return td ? td.textContent.trim() : null;
+      };
+      const war = get('WAR');
+      const fip = isPitcher ? get('fip') : null;
+
+      if (!_brefCache[brefId][year]) _brefCache[brefId][year] = {};
+      if (war && war !== '') _brefCache[brefId][year].war = war;
+      if (fip && fip !== '') _brefCache[brefId][year].fip = fip;
+    });
+    console.log('[BRef] キャッシュ完了:', brefId, Object.keys(_brefCache[brefId]));
+  } catch (e) {
+    console.warn('[BRef] 取得失敗:', e.message || e);
+  }
+}
+
+/** BR キャッシュから WAR を返す */
+function getBRefWAR(year) {
+  if (!g_brefId || !_brefCache[g_brefId]) return null;
+  return _brefCache[g_brefId][String(year)]?.war ?? null;
+}
+/** BR キャッシュから FIP を返す */
+function getBRefFIP(year) {
+  if (!g_brefId || !_brefCache[g_brefId]) return null;
+  return _brefCache[g_brefId][String(year)]?.fip ?? null;
+}
+
+// ===== FIP 計算 =====
+/**
+ * Excel データから FIP を計算（BR取得できない場合のフォールバック）
+ * FIP = (13×被HR + 3×BB - 2×K) / IP + 3.10
+ */
+function calcFIP(row) {
+  const ip = parseFloat(row[10]);
+  if (!ip || ip <= 0) return null;
+  const hr = parseInt(row[13]) || 0;
+  const bb = parseInt(row[14]) || 0;
+  const k  = parseInt(row[15]) || 0;
+  const fip = (13 * hr + 3 * bb - 2 * k) / ip + 3.10;
+  return Math.round(fip * 100) / 100;
+}
+/** FIP を文字列でフォーマット（3桁表示） */
+function fmtFIP(row) {
+  const year = String(row[1] ?? '');
+  const brFip = /^\d{4}$/.test(year) ? getBRefFIP(year) : null;
+  if (brFip !== null) return brFip;
+  const calc = calcFIP(row);
+  return calc !== null ? calc.toFixed(2) : '--';
+}
+
+/**
+ * FIP → 総合力スコア変換
+ * 先発: 5.00→60, 各0.5刻みで+10 → score = 60 + (5.00 - fip) * 20
+ * リリーフ: 5.00→48、fip>=2.00: score = 48 + (5.00 - fip) * 20
+ *           fip<2.00: score = 108 + (2.00 - fip) * 10
+ */
+function fipToScore(fip, isStarter) {
+  if (isStarter) {
+    return Math.round(60 + (5.00 - fip) * 20);
+  } else {
+    if (fip >= 2.00) return Math.round(48 + (5.00 - fip) * 20);
+    return Math.round(108 + (2.00 - fip) * 10);
+  }
+}
+
 /**
  * WAR 表示値を返す。
- *   スプレッドシートに WAR 列があればその値、
- *   なければ推定値を "~X.X" 形式で返す。
+ *   ① スプレッドシートの WAR 列
+ *   ② Baseball-Reference から取得したキャッシュ値
+ *   ③ 推定値（"~X.X" 形式）
  */
 function resolveWAR(row, headerRow, isPitcher) {
   const raw = getColVal(row, headerRow, 'WAR');
   if (raw !== '--') return raw;  // 実測値あり
+  // BR キャッシュを確認
+  const year = String(row[1] ?? '').trim();
+  if (/^\d{4}$/.test(year)) {
+    const brWar = getBRefWAR(year);
+    if (brWar !== null) return String(brWar);
+  }
   const est = isPitcher ? estimatePitcherWAR(row) : estimateHitterWAR(row);
-  return est !== null ? String(est) : '--';
+  return est !== null ? `~${est}` : '--';
 }
 // 通算行の場合は g_careerWAR（加重平均）を優先して返す
 function resolveWAREffective(row, headerRow, isPitcher) {
@@ -1369,11 +1496,11 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
 
 /**
  * 投手総合力スコアを算出する。
- * @param {Array} row - スプレッドシート行
- * @param {string|number|null} realWar - resolveWAR で取得した WAR 値（実測 or 推定）。
- *   '--' または null の場合は WAR なしとして扱う。
+ * A = Σ(スコア×重み) / Σ重み（WARは使わない）
+ * @param {Array} row      - スプレッドシート行
+ * @param {number|null} fipValue - FIP値（BR取得 or 計算済み）。null なら row から自動計算。
  */
-function calcPitcherOverall(row, realWar = null) {
+function calcPitcherOverall(row, fipValue = null) {
   // ── 能力値（0–100+ の絶対スコア。0はデータなしとして除外） ──
   const ctrl   = safeNum(row[51]);   // 制球
   const change = safeNum(row[52]);   // 緩急
@@ -1387,7 +1514,7 @@ function calcPitcherOverall(row, realWar = null) {
   const leftScore = leftRaw  !== null ? 50 + leftRaw  * 2.5 : null;
   const baseScore = baseRaw  !== null ? 50 + baseRaw  * 2.5 : null;
 
-  // ── 総合球威: 球威 × 投球割合 の加重平均（6球種） ──
+  // ── 総合球威: 球威 × 投球割合 の加重平均（6球種）× 1.25 ──
   let pwrWSum = 0, pwrWTotal = 0;
   for (let i = 0; i < 6; i++) {
     const pwr  = parseFloat(row[59 + i * 3]) || 0;
@@ -1397,9 +1524,17 @@ function calcPitcherOverall(row, realWar = null) {
       pwrWTotal += rate;
     }
   }
-  const pitchPowerScore = pwrWTotal > 0 ? pwrWSum / pwrWTotal : null;
+  const pitchPowerScore = pwrWTotal > 0 ? (pwrWSum / pwrWTotal) * 1.25 : null;
 
-  // ── 加重平均 ──
+  // ── FIP スコア（先発/リリーフ判定） ──
+  const g  = parseInt(row[6]) || 1;
+  const gs = parseInt(row[7]) || 0;
+  const isStarterForFIP = gs >= g * 0.4;
+  const fipNum = fipValue !== null ? parseFloat(fipValue)
+               : (() => { const c = calcFIP(row); return c !== null ? c : NaN; })();
+  const fipScore = (!isNaN(fipNum)) ? fipToScore(fipNum, isStarterForFIP) : null;
+
+  // ── 加重平均 A = Σ(スコア×重み) / Σ重み ──
   let wSum = 0, wTotal = 0;
   // 絶対スコア系（0 = データなし として除外）
   const addAbs = (val, w) => {
@@ -1417,16 +1552,10 @@ function calcPitcherOverall(row, realWar = null) {
   addAbs(heavy,           0.5);   // 球重
   addConv(leftScore,      0.25);  // 対左
   addConv(baseScore,      0.25);  // 対盗塁
-  addAbs(pitchPowerScore, 2.5);   // 総合球威（投球割合加重平均）
+  addAbs(pitchPowerScore, 2.5);   // 総合球威（×1.25済み）
+  addAbs(fipScore,        2.0);   // FIP スコア
 
-  const A = wTotal > 0 ? Math.round(wSum / wTotal) : 70;
-
-  // ── WAR 実測値 or 推定値がある場合のみ総合力にブレンド ──
-  const warNum = (realWar !== null && realWar !== '--') ? parseFloat(realWar) : NaN;
-  if (!isNaN(warNum)) {
-    return Math.round((A + warToScore(warNum)) / 2);
-  }
-  return A;
+  return wTotal > 0 ? Math.round(wSum / wTotal) : 70;
 }
 
 // ===== CARD HTML BUILDERS =====
@@ -1472,15 +1601,18 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
   const ip     = row[10] || '--';
   const k      = row[15] || 0;
   const whip   = row[17] || '--';
-  const sv     = getColVal(row, headers[0], 'SV');
+  const sv     = getFirstColVal(row, headers[0], ['SV','セーブ','Saves','Save','S']);
   const war    = fmtWAR(resolveWAREffective(row, headers[0], true));
 
   const stam   = row[50] || 0, ctrl   = row[51] || 0, change = row[52] || 0,
         ment   = row[53] || 0, strk   = row[54] || 0, heavy  = row[55] || 0;
 
-  const pitchNames = ['フォーシーム','スライダー','チェンジアップ','カーブ','カットボール','ツーシーム'];
-  const pitchHdrNames = [58,61,64,67,70,73].map(i => headers[0][i]).filter(Boolean);
-  const finalPitchNames = pitchHdrNames.length >= 4 ? pitchHdrNames : pitchNames;
+  // 球種名: 各スロットのヘッダーを優先し、なければデフォルト名にフォールバック
+  const pitchNames = ['フォーシーム','スライダー','チェンジアップ','カーブ','カットボール','ツーシーム','スプリット'];
+  const finalPitchNames = pitchNames.map((def, i) => {
+    const h = headers[0][58 + i * 3];
+    return (h != null && String(h).trim()) ? String(h).trim() : def;
+  });
 
   const pitches = [];
   for (let i = 0; i < 6; i++) {
@@ -1492,7 +1624,13 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
     }
   }
 
-  const overallScore = calcPitcherOverall(row, war);
+  // FIP: BR取得値 → 計算値 の優先順で渡す
+  const _fipForOverall = (() => {
+    const brF = getBRefFIP(String(year));
+    if (brF !== null) return parseFloat(brF);
+    return calcFIP(row);
+  })();
+  const overallScore = calcPitcherOverall(row, _fipForOverall);
 
   const isStarter   = gs >= totalG * 0.5;
   const posBadge    = isStarter ? '先発投手' : 'リリーフ';
@@ -1782,13 +1920,36 @@ function onExcelChange(input) {
       // 年代情報更新
       updateYearInfo(g_peakYear);
 
-      // 年代選択パネルを表示
+      // 年代選択パネル・BRef IDパネルを表示
       document.getElementById('year-selector-section').style.display = 'flex';
+      document.getElementById('bref-section').style.display = 'block';
     } catch(err) {
       console.warn('Excel先読みエラー:', err);
     }
   };
   reader.readAsArrayBuffer(file);
+}
+
+// ── Baseball-Reference ID ──
+function onBrefIdInput(val) {
+  g_brefId = val.trim() || null;
+  document.getElementById('bref-status').textContent = g_brefId ? `ID: ${g_brefId}` : '';
+}
+async function loadBRefData() {
+  if (!g_brefId) { document.getElementById('bref-status').textContent = 'IDを入力してください'; return; }
+  const statusEl = document.getElementById('bref-status');
+  statusEl.style.color = '#ffd700';
+  statusEl.textContent = '⏳ Baseball-Reference からデータ取得中…';
+  delete _brefCache[g_brefId];  // キャッシュクリアして再取得
+  await fetchBRefData(g_brefId, g_isPitcher ?? false);
+  const years = _brefCache[g_brefId] ? Object.keys(_brefCache[g_brefId]) : [];
+  if (years.length > 0) {
+    statusEl.style.color = '#77cc88';
+    statusEl.textContent = `✓ ${years.length}年分のデータ取得完了 (WAR・FIP)`;
+  } else {
+    statusEl.style.color = '#ff8888';
+    statusEl.textContent = '⚠️ データ取得失敗（IDを確認してください）';
+  }
 }
 
 function onYearChange() {
@@ -2504,9 +2665,15 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
 
   // ── シングルシーズン ──
   // 球種データを読み込む（row[58+i*3]=球速mph, row[59+i*3]=球威, row[60+i*3]=使用率）
-  const pitchNames = ['フォーシーム','スライダー','チェンジアップ','カーブ','カットボール','ツーシーム'];
+  // 球種名はExcelヘッダーを優先（g_headers経由）
+  const _pnDefaults = ['フォーシーム','スライダー','チェンジアップ','カーブ','カットボール','ツーシーム','スプリット'];
+  const _hdr0 = (g_headers && g_headers[0]) ? g_headers[0] : [];
+  const pitchNames = _pnDefaults.map((def, i) => {
+    const h = _hdr0[58 + i * 3];
+    return (h != null && String(h).trim()) ? String(h).trim() : def;
+  });
   const pitches = [];
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 7; i++) {
     const spd  = parseFloat(row[58 + i * 3]);
     const pwr  = safeNum(row[59 + i * 3]) ?? 0;
     const rate = parseFloat(row[60 + i * 3]) || 0;
@@ -2864,14 +3031,56 @@ html, body {
   align-items: center;
   justify-content: center;
   padding: 40px 20px;
+  font-family:'MS Gothic','Yu Gothic','Hiragino Kaku Gothic Pro',sans-serif;
+}
+/* ── フリップ機構 ── */
+.card-flip-scene { perspective: 1400px; }
+.card-flip-inner {
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.card-flip-inner.flipped { transform: rotateY(180deg); }
+.card-face { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.card-back-face {
+  transform: rotateY(180deg);
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+}
+/* クリックヒント */
+.card-front-face { cursor: pointer; }
+.flip-hint {
+  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,0.7); color: #ffd700; border-radius: 20px;
+  padding: 6px 18px; font-size: 12px; letter-spacing: 2px;
+  pointer-events: none;
 }
 ${css}
 </style>
 </head>
 <body>
-<div id="card-root">
-  <div class="card">${cardHtml}</div>
-</div>
+<div id="card-root">${cardHtml}</div>
+<div class="flip-hint">🖱 クリックで表裏切り替え</div>
+<script>
+(function(){
+  function syncPE(inner, flipped) {
+    var f = inner.querySelector('.card-front-face');
+    var b = inner.querySelector('.card-back-face');
+    if(f) f.style.pointerEvents = flipped ? 'none' : 'auto';
+    if(b) b.style.pointerEvents = flipped ? 'auto' : 'none';
+  }
+  var inner = document.getElementById('card-flip-inner');
+  if(!inner) return;
+  // 高さを表面カードに合わせる
+  var frontCard = inner.querySelector('.card-front-face .card');
+  if(frontCard) inner.style.height = frontCard.offsetHeight + 'px';
+  syncPE(inner, false);
+  inner.addEventListener('click', function(){
+    var isFlipped = inner.classList.toggle('flipped');
+    syncPE(inner, isFlipped);
+  });
+})();
+</script>
 </body>
 </html>`;
 
@@ -3040,12 +3249,13 @@ function buildAndAttachCardBack() {
       { label: '勝利',   fn: r => r[3] ?? '--' },
       { label: '敗北',   fn: r => r[4] ?? '--' },
       { label: 'HLD',    fn: r => getFirstColVal(r, hdr, ['HLD','ホールド','H','Hold']) },
-      { label: 'SV',     fn: r => getColVal(r, hdr, 'SV') },
+      { label: 'SV',     fn: r => getFirstColVal(r, hdr, ['SV','セーブ','Saves','Save','S']) },
       { label: 'IP',     fn: r => r[10] ?? '--' },
       { label: '被HR',   fn: r => getFirstColVal(r, hdr, ['被本塁打','HR','HRA','HR_A']) },
       { label: '四死球', fn: r => getFirstColVal(r, hdr, ['四死球','BB','四球','BBI','BB+HBP']) },
       { label: 'K',      fn: r => r[15] ?? '--' },
       { label: '被打率', fn: r => getFirstColVal(r, hdr, ['被打率','BAA','AVG Against','OBA']) },
+      { label: 'FIP',    fn: r => fmtFIP(r) },
       { label: 'WHIP',   fn: r => r[17] ?? '--' },
       { label: 'WAR',    fn: r => isCareerRow(r) ? (_careerWAR ?? '--') : fmtWAR(resolveWAR(r, hdr, true)) },
     ];
@@ -3170,7 +3380,11 @@ function fitPlayerNames() {
   }
 }
 
-function _doGenerate(photoInput) {
+async function _doGenerate(photoInput) {
+  // Baseball-Reference データを事前取得（IDがあれば）
+  if (g_brefId && !_brefCache[g_brefId]) {
+    await fetchBRefData(g_brefId, g_isPitcher ?? false);
+  }
   try {
     // 選択年のデータ行を取得
     const selYearEl = document.getElementById('year-select');
@@ -3232,8 +3446,12 @@ function _doGenerate(photoInput) {
     // 総合力 → 星数 → テーマ（キャップなし・100超で6星ホログラム）
     let overallScore;
     if (g_isPitcher) {
-      const realWarP = g_careerWAR ?? (g_headers ? resolveWAR(selectedRow, g_headers[0], true) : '--');
-      overallScore = calcPitcherOverall(selectedRow, realWarP);
+      const _fipOvr = (() => {
+        const yr = String(selectedRow[1] ?? '');
+        const brF = /^\d{4}$/.test(yr) ? getBRefFIP(yr) : null;
+        return brF !== null ? parseFloat(brF) : calcFIP(selectedRow);
+      })();
+      overallScore = calcPitcherOverall(selectedRow, _fipOvr);
     } else {
       const realWarG = g_careerWAR ?? (g_headers ? resolveWAR(selectedRow, g_headers[0], false) : '--');
       overallScore = calcHitterOverall(selectedRow, g_isCatcher, realWarG);
