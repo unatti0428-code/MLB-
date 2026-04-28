@@ -512,10 +512,9 @@ function clearError() {
 function fmtWAR(v) {
   if (v === null || v === undefined || v === '--' || v === '') return '--';
   const s = String(v).trim();
-  const prefix = s.startsWith('~') ? '~' : '';
   const num = parseFloat(s.replace('~', ''));
   if (isNaN(num)) return s;
-  return prefix + num.toFixed(1);
+  return num.toFixed(1);
 }
 function fmtRate(v) {
   if (v === null || v === undefined || v === '--') return '--';
@@ -754,7 +753,7 @@ function resolveWAR(row, headerRow, isPitcher) {
     if (brWar !== null) return String(brWar);
   }
   const est = isPitcher ? estimatePitcherWAR(row) : estimateHitterWAR(row);
-  return est !== null ? `~${est}` : '--';
+  return est !== null ? String(est) : '--';
 }
 // 通算行の場合は g_careerWAR（加重平均）を優先して返す
 function resolveWAREffective(row, headerRow, isPitcher) {
