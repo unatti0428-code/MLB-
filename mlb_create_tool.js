@@ -450,7 +450,9 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
       for (const yr of years) {
         const entries = Array.isArray(fieldingRaw[yr]) ? fieldingRaw[yr] : [];
         for (const { pos, inn, drs } of entries) {
-          fieldingByYear[yr][pos] = { inn: String(inn), drs: Number(drs) };
+          if (!pos || pos === 'undefined') continue;  // 無効ポジションを除外
+          const drsNum = Number(drs);
+          fieldingByYear[yr][pos] = { inn: String(inn || 0), drs: isNaN(drsNum) ? 0 : drsNum };
         }
       }
     } catch (e) {
@@ -615,10 +617,14 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                                 });
                   if (!table) return { err: 'no_table', tableIds };
 
-                  // ヘッダーの data-stat（デバッグ用）
-                  const headerStats = [...table.querySelectorAll('[data-stat]')]
-                    .slice(0, 30).map(el => el.getAttribute('data-stat')).filter(Boolean);
+                  // ヘッダーの data-stat（全件・デバッグ用）
+                  const headerStats = [...new Set(
+                    [...table.querySelectorAll('[data-stat]')]
+                      .map(el => el.getAttribute('data-stat')).filter(Boolean)
+                  )];
 
+                  // サンプル行のデータを確認（最初にデータが入る行を1件）
+                  let sampleRow = null;
                   const result = {};
                   for (const row of table.querySelectorAll('tbody tr, tr')) {
                     if (row.classList.contains('thead') || row.classList.contains('minors_table')) continue;
@@ -627,6 +633,15 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                                    row.querySelector('[data-stat="year_id"]');
                     const yr = yearEl ? yearEl.textContent.replace(/\D/g, '').trim() : '';
                     if (!yr || yr.length !== 4) continue;
+                    // 最初の有効行のデータを全 stat と値で記録
+                    if (!sampleRow) {
+                      sampleRow = {};
+                      for (const el of row.querySelectorAll('[data-stat]')) {
+                        const s = el.getAttribute('data-stat');
+                        const v = el.textContent.trim();
+                        if (s && v) sampleRow[s] = v;
+                      }
+                    }
                     // ── 複数名フォールバック付きゲッター ────────────────────────────
                     // BB-Ref 新形式は f_ プレフィックス、旧形式はプレフィックスなし
                     const get = (...names) => {
@@ -650,7 +665,7 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                       lgRf9: get('f_lg_rf9', 'f_lg_range_factor_9inn', 'lg_range_factor_9inn') || '0',
                     };
                   }
-                  return { result, headerStats, tableIds };
+                  return { result, headerStats, tableIds, sampleRow };
                 } catch (e) { return { err: e.message }; }
               }, cleanHtml);
 
@@ -658,7 +673,10 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                 onProgress(`⚠ BB-Ref 守備テーブル未検出 (${bbResult.err})`);
                 onProgress(`  検出テーブルIDs: [${(bbResult.tableIds||[]).slice(0, 12).join(', ')}]`);
               } else if (bbResult?.result) {
-                onProgress(`BB-Ref 守備ヘッダー: [${(bbResult.headerStats||[]).slice(0, 12).join(', ')}]`);
+                onProgress(`BB-Ref 守備ヘッダー(全): [${(bbResult.headerStats||[]).join(', ')}]`);
+                if (bbResult.sampleRow) {
+                  onProgress(`BB-Ref 守備サンプル行: ${JSON.stringify(bbResult.sampleRow)}`);
+                }
                 // FanGraphs データがない年を全て対象にする（missingFieldingYears が空でも同じ結果）
                 const targetYears = years.filter(yr => Object.keys(fieldingByYear[yr]).length === 0);
                 // targetYears が空で BB-Ref に結果があれば、全年を対象に（years が空の場合も対応）
@@ -677,18 +695,23 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                     const innFrac  = innMatch ? parseInt(innMatch[2] || '0') : 0;
                     const innDec   = innFull + innFrac / 3;
                     const innFmt   = innFull + '.' + innFrac;
+                    // innDec < 1 のみスキップ（lgRf9 = 0 でも書き込む）
+                    if (innDec < 1) continue;
                     const ch    = parseInt(d.ch)    || 0;
                     const fld   = parseFloat(d.fld)   || 0;
                     const lgFld = parseFloat(d.lgFld) || 0;
                     const rf9   = parseFloat(d.rf9)   || 0;
                     const lgRf9 = parseFloat(d.lgRf9) || 0;
-                    if (innDec < 1 || !lgRf9) continue;
-                    const rangeDRS = (rf9 - lgRf9) * innDec / 9 * 0.75;
-                    const errorDRS = ch > 0 ? ch * (fld - lgFld) * 0.5 : 0;
+                    // lgRf9 が取得できた場合のみ範囲 DRS を計算（できない場合 0）
+                    const rangeDRS = lgRf9 > 0 ? (rf9 - lgRf9) * innDec / 9 * 0.75 : 0;
+                    const errorDRS = (ch > 0 && lgFld > 0) ? ch * (fld - lgFld) * 0.5 : 0;
                     fieldingByYear[yr][pos] = { inn: innFmt, drs: Math.round(rangeDRS + errorDRS) };
                   }
-                  if (Object.keys(fieldingByYear[yr]).length > 0)
-                    onProgress(`BB-Ref 守備推定 ${yr}: ${Object.keys(fieldingByYear[yr]).join(', ')}`);
+                  const written = Object.entries(fieldingByYear[yr])
+                    .filter(([,v]) => v && !isNaN(v.drs))
+                    .map(([p,v]) => `${p}(inn=${v.inn},drs=${v.drs})`);
+                  if (written.length > 0)
+                    onProgress(`BB-Ref 守備推定 ${yr}: ${written.join(', ')}`);
                 }
               }
             } catch (e) {
@@ -921,7 +944,9 @@ async function buildExcel(playerName, years, basic, splitsRaw, sprintSpeed, mlbT
     fieldingCareer[pos] = { inn: addInningsList(entries.map(e => e.inn)), drs: Math.round(wDRS) };
   }
   function getF(yk, pos, field) {
-    return (yk === '通算' ? fieldingCareer : (fieldingByYear[yk] || {}))[pos]?.[field] ?? '--';
+    const v = (yk === '通算' ? fieldingCareer : (fieldingByYear[yk] || {}))[pos]?.[field];
+    if (v == null || (typeof v === 'number' && isNaN(v))) return '--';
+    return v;
   }
 
   const cols0 = [
