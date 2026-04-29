@@ -566,6 +566,9 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
 
           // ── 診断ログ（スキップ原因を特定）────────────────────────────────────
           onProgress(`[診断] bbSlug=${bbSlug}, missingFieldingYears=${missingFieldingYears.length}/${years.length}, allSplitsEmpty=${allSplitsEmpty}`);
+          // FanGraphs で取得できた年の守備データ状況を表示（0の年が真に欠損）
+          const fgStatus = years.map(yr => `${yr}:${Object.keys(fieldingByYear[yr]||{}).join('|')||'空'}`).join(', ');
+          onProgress(`[診断] FanGraphs守備: ${fgStatus}`);
 
           // ── 守備データ（standard_fielding テーブル）→ DRS推定 ─────────────────
           // ▶ page.content() で Node.js 側に生 HTML を取得し、コメント除去後に
@@ -617,26 +620,34 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                     .slice(0, 30).map(el => el.getAttribute('data-stat')).filter(Boolean);
 
                   const result = {};
-                  for (const row of table.querySelectorAll('tbody tr')) {
+                  for (const row of table.querySelectorAll('tbody tr, tr')) {
                     if (row.classList.contains('thead') || row.classList.contains('minors_table')) continue;
-                    const yearTh = row.querySelector('th[data-stat="year_ID"]');
-                    const yr = yearTh ? yearTh.textContent.replace(/\D/g, '').trim() : '';
+                    // ── 年取得: 旧形式(year_ID / th) と新形式(year_id / td or th) 両対応 ──
+                    const yearEl = row.querySelector('[data-stat="year_ID"]') ||
+                                   row.querySelector('[data-stat="year_id"]');
+                    const yr = yearEl ? yearEl.textContent.replace(/\D/g, '').trim() : '';
                     if (!yr || yr.length !== 4) continue;
-                    const get = s => {
-                      const el = row.querySelector(`td[data-stat="${s}"]`);
-                      return el ? el.textContent.trim() : '';
+                    // ── 複数名フォールバック付きゲッター ────────────────────────────
+                    // BB-Ref 新形式は f_ プレフィックス、旧形式はプレフィックスなし
+                    const get = (...names) => {
+                      for (const n of names) {
+                        const el = row.querySelector(`[data-stat="${n}"]`);
+                        const v = el ? el.textContent.trim() : '';
+                        if (v && v !== '--' && v !== '.') return v;
+                      }
+                      return '';
                     };
-                    const pos = get('pos');
-                    if (!pos || pos === 'Pos') continue;
+                    const pos = get('f_position', 'pos', 'position');
+                    if (!pos || pos === 'Pos' || pos === 'Position') continue;
                     result[yr] = result[yr] || {};
                     result[yr][pos] = {
-                      inn:   get('Inn') || get('inn_outs') || get('inn'),
-                      ch:    get('chances') || '0',
-                      e:     get('e')       || '0',
-                      fld:   get('fielding_perc')        || '0',
-                      lgFld: get('lg_fielding_perc')     || '0',
-                      rf9:   get('range_factor_9inn')    || '0',
-                      lgRf9: get('lg_range_factor_9inn') || '0',
+                      inn:   get('f_inn', 'f_inn_outs', 'Inn', 'inn_outs', 'inn'),
+                      ch:    get('f_chances', 'f_tc', 'chances', 'tc')               || '0',
+                      e:     get('f_errors',  'f_e',  'e')                           || '0',
+                      fld:   get('f_fielding_perc', 'f_pct', 'fielding_perc')        || '0',
+                      lgFld: get('f_lg_fielding_perc', 'f_lg_pct', 'lg_fielding_perc') || '0',
+                      rf9:   get('f_rf9', 'f_range_factor_9inn', 'range_factor_9inn')   || '0',
+                      lgRf9: get('f_lg_rf9', 'f_lg_range_factor_9inn', 'lg_range_factor_9inn') || '0',
                     };
                   }
                   return { result, headerStats, tableIds };
