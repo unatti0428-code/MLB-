@@ -563,11 +563,16 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
             );
           }
 
+          // ── 診断ログ（スキップ原因を特定）────────────────────────────────────
+          onProgress(`[診断] bbSlug=${bbSlug}, missingFieldingYears=${missingFieldingYears.length}/${years.length}, allSplitsEmpty=${allSplitsEmpty}`);
+
           // ── 守備データ（standard_fielding テーブル）→ DRS推定 ─────────────────
           // ▶ page.content() で Node.js 側に生 HTML を取得し、コメント除去後に
           //   DOMParser 経由でテーブルを解析する（outerHTML をブラウザ内処理すると
           //   巨大文字列のやりとりで失敗する場合があるため Node.js 側で前処理）
-          if (missingFieldingYears.length > 0) {
+          // ▶ 守備欠損年がなくても BB-Ref にアクセス済みの場合は取得を試みる
+          //   （FanGraphs が空で years が空配列の場合でも取得する）
+          if (missingFieldingYears.length > 0 || allSplitsEmpty) {
             try {
               const rawHtml = await page.content();
               onProgress(`BB-Ref HTML取得: ${rawHtml.length.toLocaleString()} chars, id="standard_fielding"存在=${rawHtml.includes('id="standard_fielding"')}`);
@@ -622,9 +627,17 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                 onProgress(`  検出テーブルIDs: [${(bbResult.tableIds||[]).slice(0, 12).join(', ')}]`);
               } else if (bbResult?.result) {
                 onProgress(`BB-Ref 守備ヘッダー: [${(bbResult.headerStats||[]).slice(0, 12).join(', ')}]`);
-                for (const yr of missingFieldingYears) {
+                // FanGraphs データがない年を全て対象にする（missingFieldingYears が空でも同じ結果）
+                const targetYears = years.filter(yr => Object.keys(fieldingByYear[yr]).length === 0);
+                // targetYears が空で BB-Ref に結果があれば、全年を対象に（years が空の場合も対応）
+                const effectiveTargetYears = targetYears.length > 0
+                  ? targetYears
+                  : Object.keys(bbResult.result).filter(yr => yr.length === 4);
+                onProgress(`BB-Ref 守備対象年: [${effectiveTargetYears.join(', ')}] / 取得年: [${Object.keys(bbResult.result).join(', ')}]`);
+                for (const yr of effectiveTargetYears) {
                   const posMap = bbResult.result[yr];
                   if (!posMap) continue;
+                  if (!fieldingByYear[yr]) fieldingByYear[yr] = {};  // years が空の場合も対応
                   for (const [pos, d] of Object.entries(posMap)) {
                     const innStr  = String(d.inn || '0').replace(/[,\s]/g, '');
                     const innMatch = innStr.match(/^(\d+)(?:\.(\d))?$/);
