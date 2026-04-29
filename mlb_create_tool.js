@@ -841,7 +841,9 @@ async function buildExcel(playerName, years, basic, splitsRaw, sprintSpeed, mlbT
     return [
       playerName, yk, b.team, b.g, b.pa, b.r, b.h, b.d, b.t, b.hr,
       b.rbi, b.bb, b.so, b.sb, b.cs,
-      b.avg.slice(1), b.obp.slice(1), b.ops.slice(1),
+      b.avg.slice(1), b.obp.slice(1),
+      // OPS が 1.000 以上の場合は先頭の "1" が消えないよう整数4桁で表示
+      (s => parseFloat(s || 0) >= 1 ? String(Math.round(parseFloat(s) * 1000)) : (s || '--').slice(1))(b.ops),
       sp.vsLeft, sp.risp, yk === '通算' ? careerRawSpeed : getRawSpeedInput(yk),
       pt.ff, pt.si, pt.ch, pt.sl, pt.cu, pt.fc, pt.fs,
       ...positions.flatMap(p => [getF(yk, p, 'inn'), getF(yk, p, 'drs')]),
