@@ -462,6 +462,7 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
     // ── Baseball Reference フォールバック（歴代選手・DRS欠損/スプリット欠損時）────
     // 発動条件: FanGraphs で守備データが取れない年あり、または MLB API スプリット全欠損
     const bbRefSplits = {};
+    let bbRefOfGames = {};  // BB-Ref から取得した外野G数（OF→RF/LF/CF 按分用）
     const missingFieldingYears = years.filter(yr => Object.keys(fieldingByYear[yr]).length === 0);
     const allSplitsEmpty = years.every(yr => !(splitsRaw[yr]?.vsLAB) && !(splitsRaw[yr]?.rispAB));
     if (missingFieldingYears.length > 0 || allSplitsEmpty) {
@@ -627,17 +628,24 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                   // サンプル行のデータを確認（最初にデータが入る行を1件）
                   let sampleRow = null;
                   const result = {};
+                  // ofGames[yr] = { RF: N, LF: N, CF: N }  ← G比率按分用
+                  const ofGames = {};
                   // ── 年キャリーフォワード ──────────────────────────────────────────
                   // BB-Ref の続き行（同年の2ポジション目以降）には year_id が空白になる
                   // currentYr を引き継ぐことで RF/LF/CF 個別行も正しく取得する
                   let currentYr = '';
                   for (const row of table.querySelectorAll('tbody tr, tr')) {
                     if (row.classList.contains('thead') || row.classList.contains('minors_table')) continue;
+                    // tfoot 内（通算行）はスキップ
+                    if (row.closest && row.closest('tfoot')) continue;
                     // 年取得: 旧形式(year_ID) と新形式(year_id) 両対応
                     const yearEl = row.querySelector('[data-stat="year_ID"]') ||
                                    row.querySelector('[data-stat="year_id"]');
-                    const yrText = yearEl ? yearEl.textContent.replace(/\D/g, '').trim() : '';
-                    if (yrText.length === 4) currentYr = yrText;
+                    const rawYrText  = yearEl ? yearEl.textContent.trim() : '';
+                    const yrDigits   = rawYrText.replace(/\D/g, '');
+                    // ── 通算行の検知: year セルに "Career" 等の英字 → currentYr リセット後スキップ
+                    if (rawYrText && /[a-zA-Z]/.test(rawYrText)) { currentYr = ''; continue; }
+                    if (yrDigits.length === 4) currentYr = yrDigits;
                     // 有効な年がなければスキップ（テーブル冒頭の無効行等）
                     if (!currentYr) continue;
                     const yr = currentYr;
@@ -662,11 +670,15 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                     };
                     const pos = get('f_position', 'pos', 'position');
                     if (!pos || pos === 'Pos' || pos === 'Position') continue;
+                    const gVal  = parseInt(get('f_games', 'g', 'G') || '0') || 0;
+                    const innRaw = get('f_innings', 'f_inn', 'f_inn_outs', 'Inn', 'inn_outs', 'inn');
+                    // ── 通算行ヒューリスティック: イニング > 2000 は1シーズン最大値を超えるためスキップ
+                    const innNum = parseFloat(innRaw || '0') || 0;
+                    if (innNum > 2000) continue;
                     result[yr] = result[yr] || {};
                     result[yr][pos] = {
-                      // 新形式(f_innings, f_fielding_perc_lg, f_range_factor_per_nine 等)を優先
-                      inn:   get('f_innings', 'f_inn', 'f_inn_outs', 'Inn', 'inn_outs', 'inn'),
-                      g:     get('f_games', 'g', 'G') || '0',  // G数（OF→個別外野配分用）
+                      inn:   innRaw,
+                      g:     gVal,
                       ch:    get('f_chances', 'f_tc', 'chances', 'tc')                        || '0',
                       e:     get('f_errors',  'f_e',  'e')                                    || '0',
                       fld:   get('f_fielding_perc', 'f_pct', 'fielding_perc')                 || '0',
@@ -674,8 +686,13 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                       rf9:   get('f_range_factor_per_nine', 'f_rf9', 'range_factor_9inn')     || '0',
                       lgRf9: get('f_range_factor_per_nine_lg', 'f_lg_rf9', 'lg_range_factor_9inn') || '0',
                     };
+                    // G 数を外野ポジション別に記録（OF→RF/LF/CF 按分用）
+                    if (['RF','LF','CF'].includes(pos) && gVal > 0) {
+                      ofGames[yr] = ofGames[yr] || {};
+                      ofGames[yr][pos] = gVal;
+                    }
                   }
-                  return { result, headerStats, tableIds, sampleRow };
+                  return { result, ofGames, headerStats, tableIds, sampleRow };
                 } catch (e) { return { err: e.message }; }
               }, cleanHtml);
 
@@ -727,6 +744,11 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                   if (written.length > 0)
                     onProgress(`BB-Ref 守備推定 ${yr}: ${written.join(', ')}`);
                 }
+                // OF→RF/LF/CF 按分用のG数を上位スコープに保存
+                if (bbResult.ofGames && Object.keys(bbResult.ofGames).length > 0) {
+                  bbRefOfGames = bbResult.ofGames;
+                  onProgress(`BB-Ref 外野G数: ${JSON.stringify(bbRefOfGames)}`);
+                }
               }
             } catch (e) {
               onProgress(`⚠ BB-Ref 守備HTML取得失敗: ${e.message}`);
@@ -747,6 +769,19 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
             const bbSplit = await page.evaluate((html) => {
               try {
                 const doc2 = new DOMParser().parseFromString(html, 'text/html');
+                // 診断: スプリットページに存在するテーブルの split ラベルを収集
+                const diagLabels = [];
+                const diagTableIds = [];
+                for (const table of doc2.querySelectorAll('table')) {
+                  if (table.id) diagTableIds.push(table.id);
+                  for (const row of table.querySelectorAll('tbody tr, tr')) {
+                    const splitCell = row.querySelector('[data-stat="split"]') ||
+                                      row.querySelector('th') ||
+                                      row.querySelector('td');
+                    const txt = (splitCell?.textContent || '').trim();
+                    if (txt && diagLabels.length < 40) diagLabels.push(txt);
+                  }
+                }
                 const parseSplit = (doc) => {
                   for (const table of doc.querySelectorAll('table')) {
                     let vsLRow = null, rispRow = null;
@@ -756,9 +791,11 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                                         row.querySelector('th') ||
                                         row.querySelector('td');
                       const txt = (splitCell?.textContent || '').trim().toLowerCase();
-                      if (!vsLRow  && (txt === 'vs. lhp' || txt === 'lhp' || txt === 'left' || txt === 'vs lhp'))
+                      if (!vsLRow  && (txt === 'vs. lhp' || txt === 'lhp' || txt === 'left' ||
+                                       txt === 'vs lhp'  || txt.includes('lhp') || txt.includes('left-handed')))
                         vsLRow = row;
-                      if (!rispRow && (txt === 'risp' || txt.includes('scoring position') || txt === 'bases loaded'))
+                      if (!rispRow && (txt === 'risp' || txt.includes('scoring position') ||
+                                       txt === 'bases loaded' || txt.includes('risp')))
                         rispRow = row;
                     }
                     if (vsLRow || rispRow) {
@@ -772,22 +809,30 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                         vsLH:   getN(vsLRow,  'H'),
                         rispAB: getN(rispRow, 'AB'),
                         rispH:  getN(rispRow, 'H'),
+                        _diagLabels:   diagLabels,
+                        _diagTableIds: diagTableIds,
                       };
                       if (result.vsLAB > 0 || result.rispAB > 0) return result;
                     }
                   }
-                  return null;
+                  return { _diagLabels: diagLabels, _diagTableIds: diagTableIds };
                 };
                 // まずコメント除去済みHTMLを試し、なければ元のページを試す
                 return parseSplit(doc2) || parseSplit(document);
-              } catch (e) { return null; }
+              } catch (e) { return { _err: e.message }; }
             }, splitCleanHtml);
+
+            // 診断ログ
+            if (bbSplit?._diagTableIds?.length > 0)
+              onProgress(`スプリットページ テーブルID: [${bbSplit._diagTableIds.slice(0,15).join(', ')}]`);
+            if (bbSplit?._diagLabels?.length > 0)
+              onProgress(`スプリットページ ラベルサンプル: [${bbSplit._diagLabels.slice(0,20).join(' | ')}]`);
 
             if (bbSplit && (bbSplit.vsLAB > 0 || bbSplit.rispAB > 0)) {
               for (const yr of years) bbRefSplits[yr] = bbSplit;
               onProgress(`BB-Ref スプリット(通算): 対左 ${bbSplit.vsLAB}AB / RISP ${bbSplit.rispAB}AB`);
             } else {
-              onProgress('BB-Ref スプリット: データなし');
+              onProgress('BB-Ref スプリット: データなし（診断ログを確認してください）');
             }
           } catch (e) {
             onProgress('⚠ BB-Ref スプリット取得失敗: ' + e.message);
@@ -844,8 +889,8 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
     // ── OF → 個別外野ポジションへのマッピング ─────────────────────────────────
     // 年キャリーフォワード修正後も個別行(RF/LF/CF)が存在する場合はそのまま使用。
     // OF 合算のみの年:
-    //   ① RF/LF/CF の g 値がある → G 数比率で Inn・DRS を按分
-    //   ② g 値不明             → RF のみに全量割り当て（フォールバック）
+    //   ① bbRefOfGames[yr] に RF/LF/CF の G数がある → G 数比率で Inn・DRS を按分
+    //   ② G数不明                                   → RF のみに全量割り当て（フォールバック）
     for (const yr of Object.keys(fieldingByYear)) {
       const fy = fieldingByYear[yr];
       if (!fy || !fy['OF']) continue;
@@ -854,14 +899,37 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
 
       const ofEntry = fy['OF'];
       const ofInn   = String(ofEntry.inn || '0');
-      const ofDRS   = ofEntry.drs;
+      const ofDRS   = typeof ofEntry.drs === 'number' ? ofEntry.drs : 0;
       const [ofFull, ofFrac] = ofInn.split('.').map(Number);
       const ofOuts  = (ofFull || 0) * 3 + (ofFrac || 0);
 
-      // 個別行が取得済みであれば g が入っている（年キャリーフォワードで取得した場合）
-      // ここでは OF.g（総出場）しかないため比率は不明 → RF フォールバック
-      // ただし同年に g を持つ個別外野行が fieldingByYear にある場合はそちらを使用済み
-      fy['RF'] = { inn: ofEntry.inn, drs: ofDRS };
+      // G数比率で按分（bbRefOfGames は BB-Ref から収集した RF/LF/CF 別 G数）
+      const gMap  = bbRefOfGames[yr] || {};
+      const rfG   = gMap['RF'] || 0;
+      const lfG   = gMap['LF'] || 0;
+      const cfG   = gMap['CF'] || 0;
+      const totalG = rfG + lfG + cfG;
+
+      if (totalG > 0) {
+        // G数比率でイニング・DRS を按分して各ポジションに書き込む
+        const distribute = (pos, g) => {
+          if (g <= 0) return;
+          const ratio = g / totalG;
+          const outs  = Math.round(ofOuts * ratio);
+          fy[pos] = {
+            inn: Math.floor(outs / 3) + '.' + (outs % 3),
+            drs: Math.round(ofDRS * ratio),
+            g:   g,
+          };
+        };
+        if (rfG > 0) distribute('RF', rfG);
+        if (lfG > 0) distribute('LF', lfG);
+        if (cfG > 0) distribute('CF', cfG);
+        onProgress(`OF按分 ${yr}: RF(${rfG}G) LF(${lfG}G) CF(${cfG}G) → total=${totalG}G, ofInn=${ofInn}, ofDRS=${ofDRS}`);
+      } else {
+        // G数不明 → RF フォールバック
+        fy['RF'] = { inn: ofEntry.inn, drs: ofDRS, g: ofEntry.g || 0 };
+      }
     }
 
     return { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming, bbRefSplits };
