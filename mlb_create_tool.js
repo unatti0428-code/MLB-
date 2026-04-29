@@ -559,10 +559,11 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
           // ── 選手ページ取得（Step3でナビゲート済みでなければ再取得）────────────
           const currentUrl = page.url();
           if (!currentUrl.includes(bbSlug)) {
-            // networkidle2 で JS 遅延ロードのテーブルも確実に取得する
+            // BB-Ref は analytics 等で通信が続くため networkidle2 は使わず
+            // domcontentloaded で DOM 完成後に waitForSelector でテーブルを待つ
             await page.goto(
               `https://www.baseball-reference.com/players/${bbSlug[0]}/${bbSlug}.shtml`,
-              { waitUntil: 'networkidle2', timeout: 30000 }
+              { waitUntil: 'domcontentloaded', timeout: 30000 }
             );
           }
 
@@ -723,7 +724,7 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
           // ── スプリット取得（通算 → 年別欠損の補完値として使用）─────────────
           try {
             const splitUrl = `https://www.baseball-reference.com/players/split.fcgi?id=${bbSlug}&year=all&t=b`;
-            await page.goto(splitUrl, { waitUntil: 'networkidle2', timeout: 25000 });
+            await page.goto(splitUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
 
             // スプリットページも HTML コメント内にテーブルが入っている場合があるため
             // Node.js 側で page.content() を取得してコメント除去後に DOMParser で解析
