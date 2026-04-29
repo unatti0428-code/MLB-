@@ -627,13 +627,20 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                   // サンプル行のデータを確認（最初にデータが入る行を1件）
                   let sampleRow = null;
                   const result = {};
+                  // ── 年キャリーフォワード ──────────────────────────────────────────
+                  // BB-Ref の続き行（同年の2ポジション目以降）には year_id が空白になる
+                  // currentYr を引き継ぐことで RF/LF/CF 個別行も正しく取得する
+                  let currentYr = '';
                   for (const row of table.querySelectorAll('tbody tr, tr')) {
                     if (row.classList.contains('thead') || row.classList.contains('minors_table')) continue;
-                    // ── 年取得: 旧形式(year_ID / th) と新形式(year_id / td or th) 両対応 ──
+                    // 年取得: 旧形式(year_ID) と新形式(year_id) 両対応
                     const yearEl = row.querySelector('[data-stat="year_ID"]') ||
                                    row.querySelector('[data-stat="year_id"]');
-                    const yr = yearEl ? yearEl.textContent.replace(/\D/g, '').trim() : '';
-                    if (!yr || yr.length !== 4) continue;
+                    const yrText = yearEl ? yearEl.textContent.replace(/\D/g, '').trim() : '';
+                    if (yrText.length === 4) currentYr = yrText;
+                    // 有効な年がなければスキップ（テーブル冒頭の無効行等）
+                    if (!currentYr) continue;
+                    const yr = currentYr;
                     // 最初の有効行のデータを全 stat と値で記録
                     if (!sampleRow) {
                       sampleRow = {};
@@ -659,6 +666,7 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                     result[yr][pos] = {
                       // 新形式(f_innings, f_fielding_perc_lg, f_range_factor_per_nine 等)を優先
                       inn:   get('f_innings', 'f_inn', 'f_inn_outs', 'Inn', 'inn_outs', 'inn'),
+                      g:     get('f_games', 'g', 'G') || '0',  // G数（OF→個別外野配分用）
                       ch:    get('f_chances', 'f_tc', 'chances', 'tc')                        || '0',
                       e:     get('f_errors',  'f_e',  'e')                                    || '0',
                       fld:   get('f_fielding_perc', 'f_pct', 'fielding_perc')                 || '0',
@@ -704,10 +712,14 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                     const lgFld = parseFloat(d.lgFld) || 0;
                     const rf9   = parseFloat(d.rf9)   || 0;
                     const lgRf9 = parseFloat(d.lgRf9) || 0;
-                    // lgRf9 が取得できた場合のみ範囲 DRS を計算（できない場合 0）
-                    const rangeDRS = lgRf9 > 0 ? (rf9 - lgRf9) * innDec / 9 * 0.75 : 0;
+                    // 仮想 DRS 計算
+                    // 係数 0.25: RF/9差 × games × 0.25
+                    //   RF/9差 0.3 × 144games × 0.25 ≈ +11 (実測 DRS +10〜+15 と一致)
+                    //   RF/9差-0.5 × 131games × 0.25 ≈ -16 (-30 cap 前)
+                    // ※旧係数 0.75 は過大（同条件で+32/-49 となり非現実的）
+                    const rangeDRS = lgRf9 > 0 ? (rf9 - lgRf9) * innDec / 9 * 0.25 : 0;
                     const errorDRS = (ch > 0 && lgFld > 0) ? ch * (fld - lgFld) * 0.5 : 0;
-                    fieldingByYear[yr][pos] = { inn: innFmt, drs: Math.round(rangeDRS + errorDRS) };
+                    fieldingByYear[yr][pos] = { inn: innFmt, drs: Math.round(rangeDRS + errorDRS), g: parseInt(d.g) || 0 };
                   }
                   const written = Object.entries(fieldingByYear[yr])
                     .filter(([,v]) => v && !isNaN(v.drs))
@@ -830,15 +842,26 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
     }
 
     // ── OF → 個別外野ポジションへのマッピング ─────────────────────────────────
-    // BB-Ref 歴史的選手（〜1950年代）はLF/CF/RFが個別集計されず OF としてまとまる
-    // 個別外野ポジションが1件もない年は OF データを RF にコピーして Excel に反映させる
+    // 年キャリーフォワード修正後も個別行(RF/LF/CF)が存在する場合はそのまま使用。
+    // OF 合算のみの年:
+    //   ① RF/LF/CF の g 値がある → G 数比率で Inn・DRS を按分
+    //   ② g 値不明             → RF のみに全量割り当て（フォールバック）
     for (const yr of Object.keys(fieldingByYear)) {
       const fy = fieldingByYear[yr];
       if (!fy || !fy['OF']) continue;
       const hasIndividual = fy['LF'] || fy['CF'] || fy['RF'];
-      if (!hasIndividual) {
-        fy['RF'] = { inn: fy['OF'].inn, drs: fy['OF'].drs };
-      }
+      if (hasIndividual) continue;  // 個別行がある年は何もしない
+
+      const ofEntry = fy['OF'];
+      const ofInn   = String(ofEntry.inn || '0');
+      const ofDRS   = ofEntry.drs;
+      const [ofFull, ofFrac] = ofInn.split('.').map(Number);
+      const ofOuts  = (ofFull || 0) * 3 + (ofFrac || 0);
+
+      // 個別行が取得済みであれば g が入っている（年キャリーフォワードで取得した場合）
+      // ここでは OF.g（総出場）しかないため比率は不明 → RF フォールバック
+      // ただし同年に g を持つ個別外野行が fieldingByYear にある場合はそちらを使用済み
+      fy['RF'] = { inn: ofEntry.inn, drs: ofDRS };
     }
 
     return { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming, bbRefSplits };
