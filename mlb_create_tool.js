@@ -563,69 +563,83 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
             );
           }
 
-          // ▶ BB-Ref の重要テーブルはHTMLコメント内に隠れているため、
-          //   DOM上で全コメントノードを展開してから解析する（card_generator 方式）
-          await page.evaluate(() => {
-            const iter = document.createNodeIterator(document, NodeFilter.SHOW_COMMENT);
-            const comments = [];
-            let node;
-            while ((node = iter.nextNode())) comments.push(node);
-            for (const c of comments) {
-              try {
-                const wrap = document.createElement('div');
-                wrap.innerHTML = c.nodeValue;
-                if (c.parentNode) {
-                  c.parentNode.insertBefore(wrap, c);
-                  c.parentNode.removeChild(c);
-                }
-              } catch {}
-            }
-          });
-
           // ── 守備データ（standard_fielding テーブル）→ DRS推定 ─────────────────
+          // ▶ card_generator.html と同じ手法:
+          //   outerHTML を文字列取得 → コメントを正規表現で除去 → DOMParser 再構築
+          //   createNodeIterator でのDOM直接操作は <table> 構造を壊すため使用不可
           if (missingFieldingYears.length > 0) {
-            const bbFieldRaw = await page.evaluate(() => {
-              const table = document.querySelector('#standard_fielding');
-              if (!table) return { err: 'no_table', tables: [...document.querySelectorAll('table')].map(t => t.id).filter(Boolean) };
-              const result = {};
-              for (const row of table.querySelectorAll('tbody tr:not(.thead)')) {
-                const get = s => row.querySelector(`[data-stat="${s}"]`)?.textContent.trim() || '';
-                const yr  = get('year_ID').replace(/[^0-9]/g, '');
-                const pos = get('pos');
-                if (!yr || yr.length !== 4 || !pos || pos === 'Pos') continue;
-                result[yr] = result[yr] || {};
-                // 複数チーム行: 後の行（合計行）が上書きで残る
-                result[yr][pos] = {
-                  inn:   get('inn_outs') || get('inn'),
-                  ch:    parseInt(get('chances'))               || 0,
-                  e:     parseInt(get('e'))                     || 0,
-                  fld:   parseFloat(get('fielding_perc'))       || 0,
-                  lgFld: parseFloat(get('lg_fielding_perc'))    || 0,
-                  rf9:   parseFloat(get('range_factor_9inn'))   || 0,
-                  lgRf9: parseFloat(get('lg_range_factor_9inn')) || 0,
-                };
-              }
-              return result;
+            const bbResult = await page.evaluate(() => {
+              try {
+                const rawHtml   = document.documentElement.outerHTML;
+                const cleanHtml = rawHtml.replace(/<!--([\s\S]*?)-->/g, '$1');
+                const doc2      = new DOMParser().parseFromString(cleanHtml, 'text/html');
+
+                // デバッグ: 解析後に存在するテーブルID一覧
+                const tableIds = [...doc2.querySelectorAll('table[id]')]
+                  .map(t => t.id).filter(Boolean);
+
+                const table = doc2.querySelector('#standard_fielding') ||
+                              doc2.querySelector('#fielding_standard');
+                if (!table) return { err: 'no_table', tableIds };
+
+                // デバッグ: ヘッダーのdata-stat一覧
+                const headerStats = [...table.querySelectorAll('[data-stat]')]
+                  .slice(0, 30).map(el => el.getAttribute('data-stat')).filter(Boolean);
+
+                const result = {};
+                for (const row of table.querySelectorAll('tbody tr')) {
+                  if (row.classList.contains('thead') || row.classList.contains('minors_table')) continue;
+                  // year は <th data-stat="year_ID"> に格納されている
+                  const yearTh = row.querySelector('th[data-stat="year_ID"]');
+                  const yr = yearTh ? yearTh.textContent.replace(/\D/g, '').trim() : '';
+                  if (!yr || yr.length !== 4) continue;
+                  const get = s => {
+                    const el = row.querySelector(`td[data-stat="${s}"]`);
+                    return el ? el.textContent.trim() : '';
+                  };
+                  const pos = get('pos');
+                  if (!pos || pos === 'Pos') continue;
+                  result[yr] = result[yr] || {};
+                  // 複数チーム行: 後の行（合計行）が上書きで残る
+                  result[yr][pos] = {
+                    inn:   get('Inn') || get('inn_outs') || get('inn'),
+                    ch:    get('chances') || '0',
+                    e:     get('e')       || '0',
+                    fld:   get('fielding_perc')        || '0',
+                    lgFld: get('lg_fielding_perc')     || '0',
+                    rf9:   get('range_factor_9inn')    || '0',
+                    lgRf9: get('lg_range_factor_9inn') || '0',
+                  };
+                }
+                return { result, headerStats, tableIds };
+              } catch (e) { return { err: e.message }; }
             });
 
-            if (bbFieldRaw?.err) {
-              onProgress(`⚠ BB-Ref 守備テーブル未検出 (${bbFieldRaw.err}): 検出テーブル=[${(bbFieldRaw.tables||[]).join(',')}]`);
-            } else if (bbFieldRaw) {
+            if (bbResult?.err) {
+              onProgress(`⚠ BB-Ref 守備テーブル未検出 (${bbResult.err}) テーブルIDs=[${(bbResult.tableIds||[]).slice(0,10).join(',')}]`);
+            } else if (bbResult?.result) {
+              if (bbResult.headerStats?.length)
+                onProgress(`BB-Ref 守備ヘッダー確認: [${bbResult.headerStats.slice(0, 15).join(', ')}]`);
               for (const yr of missingFieldingYears) {
-                const posMap = bbFieldRaw[yr];
+                const posMap = bbResult.result[yr];
                 if (!posMap) continue;
                 for (const [pos, d] of Object.entries(posMap)) {
-                  // BB-Ref Inn: "1350.1" = 1350⅓ innings (小数部は out 数)
+                  // BB-Ref Inn: "1350.1" = 1350⅓ innings（小数部は out 数、.1=1/3, .2=2/3）
                   const innStr   = String(d.inn || '0').replace(/[,\s]/g, '');
                   const innMatch = innStr.match(/^(\d+)(?:\.(\d))?$/);
                   const innFull  = innMatch ? parseInt(innMatch[1]) : 0;
                   const innFrac  = innMatch ? parseInt(innMatch[2] || '0') : 0;
                   const innDec   = innFull + innFrac / 3;
                   const innFmt   = innFull + '.' + innFrac;
-                  if (innDec < 1 || !d.lgRf9) continue;
-                  // DRS 推定 = レンジ成分 + エラー成分
-                  const rangeDRS = (d.rf9 - d.lgRf9) * innDec / 9 * 0.75;
-                  const errorDRS = d.ch > 0 ? d.ch * (d.fld - d.lgFld) * 0.5 : 0;
+                  const ch    = parseInt(d.ch)    || 0;
+                  const fld   = parseFloat(d.fld)   || 0;
+                  const lgFld = parseFloat(d.lgFld) || 0;
+                  const rf9   = parseFloat(d.rf9)   || 0;
+                  const lgRf9 = parseFloat(d.lgRf9) || 0;
+                  if (innDec < 1 || !lgRf9) continue;
+                  // DRS 推定 = レンジ成分（RF/9差×Inn/9×0.75）+ エラー成分（守備率差×機会×0.5）
+                  const rangeDRS = (rf9 - lgRf9) * innDec / 9 * 0.75;
+                  const errorDRS = ch > 0 ? ch * (fld - lgFld) * 0.5 : 0;
                   fieldingByYear[yr][pos] = { inn: innFmt, drs: Math.round(rangeDRS + errorDRS) };
                 }
                 if (Object.keys(fieldingByYear[yr]).length > 0)
