@@ -484,25 +484,44 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
         } catch {}
 
         // ── Step 2: BB-Ref 検索ページで名前検索 ─────────────────────────────────
+        // ※ページ全体のリンクを正規表現で拾うと関係ない選手(サイドバー等)を
+        //   誤取得するため、アンカーテキストで選手名と一致するリンクのみ採用する
         if (!bbSlug) {
           try {
             const searchUrl = `https://www.baseball-reference.com/search/search.fcgi?search=${encodeURIComponent(playerFullName)}`;
             await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-            const found = await page.evaluate(() => {
-              const re  = /\/players\/[a-z]\/([a-z0-9]+)\.shtml/g;
-              const htm = document.body.innerHTML;
-              const ids = [];
-              let m;
-              while ((m = re.exec(htm)) !== null) {
-                if (!ids.includes(m[1])) ids.push(m[1]);
+
+            // 単一結果の場合 BB-Ref は選手ページへ直接リダイレクトする
+            const finalUrl = page.url();
+            const urlMatch = finalUrl.match(/\/players\/[a-z]\/([a-z0-9]+)\.shtml/);
+            if (urlMatch) {
+              // リダイレクト先が正しい選手か h1 で確認
+              const isMatch = await page.evaluate((name) => {
+                const h1 = document.querySelector('#info h1') || document.querySelector('h1');
+                if (!h1) return false;
+                const t = h1.textContent.trim().toLowerCase();
+                return name.toLowerCase().split(' ').filter(p => p.length > 1).every(p => t.includes(p));
+              }, playerFullName);
+              if (isMatch) {
+                bbSlug = urlMatch[1];
+                onProgress(`BB-Ref ID (検索リダイレクト): ${bbSlug}`);
               }
-              return ids;
-            });
-            if (found.length > 0) {
-              const lastInitial = playerFullName.trim().split(/\s+/).pop()[0]?.toLowerCase() || '';
-              const filtered = found.filter(x => x[0] === lastInitial);
-              bbSlug = (filtered.length > 0 ? filtered : found)[0];
-              if (bbSlug) onProgress(`BB-Ref ID (名前検索): ${bbSlug}`);
+            }
+
+            // 複数候補リストの場合: アンカーテキストが選手名を含むリンクのみ採用
+            if (!bbSlug) {
+              bbSlug = await page.evaluate((name) => {
+                const parts = name.toLowerCase().split(' ').filter(p => p.length > 1);
+                for (const a of document.querySelectorAll('a[href*="/players/"]')) {
+                  const href = a.getAttribute('href') || '';
+                  const m    = href.match(/\/players\/[a-z]\/([a-z0-9]+)\.shtml/);
+                  if (!m) continue;
+                  const txt = a.textContent.trim().toLowerCase();
+                  if (parts.every(p => txt.includes(p))) return m[1];
+                }
+                return null;
+              }, playerFullName);
+              if (bbSlug) onProgress(`BB-Ref ID (検索リスト): ${bbSlug}`);
             }
           } catch {}
         }
