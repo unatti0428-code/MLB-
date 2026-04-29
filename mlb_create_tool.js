@@ -656,13 +656,14 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                     if (!pos || pos === 'Pos' || pos === 'Position') continue;
                     result[yr] = result[yr] || {};
                     result[yr][pos] = {
-                      inn:   get('f_inn', 'f_inn_outs', 'Inn', 'inn_outs', 'inn'),
-                      ch:    get('f_chances', 'f_tc', 'chances', 'tc')               || '0',
-                      e:     get('f_errors',  'f_e',  'e')                           || '0',
-                      fld:   get('f_fielding_perc', 'f_pct', 'fielding_perc')        || '0',
-                      lgFld: get('f_lg_fielding_perc', 'f_lg_pct', 'lg_fielding_perc') || '0',
-                      rf9:   get('f_rf9', 'f_range_factor_9inn', 'range_factor_9inn')   || '0',
-                      lgRf9: get('f_lg_rf9', 'f_lg_range_factor_9inn', 'lg_range_factor_9inn') || '0',
+                      // 新形式(f_innings, f_fielding_perc_lg, f_range_factor_per_nine 等)を優先
+                      inn:   get('f_innings', 'f_inn', 'f_inn_outs', 'Inn', 'inn_outs', 'inn'),
+                      ch:    get('f_chances', 'f_tc', 'chances', 'tc')                        || '0',
+                      e:     get('f_errors',  'f_e',  'e')                                    || '0',
+                      fld:   get('f_fielding_perc', 'f_pct', 'fielding_perc')                 || '0',
+                      lgFld: get('f_fielding_perc_lg', 'f_lg_fielding_perc', 'lg_fielding_perc') || '0',
+                      rf9:   get('f_range_factor_per_nine', 'f_rf9', 'range_factor_9inn')     || '0',
+                      lgRf9: get('f_range_factor_per_nine_lg', 'f_lg_rf9', 'lg_range_factor_9inn') || '0',
                     };
                   }
                   return { result, headerStats, tableIds, sampleRow };
