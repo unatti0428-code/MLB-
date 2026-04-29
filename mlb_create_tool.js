@@ -564,87 +564,90 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
           }
 
           // ── 守備データ（standard_fielding テーブル）→ DRS推定 ─────────────────
-          // ▶ card_generator.html と同じ手法:
-          //   outerHTML を文字列取得 → コメントを正規表現で除去 → DOMParser 再構築
-          //   createNodeIterator でのDOM直接操作は <table> 構造を壊すため使用不可
+          // ▶ page.content() で Node.js 側に生 HTML を取得し、コメント除去後に
+          //   DOMParser 経由でテーブルを解析する（outerHTML をブラウザ内処理すると
+          //   巨大文字列のやりとりで失敗する場合があるため Node.js 側で前処理）
           if (missingFieldingYears.length > 0) {
-            const bbResult = await page.evaluate(() => {
-              try {
-                const rawHtml   = document.documentElement.outerHTML;
-                const cleanHtml = rawHtml.replace(/<!--([\s\S]*?)-->/g, '$1');
-                const doc2      = new DOMParser().parseFromString(cleanHtml, 'text/html');
+            try {
+              const rawHtml = await page.content();
+              onProgress(`BB-Ref HTML取得: ${rawHtml.length.toLocaleString()} chars, id="standard_fielding"存在=${rawHtml.includes('id="standard_fielding"')}`);
 
-                // デバッグ: 解析後に存在するテーブルID一覧
-                const tableIds = [...doc2.querySelectorAll('table[id]')]
-                  .map(t => t.id).filter(Boolean);
+              // コメント内テーブルを露出させる（<!-- --> を除去）
+              const cleanHtml = rawHtml.replace(/<!--([\s\S]*?)-->/g, '$1');
+              onProgress(`コメント除去後: ${cleanHtml.length.toLocaleString()} chars, テーブル存在=${cleanHtml.includes('id="standard_fielding"')}`);
 
-                const table = doc2.querySelector('#standard_fielding') ||
-                              doc2.querySelector('#fielding_standard');
-                if (!table) return { err: 'no_table', tableIds };
+              // 解析済み HTML を Puppeteer の evaluate へ渡して DOMParser で処理
+              const bbResult = await page.evaluate((html) => {
+                try {
+                  const doc2 = new DOMParser().parseFromString(html, 'text/html');
+                  const tableIds = [...doc2.querySelectorAll('table[id]')]
+                    .map(t => t.id).filter(Boolean);
+                  const table = doc2.querySelector('#standard_fielding') ||
+                                doc2.querySelector('#fielding_standard');
+                  if (!table) return { err: 'no_table', tableIds };
 
-                // デバッグ: ヘッダーのdata-stat一覧
-                const headerStats = [...table.querySelectorAll('[data-stat]')]
-                  .slice(0, 30).map(el => el.getAttribute('data-stat')).filter(Boolean);
+                  // ヘッダーの data-stat（デバッグ用）
+                  const headerStats = [...table.querySelectorAll('[data-stat]')]
+                    .slice(0, 30).map(el => el.getAttribute('data-stat')).filter(Boolean);
 
-                const result = {};
-                for (const row of table.querySelectorAll('tbody tr')) {
-                  if (row.classList.contains('thead') || row.classList.contains('minors_table')) continue;
-                  // year は <th data-stat="year_ID"> に格納されている
-                  const yearTh = row.querySelector('th[data-stat="year_ID"]');
-                  const yr = yearTh ? yearTh.textContent.replace(/\D/g, '').trim() : '';
-                  if (!yr || yr.length !== 4) continue;
-                  const get = s => {
-                    const el = row.querySelector(`td[data-stat="${s}"]`);
-                    return el ? el.textContent.trim() : '';
-                  };
-                  const pos = get('pos');
-                  if (!pos || pos === 'Pos') continue;
-                  result[yr] = result[yr] || {};
-                  // 複数チーム行: 後の行（合計行）が上書きで残る
-                  result[yr][pos] = {
-                    inn:   get('Inn') || get('inn_outs') || get('inn'),
-                    ch:    get('chances') || '0',
-                    e:     get('e')       || '0',
-                    fld:   get('fielding_perc')        || '0',
-                    lgFld: get('lg_fielding_perc')     || '0',
-                    rf9:   get('range_factor_9inn')    || '0',
-                    lgRf9: get('lg_range_factor_9inn') || '0',
-                  };
+                  const result = {};
+                  for (const row of table.querySelectorAll('tbody tr')) {
+                    if (row.classList.contains('thead') || row.classList.contains('minors_table')) continue;
+                    const yearTh = row.querySelector('th[data-stat="year_ID"]');
+                    const yr = yearTh ? yearTh.textContent.replace(/\D/g, '').trim() : '';
+                    if (!yr || yr.length !== 4) continue;
+                    const get = s => {
+                      const el = row.querySelector(`td[data-stat="${s}"]`);
+                      return el ? el.textContent.trim() : '';
+                    };
+                    const pos = get('pos');
+                    if (!pos || pos === 'Pos') continue;
+                    result[yr] = result[yr] || {};
+                    result[yr][pos] = {
+                      inn:   get('Inn') || get('inn_outs') || get('inn'),
+                      ch:    get('chances') || '0',
+                      e:     get('e')       || '0',
+                      fld:   get('fielding_perc')        || '0',
+                      lgFld: get('lg_fielding_perc')     || '0',
+                      rf9:   get('range_factor_9inn')    || '0',
+                      lgRf9: get('lg_range_factor_9inn') || '0',
+                    };
+                  }
+                  return { result, headerStats, tableIds };
+                } catch (e) { return { err: e.message }; }
+              }, cleanHtml);
+
+              if (bbResult?.err) {
+                onProgress(`⚠ BB-Ref 守備テーブル未検出 (${bbResult.err})`);
+                onProgress(`  検出テーブルIDs: [${(bbResult.tableIds||[]).slice(0, 12).join(', ')}]`);
+              } else if (bbResult?.result) {
+                onProgress(`BB-Ref 守備ヘッダー: [${(bbResult.headerStats||[]).slice(0, 12).join(', ')}]`);
+                for (const yr of missingFieldingYears) {
+                  const posMap = bbResult.result[yr];
+                  if (!posMap) continue;
+                  for (const [pos, d] of Object.entries(posMap)) {
+                    const innStr  = String(d.inn || '0').replace(/[,\s]/g, '');
+                    const innMatch = innStr.match(/^(\d+)(?:\.(\d))?$/);
+                    const innFull  = innMatch ? parseInt(innMatch[1]) : 0;
+                    const innFrac  = innMatch ? parseInt(innMatch[2] || '0') : 0;
+                    const innDec   = innFull + innFrac / 3;
+                    const innFmt   = innFull + '.' + innFrac;
+                    const ch    = parseInt(d.ch)    || 0;
+                    const fld   = parseFloat(d.fld)   || 0;
+                    const lgFld = parseFloat(d.lgFld) || 0;
+                    const rf9   = parseFloat(d.rf9)   || 0;
+                    const lgRf9 = parseFloat(d.lgRf9) || 0;
+                    if (innDec < 1 || !lgRf9) continue;
+                    const rangeDRS = (rf9 - lgRf9) * innDec / 9 * 0.75;
+                    const errorDRS = ch > 0 ? ch * (fld - lgFld) * 0.5 : 0;
+                    fieldingByYear[yr][pos] = { inn: innFmt, drs: Math.round(rangeDRS + errorDRS) };
+                  }
+                  if (Object.keys(fieldingByYear[yr]).length > 0)
+                    onProgress(`BB-Ref 守備推定 ${yr}: ${Object.keys(fieldingByYear[yr]).join(', ')}`);
                 }
-                return { result, headerStats, tableIds };
-              } catch (e) { return { err: e.message }; }
-            });
-
-            if (bbResult?.err) {
-              onProgress(`⚠ BB-Ref 守備テーブル未検出 (${bbResult.err}) テーブルIDs=[${(bbResult.tableIds||[]).slice(0,10).join(',')}]`);
-            } else if (bbResult?.result) {
-              if (bbResult.headerStats?.length)
-                onProgress(`BB-Ref 守備ヘッダー確認: [${bbResult.headerStats.slice(0, 15).join(', ')}]`);
-              for (const yr of missingFieldingYears) {
-                const posMap = bbResult.result[yr];
-                if (!posMap) continue;
-                for (const [pos, d] of Object.entries(posMap)) {
-                  // BB-Ref Inn: "1350.1" = 1350⅓ innings（小数部は out 数、.1=1/3, .2=2/3）
-                  const innStr   = String(d.inn || '0').replace(/[,\s]/g, '');
-                  const innMatch = innStr.match(/^(\d+)(?:\.(\d))?$/);
-                  const innFull  = innMatch ? parseInt(innMatch[1]) : 0;
-                  const innFrac  = innMatch ? parseInt(innMatch[2] || '0') : 0;
-                  const innDec   = innFull + innFrac / 3;
-                  const innFmt   = innFull + '.' + innFrac;
-                  const ch    = parseInt(d.ch)    || 0;
-                  const fld   = parseFloat(d.fld)   || 0;
-                  const lgFld = parseFloat(d.lgFld) || 0;
-                  const rf9   = parseFloat(d.rf9)   || 0;
-                  const lgRf9 = parseFloat(d.lgRf9) || 0;
-                  if (innDec < 1 || !lgRf9) continue;
-                  // DRS 推定 = レンジ成分（RF/9差×Inn/9×0.75）+ エラー成分（守備率差×機会×0.5）
-                  const rangeDRS = (rf9 - lgRf9) * innDec / 9 * 0.75;
-                  const errorDRS = ch > 0 ? ch * (fld - lgFld) * 0.5 : 0;
-                  fieldingByYear[yr][pos] = { inn: innFmt, drs: Math.round(rangeDRS + errorDRS) };
-                }
-                if (Object.keys(fieldingByYear[yr]).length > 0)
-                  onProgress(`BB-Ref 守備推定 ${yr}: ${Object.keys(fieldingByYear[yr]).join(', ')}`);
               }
+            } catch (e) {
+              onProgress(`⚠ BB-Ref 守備HTML取得失敗: ${e.message}`);
             }
           }
 
@@ -1226,7 +1229,20 @@ async function processFile(filePath, catcherData = null) {
 const jobs = new Map();
 
 async function runCreateJob(jobId, params) {
-  const upd = msg => { const j = jobs.get(jobId); if (j) { j.progress = msg; console.log('[job]', msg); } };
+  // ── ログ出力: コンソール + ファイル（mlb_create_tool_log.txt）────────────
+  const logLines = [];
+  const logFile  = path.join(OUT_DIR, 'mlb_create_tool_log.txt');
+  const upd = msg => {
+    const j = jobs.get(jobId);
+    if (j) { j.progress = msg; }
+    const line = `[${new Date().toLocaleTimeString('ja-JP')}] ${msg}`;
+    console.log('[job]', msg);
+    logLines.push(line);
+    // 都度ファイルに追記（ツールが途中で止まっても確認できるよう）
+    try { fs.appendFileSync(logFile, line + '\n', 'utf8'); } catch {}
+  };
+  // ログファイルをこのジョブ開始時にリセット
+  try { fs.writeFileSync(logFile, `=== ${params.name || params.fullName} ${new Date().toLocaleString('ja-JP')} ===\n`, 'utf8'); } catch {}
   try {
     upd('MLB Stats API からデータ取得中...');
     const { years, basic, splitsRaw, catcherFielding } = await fetchMLBStats(params.id, params.y1, params.y2);
