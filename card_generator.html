@@ -2918,23 +2918,20 @@ function updateCardExtras(cardType, pitchNicknames) {
     const el = document.querySelector('#card-root .card-type');
     if (el) el.textContent = cardType;
   }
-  // ② 変化球ニックネームを球種名セルに追記（2行表示・!important対応）
+  // ② 変化球ニックネームを球種名セルに追記（1行表示・!important対応）
   if (pitchNicknames && typeof pitchNicknames === 'object') {
     Object.entries(pitchNicknames).forEach(([pitchName, nickname]) => {
       if (!nickname) return;
       document.querySelectorAll('#card-root td.pn[data-pitch]').forEach(td => {
         if (td.dataset.pitch === pitchName) {
-          // 球種名を1行目、異名を2行目に小さく表示
-          // innerHTML を使い2行レイアウトにする（overflow対策）
-          td.innerHTML =
-            `<span style="display:block;line-height:1.2;">${escapeHtml(pitchName)}</span>` +
-            `<span style="display:block;font-size:8px;color:#ffd080;letter-spacing:0;` +
-            `line-height:1.2;font-style:italic;">（${escapeHtml(nickname)}）</span>`;
-          // !important を上書きするには setProperty の第3引数 'important' を使う
-          td.style.setProperty('font-size', '11px', 'important');
-          td.style.setProperty('letter-spacing', '-0.3px', 'important');
-          td.style.setProperty('line-height', '1', 'important');
-          td.style.setProperty('padding', '2px 4px', 'important');
+          const label = `${pitchName}（${nickname}）`;
+          td.textContent = label;
+          // 文字数に応じてフォントを縮小（!important で CSS を上書き）
+          const len = label.length;
+          const fs = len > 14 ? '7px' : len > 11 ? '8px' : len > 8 ? '9px' : '11px';
+          td.style.setProperty('font-size', fs, 'important');
+          td.style.setProperty('letter-spacing', '-0.5px', 'important');
+          td.style.setProperty('white-space', 'nowrap', 'important');
         }
       });
     });
