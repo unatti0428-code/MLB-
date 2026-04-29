@@ -557,9 +557,10 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
           // ── 選手ページ取得（Step3でナビゲート済みでなければ再取得）────────────
           const currentUrl = page.url();
           if (!currentUrl.includes(bbSlug)) {
+            // networkidle2 で JS 遅延ロードのテーブルも確実に取得する
             await page.goto(
               `https://www.baseball-reference.com/players/${bbSlug[0]}/${bbSlug}.shtml`,
-              { waitUntil: 'domcontentloaded', timeout: 25000 }
+              { waitUntil: 'networkidle2', timeout: 30000 }
             );
           }
 
@@ -568,18 +569,31 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
 
           // ── 守備データ（standard_fielding テーブル）→ DRS推定 ─────────────────
           // ▶ page.content() で Node.js 側に生 HTML を取得し、コメント除去後に
-          //   DOMParser 経由でテーブルを解析する（outerHTML をブラウザ内処理すると
-          //   巨大文字列のやりとりで失敗する場合があるため Node.js 側で前処理）
-          // ▶ 守備欠損年がなくても BB-Ref にアクセス済みの場合は取得を試みる
-          //   （FanGraphs が空で years が空配列の場合でも取得する）
+          //   DOMParser 経由でテーブルを解析する
+          // ▶ BB-Ref の守備テーブル ID:
+          //     新形式: #players_standard_fielding
+          //     旧形式: #standard_fielding / #fielding_standard
+          //     コメント内に隠れている場合も存在する
           if (missingFieldingYears.length > 0 || allSplitsEmpty) {
             try {
+              // 守備テーブルが JS 遅延ロードされる場合があるため最大5秒待つ
+              await page.waitForSelector(
+                '#players_standard_fielding, #standard_fielding, #fielding_standard',
+                { timeout: 5000 }
+              ).catch(() => {}); // タイムアウトしても続行
+
               const rawHtml = await page.content();
-              onProgress(`BB-Ref HTML取得: ${rawHtml.length.toLocaleString()} chars, id="standard_fielding"存在=${rawHtml.includes('id="standard_fielding"')}`);
+              const fieldingIdPresent = rawHtml.includes('id="players_standard_fielding"') ||
+                                        rawHtml.includes('id="standard_fielding"') ||
+                                        rawHtml.includes('id="fielding_standard"');
+              onProgress(`BB-Ref HTML取得: ${rawHtml.length.toLocaleString()} chars, 守備テーブル存在=${fieldingIdPresent}`);
 
               // コメント内テーブルを露出させる（<!-- --> を除去）
               const cleanHtml = rawHtml.replace(/<!--([\s\S]*?)-->/g, '$1');
-              onProgress(`コメント除去後: ${cleanHtml.length.toLocaleString()} chars, テーブル存在=${cleanHtml.includes('id="standard_fielding"')}`);
+              const fieldingIdClean = cleanHtml.includes('id="players_standard_fielding"') ||
+                                      cleanHtml.includes('id="standard_fielding"') ||
+                                      cleanHtml.includes('id="fielding_standard"');
+              onProgress(`コメント除去後: ${cleanHtml.length.toLocaleString()} chars, 守備テーブル存在=${fieldingIdClean}`);
 
               // 解析済み HTML を Puppeteer の evaluate へ渡して DOMParser で処理
               const bbResult = await page.evaluate((html) => {
@@ -587,8 +601,15 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                   const doc2 = new DOMParser().parseFromString(html, 'text/html');
                   const tableIds = [...doc2.querySelectorAll('table[id]')]
                     .map(t => t.id).filter(Boolean);
-                  const table = doc2.querySelector('#standard_fielding') ||
-                                doc2.querySelector('#fielding_standard');
+                  // BB-Ref 守備テーブルの ID: 新形式・旧形式・コメント除去後のいずれかに対応
+                  const table = doc2.querySelector('#players_standard_fielding') ||
+                                doc2.querySelector('#standard_fielding') ||
+                                doc2.querySelector('#fielding_standard') ||
+                                // フォールバック: RF/9 列を持つテーブルを探す
+                                [...doc2.querySelectorAll('table')].find(t => {
+                                  const h = t.querySelector('[data-stat="range_factor_9inn"], [data-stat="rf9"]');
+                                  return !!h;
+                                });
                   if (!table) return { err: 'no_table', tableIds };
 
                   // ヘッダーの data-stat（デバッグ用）
@@ -667,35 +688,52 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
           // ── スプリット取得（通算 → 年別欠損の補完値として使用）─────────────
           try {
             const splitUrl = `https://www.baseball-reference.com/players/split.fcgi?id=${bbSlug}&year=all&t=b`;
-            await page.goto(splitUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            await page.goto(splitUrl, { waitUntil: 'networkidle2', timeout: 25000 });
 
-            const bbSplit = await page.evaluate(() => {
-              for (const table of document.querySelectorAll('table')) {
-                let vsLRow = null, rispRow = null;
-                for (const row of table.querySelectorAll('tbody tr')) {
-                  const th  = row.querySelector('th') || row.querySelector('[data-stat="split"]');
-                  const txt = (th?.textContent || '').trim().toLowerCase();
-                  if (!vsLRow  && (txt === 'vs. lhp' || txt === 'lhp' || txt === 'left'))
-                    vsLRow = row;
-                  if (!rispRow && (txt === 'risp' || txt.includes('scoring position')))
-                    rispRow = row;
-                }
-                if (vsLRow || rispRow) {
-                  const getN = (row, stat) => {
-                    if (!row) return 0;
-                    const c = row.querySelector(`[data-stat="${stat}"]`);
-                    return parseInt(c?.textContent.trim() || '0') || 0;
-                  };
-                  return {
-                    vsLAB:  getN(vsLRow,  'AB'),
-                    vsLH:   getN(vsLRow,  'H'),
-                    rispAB: getN(rispRow, 'AB'),
-                    rispH:  getN(rispRow, 'H'),
-                  };
-                }
-              }
-              return null;
-            });
+            // スプリットページも HTML コメント内にテーブルが入っている場合があるため
+            // Node.js 側で page.content() を取得してコメント除去後に DOMParser で解析
+            const splitRawHtml = await page.content();
+            const splitCleanHtml = splitRawHtml.replace(/<!--([\s\S]*?)-->/g, '$1');
+            onProgress(`BB-Ref スプリットHTML: ${splitRawHtml.length.toLocaleString()} chars`);
+
+            const bbSplit = await page.evaluate((html) => {
+              try {
+                const doc2 = new DOMParser().parseFromString(html, 'text/html');
+                const parseSplit = (doc) => {
+                  for (const table of doc.querySelectorAll('table')) {
+                    let vsLRow = null, rispRow = null;
+                    for (const row of table.querySelectorAll('tbody tr, tr')) {
+                      // data-stat="split" の th か、最初の th/td のテキストで判定
+                      const splitCell = row.querySelector('[data-stat="split"]') ||
+                                        row.querySelector('th') ||
+                                        row.querySelector('td');
+                      const txt = (splitCell?.textContent || '').trim().toLowerCase();
+                      if (!vsLRow  && (txt === 'vs. lhp' || txt === 'lhp' || txt === 'left' || txt === 'vs lhp'))
+                        vsLRow = row;
+                      if (!rispRow && (txt === 'risp' || txt.includes('scoring position') || txt === 'bases loaded'))
+                        rispRow = row;
+                    }
+                    if (vsLRow || rispRow) {
+                      const getN = (row, stat) => {
+                        if (!row) return 0;
+                        const c = row.querySelector(`[data-stat="${stat}"]`);
+                        return parseInt(c?.textContent.trim() || '0') || 0;
+                      };
+                      const result = {
+                        vsLAB:  getN(vsLRow,  'AB'),
+                        vsLH:   getN(vsLRow,  'H'),
+                        rispAB: getN(rispRow, 'AB'),
+                        rispH:  getN(rispRow, 'H'),
+                      };
+                      if (result.vsLAB > 0 || result.rispAB > 0) return result;
+                    }
+                  }
+                  return null;
+                };
+                // まずコメント除去済みHTMLを試し、なければ元のページを試す
+                return parseSplit(doc2) || parseSplit(document);
+              } catch (e) { return null; }
+            }, splitCleanHtml);
 
             if (bbSplit && (bbSplit.vsLAB > 0 || bbSplit.rispAB > 0)) {
               for (const yr of years) bbRefSplits[yr] = bbSplit;
