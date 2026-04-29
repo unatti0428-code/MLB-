@@ -829,6 +829,18 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
       }
     }
 
+    // ── OF → 個別外野ポジションへのマッピング ─────────────────────────────────
+    // BB-Ref 歴史的選手（〜1950年代）はLF/CF/RFが個別集計されず OF としてまとまる
+    // 個別外野ポジションが1件もない年は OF データを RF にコピーして Excel に反映させる
+    for (const yr of Object.keys(fieldingByYear)) {
+      const fy = fieldingByYear[yr];
+      if (!fy || !fy['OF']) continue;
+      const hasIndividual = fy['LF'] || fy['CF'] || fy['RF'];
+      if (!hasIndividual) {
+        fy['RF'] = { inn: fy['OF'].inn, drs: fy['OF'].drs };
+      }
+    }
+
     return { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming, bbRefSplits };
   } finally {
     await browser.close();
