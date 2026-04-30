@@ -471,6 +471,7 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
 
         // ── Step 1: MLB Stats API xrefIds から BB-Ref ID 取得（最も確実）─────────
         let bbSlug = null;
+        let battingHand = null;  // BB-Ref から取得: 'L'=左打 / 'R'=右打 / 'S'=両打
         try {
           const xrefData = await mlbGet(
             `https://statsapi.mlb.com/api/v1/people/${id}?hydrate=xrefIds`
@@ -567,6 +568,17 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
               { waitUntil: 'domcontentloaded', timeout: 30000 }
             );
           }
+
+          // ── 打席情報（LHB/RHB/Switch）を取得 → 対左BA推計に使用 ────────────
+          battingHand = await page.evaluate(() => {
+            const info = document.querySelector('#info') || document.querySelector('#necro-bio') || document.body;
+            const txt = info?.textContent || '';
+            if (/bats:\s*left/i.test(txt))  return 'L';
+            if (/bats:\s*right/i.test(txt)) return 'R';
+            if (/bats:\s*(both|switch)/i.test(txt)) return 'S';
+            return null;
+          }).catch(() => null);
+          onProgress(`[診断] 打席=${battingHand || '不明'}`);
 
           // ── 診断ログ（スキップ原因を特定）────────────────────────────────────
           onProgress(`[診断] bbSlug=${bbSlug}, missingFieldingYears=${missingFieldingYears.length}/${years.length}, allSplitsEmpty=${allSplitsEmpty}`);
@@ -932,7 +944,7 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
       }
     }
 
-    return { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming, bbRefSplits };
+    return { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming, bbRefSplits, battingHand };
   } finally {
     await browser.close();
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
@@ -1440,7 +1452,7 @@ async function runCreateJob(jobId, params) {
     const { years, basic, splitsRaw, catcherFielding } = await fetchMLBStats(params.id, params.y1, params.y2);
 
     upd('ブラウザを起動して Baseball Savant / FanGraphs を取得中...');
-    const { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming, bbRefSplits } =
+    const { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming, bbRefSplits, battingHand } =
       await fetchBrowserData(params.slug, params.id, params.fullName, years, upd, splitsRaw);
 
     // BB-Ref 通算スプリットで MLB Stats API の欠損年を補完
@@ -1451,6 +1463,53 @@ async function runCreateJob(jobId, params) {
       if (!d || !bb) continue;
       if (!d.vsLAB  && bb.vsLAB)  { d.vsLAB  = bb.vsLAB;  d.vsLH   = bb.vsLH;  }
       if (!d.rispAB && bb.rispAB) { d.rispAB = bb.rispAB; d.rispH  = bb.rispH; }
+    }
+
+    // ── プラトーン推計: BB-Ref にも対左/得点圏データがない場合は打席情報から推計 ──
+    // 対象: vsLAB === 0 の年（実データが一切取れなかった年）
+    // 推計根拠:
+    //   左打者(LHB) vs 左投手: 通算BAの約88% (同側投手に対し約-30〜35点が統計的平均)
+    //   右打者(RHB) vs 左投手: 通算BAの約104% (対左投手に約+10〜15点有利)
+    //   両打(Switch) vs 左投手: 右打席に入るため右打者に準じ約103%
+    //   得点圏打率: 個人差が大きいが平均的には通算BAと同値 → そのまま使用
+    {
+      // 打席係数
+      const platoonCoeff = battingHand === 'L' ? 0.88
+                         : battingHand === 'R' ? 1.04
+                         : battingHand === 'S' ? 1.03
+                         : null;  // 不明時は推計しない
+
+      const stillMissingVsL  = years.filter(yr => !(splitsRaw[yr]?.vsLAB));
+      const stillMissingRisp = years.filter(yr => !(splitsRaw[yr]?.rispAB));
+
+      if (platoonCoeff !== null && (stillMissingVsL.length > 0 || stillMissingRisp.length > 0)) {
+        for (const yr of years) {
+          const d  = splitsRaw[yr];
+          const b  = basic[yr];
+          if (!d || !b) continue;
+          const ab = b.pa || 0;   // basic.pa は atBats
+          const h  = b.h  || 0;
+          if (ab === 0) continue;
+          const yearBA = h / ab;
+
+          // 対左打率推計（データが取れなかった年のみ）
+          if (!d.vsLAB) {
+            const estBA  = Math.min(Math.max(yearBA * platoonCoeff, 0), 1);
+            d.vsLAB = ab;                          // 実ABを使って加重平均を正確に
+            d.vsLH  = Math.round(estBA * ab);
+          }
+
+          // 得点圏打率推計（データが取れなかった年のみ）
+          if (!d.rispAB) {
+            d.rispAB = ab;
+            d.rispH  = h;  // 通算BAをそのまま使用
+          }
+        }
+        const handLabel = battingHand === 'L' ? '左打' : battingHand === 'R' ? '右打' : '両打';
+        upd(`プラトーン推計(${handLabel}): 対左=${stillMissingVsL.length}年, RISP=${stillMissingRisp.length}年 を補完（係数${platoonCoeff}）`);
+      } else if (platoonCoeff === null && (stillMissingVsL.length > 0 || stillMissingRisp.length > 0)) {
+        upd(`⚠ 打席情報不明のため対左/RISP推計スキップ（BB-Ref データ未取得の可能性）`);
+      }
     }
 
     upd('Excel ファイルを生成中...');
