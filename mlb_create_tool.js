@@ -702,6 +702,10 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                       lgFld: get('f_fielding_perc_lg', 'f_lg_fielding_perc', 'lg_fielding_perc') || '0',
                       rf9:   get('f_range_factor_per_nine', 'f_rf9', 'range_factor_9inn')     || '0',
                       lgRf9: get('f_range_factor_per_nine_lg', 'f_lg_rf9', 'lg_range_factor_9inn') || '0',
+                      // 捕手専用（他ポジションでは空欄になる）
+                      cs:    get('f_caught_stealing', 'caught_stealing', 'cs_catcher', 'rcs')  || '0',
+                      sb:    get('f_stolen_bases',    'stolen_bases',    'sb_against')         || '0',
+                      pb:    get('f_passed_ball',     'passed_ball',     'pb')                 || '0',
                     };
                     // G 数を外野ポジション別に記録（OF→RF/LF/CF 按分用）
                     if (['RF','LF','CF'].includes(pos) && gVal > 0) {
@@ -746,14 +750,46 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
                     const lgFld = parseFloat(d.lgFld) || 0;
                     const rf9   = parseFloat(d.rf9)   || 0;
                     const lgRf9 = parseFloat(d.lgRf9) || 0;
-                    // 仮想 DRS 計算
-                    // 係数 0.25: RF/9差 × games × 0.25
-                    //   RF/9差 0.3 × 144games × 0.25 ≈ +11 (実測 DRS +10〜+15 と一致)
-                    //   RF/9差-0.5 × 131games × 0.25 ≈ -16 (-30 cap 前)
-                    // ※旧係数 0.75 は過大（同条件で+32/-49 となり非現実的）
-                    const rangeDRS = lgRf9 > 0 ? (rf9 - lgRf9) * innDec / 9 * 0.25 : 0;
-                    const errorDRS = (ch > 0 && lgFld > 0) ? ch * (fld - lgFld) * 0.5 : 0;
-                    fieldingByYear[yr][pos] = { inn: innFmt, drs: Math.round(rangeDRS + errorDRS), g: parseInt(d.g) || 0 };
+                    // ── 仮想 DRS 計算 ────────────────────────────────────────────
+                    let drsVal;
+                    if (pos === 'C') {
+                      // ── 捕手専用: CS%ベース + RF/9補助 ────────────────────────
+                      // 根拠: 捕手のRF/9はチーム三振率に依存するため個人守備力を測れない
+                      //       → CS%（盗塁阻止率）が主要指標、RF/9は補助（係数0.05）
+                      //
+                      // [CS%ベース盗塁阻止DRS] FanGraphs実測との較正結果:
+                      //   CS%差10%・120試み → stealDRS = +4.8
+                      //   現役優良捕手(CS%40%,lg30%) 120試み → +4.8 ≈ FanGraphs典型値 +4〜+6 ✓
+                      //   現役最優秀(CS%50%,lg30%) 130試み → +10.4 ≈ FanGraphs上位値 +8〜+12 ✓
+                      const cs    = parseInt(d.cs)  || 0;
+                      const sbA   = parseInt(d.sb)  || 0;
+                      const total = cs + sbA;
+                      // 時代別リーグ平均CS%
+                      const yrNum    = parseInt(yr) || 1950;
+                      const lgCsPct  = yrNum < 1970 ? 0.38
+                                     : yrNum < 1985 ? 0.36
+                                     : yrNum < 1995 ? 0.33
+                                     : yrNum < 2005 ? 0.30
+                                     : yrNum < 2015 ? 0.28
+                                     :                0.26;
+                      // 盗塁阻止DRS: CS%差 × 試み数 × 0.40
+                      const stealDRS = total >= 10
+                        ? (cs / total - lgCsPct) * total * 0.40
+                        : 0;
+                      // ブロッキングDRS補助: RF/9差（係数0.05でチーム依存を抑制）
+                      const blockDRS = lgRf9 > 0
+                        ? (rf9 - lgRf9) * innDec / 9 * 0.05
+                        : 0;
+                      const errorDRS = (ch > 0 && lgFld > 0) ? ch * (fld - lgFld) * 0.5 : 0;
+                      drsVal = Math.round(stealDRS + blockDRS + errorDRS);
+                    } else {
+                      // ── 捕手以外: RF/9ベース ─────────────────────────────────
+                      // 係数 0.25: RF/9差 0.3 × 1296inn/9 × 0.25 ≈ +11 (実測+10〜+15と一致)
+                      const rangeDRS = lgRf9 > 0 ? (rf9 - lgRf9) * innDec / 9 * 0.25 : 0;
+                      const errorDRS = (ch > 0 && lgFld > 0) ? ch * (fld - lgFld) * 0.5 : 0;
+                      drsVal = Math.round(rangeDRS + errorDRS);
+                    }
+                    fieldingByYear[yr][pos] = { inn: innFmt, drs: drsVal, g: parseInt(d.g) || 0 };
                   }
                   const written = Object.entries(fieldingByYear[yr])
                     .filter(([,v]) => v && !isNaN(v.drs))
