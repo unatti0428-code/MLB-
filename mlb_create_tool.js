@@ -463,6 +463,7 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
     // 発動条件: FanGraphs で守備データが取れない年あり、または MLB API スプリット全欠損
     const bbRefSplits = {};
     let bbRefOfGames = {};  // BB-Ref から取得した外野G数（OF→RF/LF/CF 按分用）
+    let battingHand = null;  // BB-Ref から取得: 'L'=左打 / 'R'=右打 / 'S'=両打
     const missingFieldingYears = years.filter(yr => Object.keys(fieldingByYear[yr]).length === 0);
     const allSplitsEmpty = years.every(yr => !(splitsRaw[yr]?.vsLAB) && !(splitsRaw[yr]?.rispAB));
     if (missingFieldingYears.length > 0 || allSplitsEmpty) {
@@ -471,7 +472,6 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
 
         // ── Step 1: MLB Stats API xrefIds から BB-Ref ID 取得（最も確実）─────────
         let bbSlug = null;
-        let battingHand = null;  // BB-Ref から取得: 'L'=左打 / 'R'=右打 / 'S'=両打
         try {
           const xrefData = await mlbGet(
             `https://statsapi.mlb.com/api/v1/people/${id}?hydrate=xrefIds`
