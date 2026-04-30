@@ -466,7 +466,7 @@ async function mlbSearch() {
   }
 }
 
-function mlbSelectPlayer(id, fullName, pos, team) {
+async function mlbSelectPlayer(id, fullName, pos, team) {
   // 検索結果リストを閉じる
   document.getElementById('mlb-search-results').innerHTML = '';
 
@@ -486,6 +486,175 @@ function mlbSelectPlayer(id, fullName, pos, team) {
     (pos ? pos : '') + (team ? (pos ? ' · ' : '') + team : '') + `  (ID: ${id})`;
   document.getElementById('mlb-selected-player').style.display = 'flex';
   document.getElementById('mlb-search-input').value = fullName;
+
+  // ── Baseball-Reference ID を自動取得（3段階フォールバック）──
+  _autoFetchBRefId(id, fullName);
+}
+
+/**
+ * MLB ID → Baseball-Reference ID 自動取得
+ *   Step1: MLB Stats API xrefIds（全タイプを確認）
+ *   Step2: Baseball-Reference 名前検索（corsproxy経由）
+ *   Step3: 名前の命名規則から候補生成 → 選択ボタン表示
+ */
+async function _autoFetchBRefId(mlbId, playerName) {
+  const statusEl = document.getElementById('bref-status');
+  const inputEl  = document.getElementById('bref-id-input');
+  if (!statusEl || !inputEl) return;
+
+  // bref-section が非表示でも処理続行（Excel読込前に選択した場合）
+  // → g_brefId と inputEl.value にセットしておけば、後で表示時に反映される
+  statusEl.style.color = '#ffd700';
+  statusEl.textContent = '⏳ Baseball-Reference ID 取得中…';
+
+  let brefId = null;
+
+  // ── Step 1: MLB Stats API xrefIds ──────────────────────────────
+  try {
+    // hydrate=xrefIds で全クロスリファレンスを取得（型名が不明なため全件ログ）
+    const url = `https://statsapi.mlb.com/api/v1/people/${mlbId}?hydrate=xrefIds`;
+    const res  = await fetch(url, { signal: AbortSignal.timeout(7000) });
+    if (res.ok) {
+      const data = await res.json();
+      const xrefs = data?.people?.[0]?.xrefIds ?? [];
+      if (xrefs.length > 0) {
+        console.log('[BRef AutoID] MLB API xrefIds:', JSON.stringify(xrefs));
+      }
+      const brefEntry = xrefs.find(x => {
+        const t = String(x.xrefIdType ?? '').toLowerCase();
+        return t.includes('bref') || t.includes('bbref') || t === 'br' || t.includes('baseball');
+      });
+      if (brefEntry?.xrefId) {
+        brefId = String(brefEntry.xrefId).trim();
+        console.log('[BRef AutoID] MLB API hit:', brefId, '(type:', brefEntry.xrefIdType, ')');
+      }
+    }
+  } catch (e) {
+    console.warn('[BRef AutoID] MLB API失敗:', e.message);
+  }
+
+  // ── Step 2: Baseball-Reference 名前検索（corsproxy経由）──────────
+  if (!brefId) {
+    const name = playerName || g_mlbNameEn;
+    if (name) {
+      statusEl.textContent = '⏳ Baseball-Reference で名前検索中…';
+      try {
+        brefId = await _searchBRefIdByName(name);
+        if (brefId) console.log('[BRef AutoID] BR search hit:', brefId);
+      } catch (e) {
+        console.warn('[BRef AutoID] BR名前検索失敗:', e.message);
+      }
+    }
+  }
+
+  // ── Step 3: 名前の命名規則から候補生成 → ボタン表示 ──────────────
+  if (!brefId) {
+    const name = playerName || g_mlbNameEn;
+    if (name) {
+      const candidates = _genBRefCandidates(name);
+      if (candidates.length > 0) {
+        _renderBRefCandidates(candidates, statusEl, inputEl);
+        return;
+      }
+    }
+    statusEl.style.color = '#88aac8';
+    statusEl.textContent = 'BR ID が見つかりません（手動入力してください）';
+    return;
+  }
+
+  // 取得成功 → ID セット後、Excel 読込済みであれば WAR/FIP データも自動取得
+  g_brefId = brefId;
+  inputEl.value = brefId;
+  statusEl.style.color = '#77cc88';
+  statusEl.textContent = `✓ BR ID 自動取得: ${brefId}`;
+
+  if (g_dataRows) {
+    // Excel が既に読み込まれている → WAR/FIP データもすぐ取得
+    statusEl.textContent = `✓ BR ID: ${brefId}　⏳ WAR/FIPデータ取得中…`;
+    delete _brefCache[brefId];  // 念のためキャッシュクリア
+    await fetchBRefData(brefId, g_isPitcher ?? false);
+    const years = _brefCache[brefId] ? Object.keys(_brefCache[brefId]) : [];
+    if (years.length > 0) {
+      statusEl.style.color = '#77cc88';
+      statusEl.textContent = `✓ BR ID: ${brefId}　WAR/FIP取得済（${years.length}年分）`;
+    } else {
+      statusEl.style.color = '#ffaa44';
+      statusEl.textContent = `✓ BR ID: ${brefId}　（WAR/FIPデータなし）`;
+    }
+  }
+  // Excel 未読込の場合は ID だけセット。Excel 読込後に「📥 取得」ボタンで手動取得。
+}
+
+/**
+ * Baseball-Reference の検索ページを corsproxy 経由で取得し、
+ * /players/x/xxxxxx.shtml 形式のリンクから BR ID を抽出する
+ */
+async function _searchBRefIdByName(name) {
+  const searchUrl = `https://www.baseball-reference.com/search/search.fcgi?search=${encodeURIComponent(name)}`;
+  const proxyUrl  = `https://corsproxy.io/?url=${encodeURIComponent(searchUrl)}`;
+  const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+
+  // /players/[a-z]/[a-z0-9]+.shtml にマッチする全IDを抽出（重複除去）
+  const found = [];
+  const re = /\/players\/[a-z]\/([a-z0-9]+)\.shtml/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (!found.includes(m[1])) found.push(m[1]);
+  }
+  console.log('[BRef AutoID] BR search candidates:', found);
+
+  // ナビゲーション等のリンクを除外: 名前と先頭文字が合致するものを優先
+  if (found.length > 0) {
+    // 名前由来のフィルタ（姓の頭文字と一致するものを優先）
+    const parts = name.trim().split(/\s+/);
+    const lastInitial = parts.length >= 2
+      ? parts[parts.length - 1][0].toLowerCase() : '';
+    const filtered = found.filter(id => !lastInitial || id[0] === lastInitial);
+    return (filtered.length > 0 ? filtered : found)[0];
+  }
+  return null;
+}
+
+/**
+ * 名前の命名規則（姓5文字+名2文字+連番）から BR ID 候補を生成
+ * 例: "Devin Williams" → ["willide01","willide02",...,"willide05"]
+ */
+function _genBRefCandidates(name) {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length < 2) return [];
+  const last  = parts[parts.length - 1].toLowerCase().replace(/[^a-z]/g, '');
+  const first = parts[0].toLowerCase().replace(/[^a-z]/g, '');
+  const prefix = last.slice(0, 5) + first.slice(0, 2);
+  return ['01','02','03','04','05'].map(n => prefix + n);
+}
+
+/**
+ * 候補 ID をボタン表示して手動選択できるようにする
+ */
+function _renderBRefCandidates(candidates, statusEl, inputEl) {
+  statusEl.innerHTML = '';
+  const label = document.createElement('span');
+  label.textContent = 'BR ID 候補: ';
+  label.style.cssText = 'color:#ffd700;margin-right:4px;';
+  statusEl.appendChild(label);
+  candidates.forEach(c => {
+    const btn = document.createElement('button');
+    btn.textContent = c;
+    btn.style.cssText =
+      'margin:2px 3px;padding:2px 7px;font-size:11px;' +
+      'background:#223344;color:#aaddff;border:1px solid #446688;' +
+      'border-radius:4px;cursor:pointer;font-family:monospace;';
+    btn.onclick = () => {
+      g_brefId = c;
+      inputEl.value = c;
+      statusEl.innerHTML = '';
+      statusEl.style.color = '#77cc88';
+      statusEl.textContent = `✓ BR ID 選択: ${c}`;
+    };
+    statusEl.appendChild(btn);
+  });
 }
 
 function clearMlbSelection() {
@@ -527,18 +696,13 @@ function fmtOPS(v) {
   const s = String(v).trim();
   // 4桁整数（例: 1379 → "1.379"）
   if (/^1\d{3}$/.test(s)) return s[0] + '.' + s.slice(1);
-  // 3桁整数（例: 750 → ".750"、378 → "1.378" ※OPS<0.65は現実的でないため1.XXXへ補正）
-  if (/^\d{3}$/.test(s)) {
-    const asDecimal = '.' + s;
-    const n = parseFloat(asDecimal);
-    return (!isNaN(n) && n < 0.65) ? '1' + asDecimal : asDecimal;
-  }
-  // 小数点始まり（例: ".750" → そのまま、".378" → "1.378"）
-  if (s.startsWith('.')) {
-    const n = parseFloat(s);
-    if (!isNaN(n) && n < 0.65) return '1' + s;
-    return s;
-  }
+  // 3桁整数（例: 750 → ".750"）
+  if (/^\d{3}$/.test(s)) return '.' + s;
+  // 小数点始まり（例: ".750" → そのまま）
+  if (s.startsWith('.')) return s;
+  // "0.750" → ".750"（先頭の "0" を除去）
+  if (/^0\./.test(s)) return s.slice(1);
+  // "1.023" など1以上はそのまま
   return s;
 }
 function fmtPct(v) {
@@ -661,28 +825,59 @@ async function fetchBRefData(brefId, isPitcher) {
     const allHtml = text.replace(/<!--([\s\S]*?)-->/g, '$1');
     const doc2 = new DOMParser().parseFromString(allHtml, 'text/html');
 
-    const tableId = isPitcher ? 'pitching_standard' : 'batting_standard';
-    const table = doc2.getElementById(tableId) || doc.getElementById(tableId);
-    if (!table) { console.warn('[BRef] テーブルが見つかりません:', tableId); return; }
+    // ── 全tbody行を検索してWAR・FIPを取得（テーブルIDに依存しない方式）──
+    // 親テーブルのIDでタイプ判別し、野手ページで投手テーブルを除外（逆も同様）
+    const warMap  = {};   // { year: warValue }
+    const fipMap  = {};   // { year: fipValue }  投手のみ
 
-    table.querySelectorAll('tbody tr').forEach(tr => {
+    doc2.querySelectorAll('tbody tr').forEach(tr => {
       if (tr.classList.contains('thead') || tr.classList.contains('minors_table')) return;
+
+      // 年度取得（th[data-stat="year_ID"]）
       const yearTh = tr.querySelector('th[data-stat="year_ID"]');
       const year   = yearTh ? yearTh.textContent.replace(/\D/g,'').trim() : '';
       if (!year || year.length !== 4) return;
 
-      const get = (stat) => {
+      // 親テーブルのIDでタイプフィルタリング
+      const tblId = (tr.closest('table') || {}).id || '';
+      if ( isPitcher && /batting|fielding/i.test(tblId)) return;
+      if (!isPitcher && /pitching/i.test(tblId)) return;
+
+      const get = stat => {
         const td = tr.querySelector(`td[data-stat="${stat}"]`);
         return td ? td.textContent.trim() : null;
       };
-      const war = get('WAR');
-      const fip = isPitcher ? get('fip') : null;
 
-      if (!_brefCache[brefId][year]) _brefCache[brefId][year] = {};
-      if (war && war !== '') _brefCache[brefId][year].war = war;
-      if (fip && fip !== '') _brefCache[brefId][year].fip = fip;
+      // WAR: data-stat候補を複数試す（BRはバージョンにより名称が異なる場合あり）
+      const war = get('WAR') || get('rWAR') || get('bWAR') || get('WAR_off_bat') || get('WAR_pitch');
+      if (war && war !== '' && war !== '--') {
+        // 既存値があっても上書き（後に出るValueテーブルの値を優先）
+        warMap[year] = war;
+      }
+
+      // FIP（投手のみ）
+      if (isPitcher) {
+        const fip = get('fip');
+        if (fip && fip !== '' && fip !== '--') fipMap[year] = fip;
+      }
     });
-    console.log('[BRef] キャッシュ完了:', brefId, Object.keys(_brefCache[brefId]));
+
+    // キャッシュに格納
+    const warYears = Object.keys(warMap);
+    const fipYears = Object.keys(fipMap);
+    warYears.forEach(yr => {
+      if (!_brefCache[brefId][yr]) _brefCache[brefId][yr] = {};
+      _brefCache[brefId][yr].war = warMap[yr];
+    });
+    fipYears.forEach(yr => {
+      if (!_brefCache[brefId][yr]) _brefCache[brefId][yr] = {};
+      _brefCache[brefId][yr].fip = fipMap[yr];
+    });
+
+    console.log(`[BRef] WAR取得: ${warYears.length}年分, FIP取得: ${fipYears.length}年分`);
+    if (warYears.length > 0) console.log('[BRef] WARサンプル:', JSON.stringify(
+      Object.fromEntries(warYears.slice(0,5).map(y => [y, warMap[y]]))));
+    console.log('[BRef] キャッシュ完了:', brefId);
   } catch (e) {
     console.warn('[BRef] 取得失敗:', e.message || e);
   }
@@ -1127,7 +1322,7 @@ function getCardCSS(t) {
   #card-root .ca-val.lead { color:#ffdd66; text-shadow:2px 2px 0 #000,0 0 10px #ffaa00; }
   #card-root .ca-val.cs   { color:#66ffaa; text-shadow:2px 2px 0 #000,0 0 10px #22cc66; }
   #card-root .ca-unit { color:#a0b8a0; font-size:10px; font-weight:900; text-shadow:1px 1px 0 #000; align-self:flex-end; margin-bottom:2px; }
-  #card-root .retsuden { font-size:11px; color:${t.retColor}; line-height:1.6; border-top:2px solid ${t.retBorder}; padding-top:5px; font-weight:900; text-shadow:1px 1px 0 #000; flex:1; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:5; }
+  #card-root .retsuden { font-size:11px; color:${t.retColor}; line-height:1.5; border-top:2px solid ${t.retBorder}; padding-top:4px; font-weight:900; text-shadow:1px 1px 0 #000; flex:1; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:6; max-height:calc(11px * 1.5 * 6 + 4px); }
   #card-root .retsuden strong { color:${t.retStrong}; font-size:12px; text-shadow:1px 1px 0 #000; }
   #card-root .retsuden .ai-loading { color:#aaaaaa; font-style:normal; animation:blink 1s infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
@@ -1327,9 +1522,10 @@ function getCardCSS(t) {
     flex:1; overflow-y:auto; overflow-x:hidden; padding:4px 8px 4px;
     background:${t.overlay}; position:relative; z-index:5;
   }
-  #card-root .card-back-scroll::-webkit-scrollbar { width:4px; height:4px; }
-  #card-root .card-back-scroll::-webkit-scrollbar-track { background:transparent; }
-  #card-root .card-back-scroll::-webkit-scrollbar-thumb { background:${t.cardBorder}88; border-radius:3px; }
+  #card-root .card-back-scroll::-webkit-scrollbar { width:10px; height:10px; }
+  #card-root .card-back-scroll::-webkit-scrollbar-track { background:rgba(0,0,0,0.25); border-radius:5px; }
+  #card-root .card-back-scroll::-webkit-scrollbar-thumb { background:${t.cardBorder}cc; border-radius:5px; border:1px solid rgba(255,255,255,0.15); }
+  #card-root .card-back-scroll::-webkit-scrollbar-thumb:hover { background:${t.cardBorder}; }
   #card-root .card-back-tbl { border-collapse:collapse; width:100%; table-layout:fixed; }
   #card-root .card-back-tbl th {
     color:${t.recLabel}; font-weight:900; padding:6px 3px;
@@ -1495,11 +1691,14 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
 
 /**
  * 投手総合力スコアを算出する。
- * A = Σ(スコア×重み) / Σ重み（WARは使わない）
- * @param {Array} row      - スプレッドシート行
- * @param {number|null} fipValue - FIP値（BR取得 or 計算済み）。null なら row から自動計算。
+ * base = Σ(スコア×重み) / Σ重み
+ * 先発投手のみ WAR スコアを加重平均に追加（重み 2.5）
+ * 最終値 = base + 5（全投手）
+ * @param {Array}       row       - スプレッドシート行
+ * @param {number|null} fipValue  - FIP値（BR取得 or 計算済み）。null なら自動計算。
+ * @param {number|null} warValue  - WAR実測値（先発のみ使用）。null の場合は加算しない。
  */
-function calcPitcherOverall(row, fipValue = null) {
+function calcPitcherOverall(row, fipValue = null, warValue = null) {
   // ── 能力値（0–100+ の絶対スコア。0はデータなしとして除外） ──
   const ctrl   = safeNum(row[51]);   // 制球
   const change = safeNum(row[52]);   // 緩急
@@ -1554,7 +1753,15 @@ function calcPitcherOverall(row, fipValue = null) {
   addAbs(pitchPowerScore, 2.5);   // 総合球威（×1.25済み）
   addAbs(fipScore,        2.0);   // FIP スコア
 
-  return wTotal > 0 ? Math.round(wSum / wTotal) : 70;
+  // ── 先発投手のみ WAR スコアを加算（実測値がある場合のみ）──
+  const isStarterForWAR = gs >= g * 0.4;
+  if (isStarterForWAR && warValue !== null && !isNaN(warValue)) {
+    const ws = warToScore(warValue);
+    if (ws > 0) { wSum += ws * 5.0; wTotal += 5.0; }
+  }
+
+  const base = wTotal > 0 ? Math.round(wSum / wTotal) : 70;
+  return base;
 }
 
 // ===== CARD HTML BUILDERS =====
@@ -1629,7 +1836,27 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
     if (brF !== null) return parseFloat(brF);
     return calcFIP(row);
   })();
-  const overallScore = calcPitcherOverall(row, _fipForOverall);
+  // WAR: ① BR取得値 → ② Excel列 → ③ 推定値（先発・単年のみ）
+  const _warForOverall = (() => {
+    const yr = String(year).trim();
+    const isSingleYear = /^\d{4}$/.test(yr);
+    if (isSingleYear) {
+      const brW = getBRefWAR(yr);
+      if (brW !== null) { const n = parseFloat(brW); if (!isNaN(n)) return n; }
+    }
+    const raw = getColVal(row, headers[0], 'WAR');
+    if (raw !== '--') { const n = parseFloat(raw); if (!isNaN(n)) return n; }
+    // 推定値は単年度行のみ（通算行はIPが膨大なため推定不可）
+    if (isSingleYear) {
+      const _gs = parseInt(row[7]) || 0, _g = parseInt(row[6]) || 1;
+      if (_gs >= _g * 0.4) {
+        const est = estimatePitcherWAR(row);
+        if (est !== null) return est;
+      }
+    }
+    return null;
+  })();
+  const overallScore = calcPitcherOverall(row, _fipForOverall, _warForOverall);
 
   const isStarter   = gs >= totalG * 0.5;
   const posBadge    = isStarter ? '先発投手' : 'リリーフ';
@@ -1922,6 +2149,20 @@ function onExcelChange(input) {
       // 年代選択パネル・BRef IDパネルを表示
       document.getElementById('year-selector-section').style.display = 'flex';
       document.getElementById('bref-section').style.display = 'block';
+
+      // Excel読込後に BR ID が既にセット済みなら WAR/FIP データを自動取得
+      if (g_brefId && !_brefCache[g_brefId]) {
+        const statusEl = document.getElementById('bref-status');
+        statusEl.style.color = '#ffd700';
+        statusEl.textContent = `⏳ BR WAR/FIPデータ取得中 (${g_brefId})…`;
+        fetchBRefData(g_brefId, g_isPitcher ?? false).then(() => {
+          const years = _brefCache[g_brefId] ? Object.keys(_brefCache[g_brefId]) : [];
+          statusEl.style.color = years.length > 0 ? '#77cc88' : '#ffaa44';
+          statusEl.textContent = years.length > 0
+            ? `✓ BR ID: ${g_brefId}　WAR/FIP取得済（${years.length}年分）`
+            : `✓ BR ID: ${g_brefId}　（WAR/FIPデータなし）`;
+        });
+      }
     } catch(err) {
       console.warn('Excel先読みエラー:', err);
     }
@@ -2918,20 +3159,22 @@ function updateCardExtras(cardType, pitchNicknames) {
     const el = document.querySelector('#card-root .card-type');
     if (el) el.textContent = cardType;
   }
-  // ② 変化球ニックネームを球種名セルに追記（1行表示・!important対応）
+  // ② 変化球ニックネームを球種名セルに追記（1行表示・球種名は通常サイズ維持）
   if (pitchNicknames && typeof pitchNicknames === 'object') {
     Object.entries(pitchNicknames).forEach(([pitchName, nickname]) => {
       if (!nickname) return;
       document.querySelectorAll('#card-root td.pn[data-pitch]').forEach(td => {
         if (td.dataset.pitch === pitchName) {
-          const label = `${pitchName}（${nickname}）`;
-          td.textContent = label;
-          // 文字数に応じてフォントを縮小（!important で CSS を上書き）
-          const len = label.length;
-          const fs = len > 14 ? '7px' : len > 11 ? '8px' : len > 8 ? '9px' : '11px';
-          td.style.setProperty('font-size', fs, 'important');
-          td.style.setProperty('letter-spacing', '-0.5px', 'important');
+          // 異名の文字数に応じて異名部分のフォントサイズを調整
+          // 球種名は .pn の 12px をそのまま維持、異名部分だけ縮小
+          const nickLen = nickname.length;
+          const nickFs = nickLen > 8 ? '8px' : nickLen > 5 ? '9px' : '10px';
+          td.innerHTML =
+            `<span style="font-size:12px;font-weight:900;">${pitchName}</span>` +
+            `<span style="font-size:${nickFs};font-weight:700;opacity:0.9;letter-spacing:-0.3px;">（${nickname}）</span>`;
           td.style.setProperty('white-space', 'nowrap', 'important');
+          td.style.removeProperty('font-size'); // セル全体の上書きを解除
+          td.style.removeProperty('letter-spacing');
         }
       });
     });
@@ -3143,7 +3386,12 @@ ${css}
   var frontCard = inner.querySelector('.card-front-face .card');
   if(frontCard) inner.style.height = frontCard.offsetHeight + 'px';
   syncPE(inner, false);
-  inner.addEventListener('click', function(){
+  inner.addEventListener('click', function(e){
+    // 裏面表示中: 右端18px（スクロールバー領域）のクリックはフリップしない
+    if (inner.classList.contains('flipped')) {
+      var rect = inner.getBoundingClientRect();
+      if (e.clientX > rect.right - 18) return;
+    }
     var isFlipped = inner.classList.toggle('flipped');
     syncPE(inner, isFlipped);
   });
@@ -3519,7 +3767,26 @@ async function _doGenerate(photoInput) {
         const brF = /^\d{4}$/.test(yr) ? getBRefFIP(yr) : null;
         return brF !== null ? parseFloat(brF) : calcFIP(selectedRow);
       })();
-      overallScore = calcPitcherOverall(selectedRow, _fipOvr);
+      const _warOvr = (() => {
+        const yr = String(selectedRow[1] ?? '').trim();
+        const isSingleYear = /^\d{4}$/.test(yr);
+        if (isSingleYear) {
+          const brW = getBRefWAR(yr);
+          if (brW !== null) { const n = parseFloat(brW); if (!isNaN(n)) return n; }
+        }
+        const raw = g_headers ? getColVal(selectedRow, g_headers[0], 'WAR') : '--';
+        if (raw !== '--') { const n = parseFloat(raw); if (!isNaN(n)) return n; }
+        // 推定値は単年度行のみ（通算行はIPが膨大なため推定不可）
+        if (isSingleYear) {
+          const _gs = parseInt(selectedRow[7]) || 0, _g = parseInt(selectedRow[6]) || 1;
+          if (_gs >= _g * 0.4) {
+            const est = estimatePitcherWAR(selectedRow);
+            if (est !== null) return est;
+          }
+        }
+        return null;
+      })();
+      overallScore = calcPitcherOverall(selectedRow, _fipOvr, _warOvr);
     } else {
       const realWarG = g_careerWAR ?? (g_headers ? resolveWAR(selectedRow, g_headers[0], false) : '--');
       overallScore = calcHitterOverall(selectedRow, g_isCatcher, realWarG);
