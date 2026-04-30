@@ -143,13 +143,20 @@ async function fetchMLBStats(id, y1, y2) {
     for (const s of (fldYby.stats?.[0]?.splits || [])) {
       if (s.position?.abbreviation === 'C' && s.season && s.sport?.id === 1) {
         catcherFielding.byYear[s.season] = {
-          sb: s.stat?.stolenBases ?? 0,
+          sb: s.stat?.stolenBases    ?? 0,
           cs: s.stat?.caughtStealing ?? 0,
+          pb: s.stat?.passedBall     ?? 0,
+          g:  s.stat?.gamesPlayed    ?? 0,
         };
       }
     }
     const carCat = (fldCar.stats?.[0]?.splits || []).find(s => s.position?.abbreviation === 'C');
-    if (carCat) catcherFielding.career = { sb: carCat.stat?.stolenBases ?? 0, cs: carCat.stat?.caughtStealing ?? 0 };
+    if (carCat) catcherFielding.career = {
+      sb: carCat.stat?.stolenBases    ?? 0,
+      cs: carCat.stat?.caughtStealing ?? 0,
+      pb: carCat.stat?.passedBall     ?? 0,
+      g:  carCat.stat?.gamesPlayed    ?? 0,
+    };
   } catch {}
 
   return { years, basic, splitsRaw, catcherFielding };
@@ -1405,29 +1412,47 @@ async function processFile(filePath, catcherData = null) {
           // ── 実データ: pitches 1500換算フレーミングrun ──────────────────────
           leadVal = Math.round(framingData.runs * 1500 / framingData.pitches);
         } else {
-          // ── 仮想リード: CS% vs 時代別リーグ平均 ────────────────────────────
-          // 根拠: 好フレーマーは球審へのアピールが上手く CS% も高い傾向がある
-          // 係数50: CS%10%差 → リード±5 (Baseball Savant実測値の典型的な分布に準拠)
+          // ── 仮想リード: CS%盗塁阻止成分 + PB抑制ブロッキング成分 ─────────
+          // 捕手の総合守備力（リード代替）を2成分で算出
           const fld = yrData?.fielding ?? carData?.fielding;
           if (fld) {
             const cs    = fld.cs || 0;
             const sb    = fld.sb || 0;
+            const pb    = fld.pb || 0;
+            const g     = fld.g  || 0;
             const total = cs + sb;
-            if (total >= 10) {  // サンプル10未満は推計不能
-              const csPct = cs / total;
-              const yrNum = isCareer ? 2000 : (parseInt(yr) || 2000);
-              // 時代別リーグ平均CS%（歴史的統計から）
-              const lgCsPct = yrNum < 1970 ? 0.38
-                            : yrNum < 1985 ? 0.36
-                            : yrNum < 1995 ? 0.33
-                            : yrNum < 2005 ? 0.30
-                            : yrNum < 2015 ? 0.28
-                            :                0.26;
-              // ±15 でキャップ（フレーミング±15が実測の現実的な上下限）
-              leadVal = Math.max(-15, Math.min(15,
-                Math.round((csPct - lgCsPct) * 50)
-              ));
-            }
+            const yrNum = isCareer ? 2000 : (parseInt(yr) || 2000);
+
+            // ── 成分①: 盗塁阻止能力 (CS% vs 時代別リーグ平均) ────────────
+            // 時代別リーグ平均CS%（歴史的統計から）
+            const lgCsPct = yrNum < 1970 ? 0.38
+                          : yrNum < 1985 ? 0.36
+                          : yrNum < 1995 ? 0.33
+                          : yrNum < 2005 ? 0.30
+                          : yrNum < 2015 ? 0.28
+                          :                0.26;
+            // サンプル10以上のみ推計。係数0.35: CS%10%差×試合数で±run相当に換算
+            const comp1 = total >= 10
+              ? (cs / total - lgCsPct) * total * 0.35
+              : 0;
+
+            // ── 成分②: PB抑制能力（ブロッキング）─────────────────────────
+            // 時代別リーグ平均PB/G（捕手の受け方技術・グローブ形状の歴史的変化）
+            const lgPbPerG = yrNum < 1950 ? 0.15
+                           : yrNum < 1970 ? 0.12
+                           : yrNum < 1985 ? 0.10
+                           : yrNum < 2000 ? 0.08
+                           : yrNum < 2015 ? 0.06
+                           :                0.05;
+            // 20試合以上のみ推計。係数0.80: PB1個差×試合数で±run相当に換算
+            // ※PBが少ない(pbPerG < lgPbPerG)ほど正のリード値になる（符号反転）
+            const pbPerG = g >= 20 ? pb / g : null;
+            const comp2  = pbPerG != null
+              ? -(pbPerG - lgPbPerG) * g * 0.80
+              : 0;
+
+            // ±15 でキャップ（Baseball Savant実測フレーミングの現実的な上下限）
+            leadVal = Math.max(-15, Math.min(15, Math.round(comp1 + comp2)));
           }
         }
         purpleCell(ws.getCell(rn, START_COL + 9), leadVal, fontSize);
