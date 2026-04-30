@@ -1313,9 +1313,18 @@ async function processFile(filePath, catcherData = null) {
     .filter(p => posTotalInn[p.label] > 0)
     .sort((a, b) => posTotalInn[b.label] - posTotalInn[a.label]);
 
-  if (globalOrder.length > 0) {
+  // ── 守備表示設定 ─────────────────────────────────────────────────────────────
+  // ≤4ポジション → 1列にテキスト縦並び（小さいフォント・wrapText）
+  // ≥5ポジション → 2列にテキスト縦並び（上下間隔を詰めて行高を最小化）
+  const nDefPos = globalOrder.length;
+  const defSmallFont = Math.max(7, Math.floor(fontSize * 0.75));
+
+  if (nDefPos > 0) {
     purpleCell(ws.getCell(1, DEF_START_COL), '守備', fontSize);
-    globalOrder.forEach((pos, i) => purpleCell(ws.getCell(2, DEF_START_COL + i), pos.label, fontSize));
+    if (nDefPos > 4) {
+      purpleCell(ws.getCell(1, DEF_START_COL + 1), '守備②', fontSize);
+    }
+    // ポジション名はセル内テキストに埋め込むため row2 ラベルは省略
   }
 
   const careerPosRatings = {}; // pos label → { sumWeighted, sumInn } for weighted-average career DRS
@@ -1381,44 +1390,84 @@ async function processFile(filePath, catcherData = null) {
       if (v !== '') redPurpleCell(ws.getCell(rn, PITCH_COL + i), v, fontSize);
     });
 
-    if (globalOrder.length > 0) {
+    if (nDefPos > 0) {
+      // ── 守備レーティングを計算 ───────────────────────────────────────────────
+      const ratings = {};   // { [posLabel]: finalRating }
+
       if (isCareer) {
-        // 通算行: 年度別加重平均（Inn加重）で算出した値を書き込む（-30 下限補正）
-        globalOrder.forEach((gpos, i) => {
+        // 通算行: 年度別加重平均（Inn加重）で算出
+        globalOrder.forEach(gpos => {
           const data = careerPosRatings[gpos.label];
           if (!data || data.sumInn === 0) return;
-          const careerRating = Math.max(-30, Math.round(data.sumWeighted / data.sumInn));
-          purpleCell(ws.getCell(rn, DEF_START_COL + i), careerRating, fontSize);
+          ratings[gpos.label] = Math.max(-30, Math.round(data.sumWeighted / data.sumInn));
         });
       } else {
-        // 年別行: 計算して書き込みつつ加重平均用に累積
+        // 年別行: 計算して累積
         const yearPos = DEF_POSITIONS
           .map(p => ({ label:p.label, inn:parseInn(row.getCell(p.innCol).value), drs:parseDRS(row.getCell(p.drsCol).value) }))
           .filter(p => p.inn != null && p.inn > 0)
           .sort((a, b) => b.inn - a.inn);
         if (yearPos.length > 0) {
-          const mainInn = yearPos[0].inn;
-          // メイン守備比率 < 12% → DH専属とみなし全ポジションに -15 修正
+          const mainInn    = yearPos[0].inn;
           const mainInnPct = mainInn / ((ab + walks) * 2) * 100;
           const dhPenalty  = mainInnPct < 12 ? -15 : 0;
-          globalOrder.forEach((gpos, i) => {
+          globalOrder.forEach(gpos => {
             const yp = yearPos.find(p => p.label === gpos.label);
             if (!yp) return;
-            // 個別出場比率 < 2% → 非表示（端的すぎる守備）
             const defInnPct = yp.inn / ((ab + walks) * 2) * 100;
             if (defInnPct < 2) return;
-            const rating = yp === yearPos[0] ? calcDefMain(yp.inn, yp.drs) : calcDefSub(yp.inn, yp.drs, mainInn);
-            if (rating != null) {
-              const raw = Math.round(rating) + dhPenalty;
-              // DH専属でない年のみ -30 下限補正（DH専属年は補正なし）
+            const rawRating = yp === yearPos[0]
+              ? calcDefMain(yp.inn, yp.drs)
+              : calcDefSub(yp.inn, yp.drs, mainInn);
+            if (rawRating != null) {
+              const raw         = Math.round(rawRating) + dhPenalty;
               const finalRating = dhPenalty === 0 ? Math.max(-30, raw) : raw;
-              purpleCell(ws.getCell(rn, DEF_START_COL + i), finalRating, fontSize);
-              // Inn加重平均用に累積
+              ratings[gpos.label] = finalRating;
               if (!careerPosRatings[gpos.label]) careerPosRatings[gpos.label] = { sumWeighted: 0, sumInn: 0 };
               careerPosRatings[gpos.label].sumWeighted += finalRating * yp.inn;
-              careerPosRatings[gpos.label].sumInn += yp.inn;
+              careerPosRatings[gpos.label].sumInn      += yp.inn;
             }
           });
+        }
+      }
+
+      // ── 守備セル書き込み ─────────────────────────────────────────────────────
+      const fmtR   = (lbl, r) => `${lbl} ${r >= 0 ? '+' : ''}${r}`;
+      const posWithRating = globalOrder.filter(p => ratings[p.label] != null);
+
+      if (nDefPos <= 4) {
+        // ── 1列表示: 全ポジションを縦並び1セルに収める ─────────────────────
+        if (posWithRating.length > 0) {
+          const text = posWithRating.map(p => fmtR(p.label, ratings[p.label])).join('\n');
+          const cell = ws.getCell(rn, DEF_START_COL);
+          purpleCell(cell, text, defSmallFont);
+          cell.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+          // 行高: 1行あたり12pt + 余白3pt
+          const h = posWithRating.length * 12 + 3;
+          if ((ws.getRow(rn).height || 0) < h) ws.getRow(rn).height = h;
+        }
+      } else {
+        // ── 2列表示: 前半・後半に分割して行高を最小化 ──────────────────────
+        const half    = Math.ceil(nDefPos / 2);
+        const c1data  = globalOrder.slice(0, half).filter(p => ratings[p.label] != null);
+        const c2data  = globalOrder.slice(half).filter(p => ratings[p.label] != null);
+        const mkText  = arr => arr.map(p => fmtR(p.label, ratings[p.label])).join('\n');
+
+        if (c1data.length) {
+          const cell = ws.getCell(rn, DEF_START_COL);
+          purpleCell(cell, mkText(c1data), defSmallFont);
+          cell.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+        }
+        if (c2data.length) {
+          const cell = ws.getCell(rn, DEF_START_COL + 1);
+          purpleCell(cell, mkText(c2data), defSmallFont);
+          cell.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+        }
+        // 行高: 多い方の列の行数に合わせて計算
+        const lines = Math.max(c1data.length, c2data.length);
+        if (lines > 0) {
+          const h = lines * 12 + 3;
+          if ((ws.getRow(rn).height || 0) < h) ws.getRow(rn).height = h;
         }
       }
     }
