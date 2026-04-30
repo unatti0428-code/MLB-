@@ -426,33 +426,38 @@ async function fetchBrowserData(slug, id, playerFullName, years, onProgress, spl
         if (!title.toLowerCase().includes('fangraphs')) throw new Error('FanGraphs 読み込み失敗: ' + e.message);
       }
 
-      onProgress('FanGraphs から守備データを取得中...');
-      const fieldingRaw = await page.evaluate(async (yearsArr, pName) => {
-        // 全年並列取得（高速化）
-        const entries = await Promise.all(yearsArr.map(async yr => {
-          try {
-            const r = await fetch(
-              `/api/leaders/major-league/data?age=0&pos=all&stats=fld&lg=all&qual=0` +
-              `&season=${yr}&season1=${yr}&startdate=&enddate=&month=0&hand=&team=0` +
-              `&pageitems=2000&pagenum=1&ind=0&rost=0&players=0&type=1`
-            );
-            const d = await r.json();
-            const rows = Array.isArray(d.data) ? d.data : [];
-            return { yr, data: rows.filter(row => row.PlayerName === pName)
-              .map(row => ({ pos: row.Pos, inn: row.Inn, drs: row.DRS })) };
-          } catch { return { yr, data: [] }; }
-        }));
-        const result = {};
-        for (const { yr, data } of entries) result[yr] = data;
-        return result;
-      }, years, playerFullName);
+      // FanGraphs DRS は 2003年以降のみ有効（2002年以前は BB-Ref 仮想DRSにフォールバック）
+      const fgYears = years.filter(yr => parseInt(yr) >= 2003);
+      onProgress(`FanGraphs から守備データを取得中... (対象: ${fgYears.length}年, 2002年以前はBB-Ref仮想DRS)`);
 
-      for (const yr of years) {
-        const entries = Array.isArray(fieldingRaw[yr]) ? fieldingRaw[yr] : [];
-        for (const { pos, inn, drs } of entries) {
-          if (!pos || pos === 'undefined') continue;  // 無効ポジションを除外
-          const drsNum = Number(drs);
-          fieldingByYear[yr][pos] = { inn: String(inn || 0), drs: isNaN(drsNum) ? 0 : drsNum };
+      if (fgYears.length > 0) {
+        const fieldingRaw = await page.evaluate(async (yearsArr, pName) => {
+          // 全年並列取得（高速化）
+          const entries = await Promise.all(yearsArr.map(async yr => {
+            try {
+              const r = await fetch(
+                `/api/leaders/major-league/data?age=0&pos=all&stats=fld&lg=all&qual=0` +
+                `&season=${yr}&season1=${yr}&startdate=&enddate=&month=0&hand=&team=0` +
+                `&pageitems=2000&pagenum=1&ind=0&rost=0&players=0&type=1`
+              );
+              const d = await r.json();
+              const rows = Array.isArray(d.data) ? d.data : [];
+              return { yr, data: rows.filter(row => row.PlayerName === pName)
+                .map(row => ({ pos: row.Pos, inn: row.Inn, drs: row.DRS })) };
+            } catch { return { yr, data: [] }; }
+          }));
+          const result = {};
+          for (const { yr, data } of entries) result[yr] = data;
+          return result;
+        }, fgYears, playerFullName);
+
+        for (const yr of fgYears) {
+          const entries = Array.isArray(fieldingRaw[yr]) ? fieldingRaw[yr] : [];
+          for (const { pos, inn, drs } of entries) {
+            if (!pos || pos === 'undefined') continue;  // 無効ポジションを除外
+            const drsNum = Number(drs);
+            fieldingByYear[yr][pos] = { inn: String(inn || 0), drs: isNaN(drsNum) ? 0 : drsNum };
+          }
         }
       }
     } catch (e) {
@@ -1356,12 +1361,39 @@ async function processFile(filePath, catcherData = null) {
         const yrData  = catcherData?.byYear?.[yr]  ?? null;
         const carData = catcherData?.career         ?? null;
 
-        // リード: pitches 1500換算フレーミングrun
-        // 年別→通算 の順でフォールバック（歴代選手も通算値で類推）
+        // リード: Baseball Savant フレーミング実データ（2018年以降）
+        //         2017年以前 or データなし → CS% vs 時代別リーグ平均から仮想算出
         const framingData = yrData?.framing ?? carData?.framing;
-        const leadVal = (framingData && framingData.pitches > 0)
-          ? Math.round(framingData.runs * 1500 / framingData.pitches)
-          : 0; // 取得不能→0
+        let leadVal = 0;
+        if (framingData && framingData.pitches > 0) {
+          // ── 実データ: pitches 1500換算フレーミングrun ──────────────────────
+          leadVal = Math.round(framingData.runs * 1500 / framingData.pitches);
+        } else {
+          // ── 仮想リード: CS% vs 時代別リーグ平均 ────────────────────────────
+          // 根拠: 好フレーマーは球審へのアピールが上手く CS% も高い傾向がある
+          // 係数50: CS%10%差 → リード±5 (Baseball Savant実測値の典型的な分布に準拠)
+          const fld = yrData?.fielding ?? carData?.fielding;
+          if (fld) {
+            const cs    = fld.cs || 0;
+            const sb    = fld.sb || 0;
+            const total = cs + sb;
+            if (total >= 10) {  // サンプル10未満は推計不能
+              const csPct = cs / total;
+              const yrNum = isCareer ? 2000 : (parseInt(yr) || 2000);
+              // 時代別リーグ平均CS%（歴史的統計から）
+              const lgCsPct = yrNum < 1970 ? 0.38
+                            : yrNum < 1985 ? 0.36
+                            : yrNum < 1995 ? 0.33
+                            : yrNum < 2005 ? 0.30
+                            : yrNum < 2015 ? 0.28
+                            :                0.26;
+              // ±15 でキャップ（フレーミング±15が実測の現実的な上下限）
+              leadVal = Math.max(-15, Math.min(15,
+                Math.round((csPct - lgCsPct) * 50)
+              ));
+            }
+          }
+        }
         purpleCell(ws.getCell(rn, START_COL + 9), leadVal, fontSize);
 
         // 阻止率: CS÷(SB+CS)×100 round（年別→career で代替）
