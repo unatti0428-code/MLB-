@@ -1482,7 +1482,7 @@ async function runCreateJob(jobId, params) {
       const stillMissingVsL  = years.filter(yr => !(splitsRaw[yr]?.vsLAB));
       const stillMissingRisp = years.filter(yr => !(splitsRaw[yr]?.rispAB));
 
-      if (platoonCoeff !== null && (stillMissingVsL.length > 0 || stillMissingRisp.length > 0)) {
+      if (stillMissingVsL.length > 0 || stillMissingRisp.length > 0) {
         for (const yr of years) {
           const d  = splitsRaw[yr];
           const b  = basic[yr];
@@ -1492,23 +1492,42 @@ async function runCreateJob(jobId, params) {
           if (ab === 0) continue;
           const yearBA = h / ab;
 
-          // 対左打率推計（データが取れなかった年のみ）
-          if (!d.vsLAB) {
+          // 対左打率推計（打席情報がある年のみ・データ欠損年のみ）
+          if (!d.vsLAB && platoonCoeff !== null) {
             const estBA  = Math.min(Math.max(yearBA * platoonCoeff, 0), 1);
             d.vsLAB = ab;                          // 実ABを使って加重平均を正確に
             d.vsLH  = Math.round(estBA * ab);
           }
 
-          // 得点圏打率推計（データが取れなかった年のみ）
+          // 得点圏打率推計（打席情報不要・データ欠損年のみ）
+          // RBI余剰ロジック:
+          //   extraRBI = RBI - HR（本塁打以外で稼いだ打点）
+          //   expectedExtraRBI = H × 0.30（安打あたり平均RBI率）
+          //   surplus > 0 → RISP状況で多く打点を挙げている → 得点圏BAを上方修正
+          //   surplus < 0 → RISP状況でRBI少ない → 得点圏BAを下方修正
+          //   調整幅 ±0.030（MLB実測RISP差の範囲内）
           if (!d.rispAB) {
+            const rbi = b.rbi || 0;
+            const hr  = b.hr  || 0;
+            const extraRBI         = rbi - hr;
+            const expectedExtraRBI = h * 0.30;  // MLB平均: 安打の約30%がRBIにつながる
+            const surplus          = extraRBI - expectedExtraRBI;
+            // surplus / expectedExtraRBI = 相対的RBI余剰率
+            // × 0.05 でBA調整値に変換（余剰率100% → +5点調整）
+            const rispAdj = expectedExtraRBI > 0
+              ? Math.max(-0.030, Math.min(0.030, (surplus / expectedExtraRBI) * 0.05))
+              : 0;
+            const rispBA = Math.max(0.100, Math.min(0.999, yearBA + rispAdj));
             d.rispAB = ab;
-            d.rispH  = h;  // 通算BAをそのまま使用
+            d.rispH  = Math.round(rispBA * ab);
           }
         }
-        const handLabel = battingHand === 'L' ? '左打' : battingHand === 'R' ? '右打' : '両打';
-        upd(`プラトーン推計(${handLabel}): 対左=${stillMissingVsL.length}年, RISP=${stillMissingRisp.length}年 を補完（係数${platoonCoeff}）`);
-      } else if (platoonCoeff === null && (stillMissingVsL.length > 0 || stillMissingRisp.length > 0)) {
-        upd(`⚠ 打席情報不明のため対左/RISP推計スキップ（BB-Ref データ未取得の可能性）`);
+        if (platoonCoeff !== null) {
+          const handLabel = battingHand === 'L' ? '左打' : battingHand === 'R' ? '右打' : '両打';
+          upd(`プラトーン推計(${handLabel}): 対左=${stillMissingVsL.length}年, RISP=${stillMissingRisp.length}年 を補完`);
+        } else {
+          upd(`得点圏打率推計(RBI余剰): ${stillMissingRisp.length}年を補完（打席情報不明のため対左は推計スキップ）`);
+        }
       }
     }
 
