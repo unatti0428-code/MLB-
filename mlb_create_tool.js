@@ -1451,8 +1451,8 @@ async function processFile(filePath, catcherData = null) {
               ? -(pbPerG - lgPbPerG) * g * 0.80
               : 0;
 
-            // ±15 でキャップ（Baseball Savant実測フレーミングの現実的な上下限）
-            leadVal = Math.max(-15, Math.min(15, Math.round(comp1 + comp2)));
+            // ±8 でキャップ（仮想算出の推計精度を考慮した保守的な上下限）
+            leadVal = Math.max(-8, Math.min(8, Math.round(comp1 + comp2)));
           }
         }
         purpleCell(ws.getCell(rn, START_COL + 9), leadVal, fontSize);
