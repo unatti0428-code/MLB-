@@ -397,6 +397,14 @@ let g_peakYear = null;   // 自動検出ピーク年
 let g_isPitcher  = false;
 let g_isCatcher  = false;
 let g_careerWAR  = null;   // 通算行専用：加重平均WAR（_doGenerateで事前計算）
+let g_lastAwardsJa      = [];   // 直近カードのawardsJa（通算バナー再描画用）
+let g_lastIsCareer      = false; // 直近カードが通算行かどうか
+let g_baseOverallScore  = 0;    // タイトル加点前の基本総合力
+let g_selectedRow       = null; // 最後に生成したデータ行（テーマ再適用用）
+let g_resolvedPhotoUrl  = '';   // 最後に使った写真URL（テーマ再適用用）
+let g_isPeakRow         = false; // ピーク年フラグ（テーマ再適用用）
+let g_lastCardExtras    = null; // 最後のupdateCardExtrasパラメータ（テーマ再適用用）
+let g_lastRetsuden      = '';   // 最後の列伝テキスト（テーマ再適用用）
 
 // MLB.com 連携（省略可）
 let g_mlbId       = null;   // MLB選手ID
@@ -408,6 +416,11 @@ let g_mlbTeam     = null;   // 現所属チーム名
 // Baseball-Reference 連携（省略可）
 let g_brefId     = null;    // BR選手ID (例: "willide03" / "suzukic01")
 const _brefCache = {};      // { brefId: { "2023": { war:"3.2", fip:"2.84" }, ... } }
+
+// リーグ順位キャッシュ（年度別）: { "2023": { era:{rank:1,value:"2.50"}, ... } }
+const _rankDataByYear = {};
+// 年度別アワードキャッシュ: { "2023": ["サイ・ヤング賞", "最優秀防御率", ...] }
+const _awardsJaByYear = {};
 
 // ===== MLB.com 連携 =====
 async function mlbSearch() {
@@ -466,7 +479,7 @@ async function mlbSearch() {
   }
 }
 
-function mlbSelectPlayer(id, fullName, pos, team) {
+async function mlbSelectPlayer(id, fullName, pos, team) {
   // 検索結果リストを閉じる
   document.getElementById('mlb-search-results').innerHTML = '';
 
@@ -486,6 +499,135 @@ function mlbSelectPlayer(id, fullName, pos, team) {
     (pos ? pos : '') + (team ? (pos ? ' · ' : '') + team : '') + `  (ID: ${id})`;
   document.getElementById('mlb-selected-player').style.display = 'flex';
   document.getElementById('mlb-search-input').value = fullName;
+
+  // ── Baseball-Reference ID を自動取得（3段階フォールバック）──
+  _autoFetchBRefId(id, fullName);
+}
+
+async function _autoFetchBRefId(mlbId, playerName) {
+  const statusEl = document.getElementById('bref-status');
+  const inputEl  = document.getElementById('bref-id-input');
+  if (!statusEl || !inputEl) return;
+
+  statusEl.style.color = '#ffd700';
+  statusEl.textContent = '⏳ Baseball-Reference ID 取得中…';
+  let brefId = null;
+
+  // Step 1: MLB Stats API xrefIds
+  try {
+    const url = `https://statsapi.mlb.com/api/v1/people/${mlbId}?hydrate=xrefIds`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(7000) });
+    if (res.ok) {
+      const data = await res.json();
+      const xrefs = data?.people?.[0]?.xrefIds ?? [];
+      console.log('[BRef AutoID] xrefIds:', JSON.stringify(xrefs));
+      const brefEntry = xrefs.find(x => {
+        const t = String(x.xrefIdType ?? '').toLowerCase();
+        return t.includes('bref') || t.includes('bbref') || t === 'br' || t.includes('baseball');
+      });
+      if (brefEntry?.xrefId) brefId = String(brefEntry.xrefId).trim();
+    }
+  } catch (e) { console.warn('[BRef AutoID] MLB API:', e.message); }
+
+  // Step 2: BR name search
+  if (!brefId) {
+    const name = playerName || g_mlbNameEn;
+    if (name) {
+      statusEl.textContent = '⏳ Baseball-Reference で名前検索中…';
+      try { brefId = await _searchBRefIdByName(name); }
+      catch (e) { console.warn('[BRef AutoID] BR search:', e.message); }
+    }
+  }
+
+  // Step 3: Generate candidates → show buttons
+  if (!brefId) {
+    const name = playerName || g_mlbNameEn;
+    if (name) {
+      const candidates = _genBRefCandidates(name);
+      if (candidates.length > 0) {
+        _renderBRefCandidates(candidates, statusEl, inputEl);
+        return;
+      }
+    }
+    statusEl.style.color = '#88aac8';
+    statusEl.textContent = 'BR ID が見つかりません（手動入力してください）';
+    return;
+  }
+
+  // 取得成功 → ID セット後、Excel読込済みであればWAR/FIPデータも自動取得
+  g_brefId = brefId;
+  inputEl.value = brefId;
+  statusEl.style.color = '#77cc88';
+  statusEl.textContent = `✓ BR ID 自動取得: ${brefId}`;
+
+  if (g_dataRows) {
+    statusEl.textContent = `✓ BR ID: ${brefId}　⏳ WAR/FIPデータ取得中…`;
+    delete _brefCache[brefId];
+    await fetchBRefData(brefId, g_isPitcher ?? false);
+    const years = _brefCache[brefId] ? Object.keys(_brefCache[brefId]) : [];
+    if (years.length > 0) {
+      statusEl.style.color = '#77cc88';
+      statusEl.textContent = `✓ BR ID: ${brefId}　WAR/FIP取得済（${years.length}年分）`;
+    } else {
+      statusEl.style.color = '#ffaa44';
+      statusEl.textContent = `✓ BR ID: ${brefId}　（WAR/FIPデータなし）`;
+    }
+  }
+}
+
+async function _searchBRefIdByName(name) {
+  const searchUrl = `https://www.baseball-reference.com/search/search.fcgi?search=${encodeURIComponent(name)}`;
+  const proxyUrl  = `https://corsproxy.io/?url=${encodeURIComponent(searchUrl)}`;
+  const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  const found = [];
+  const re = /\/players\/[a-z]\/([a-z0-9]+)\.shtml/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (!found.includes(m[1])) found.push(m[1]);
+  }
+  console.log('[BRef AutoID] BR search candidates:', found);
+  if (found.length > 0) {
+    const parts = name.trim().split(/\s+/);
+    const lastInitial = parts.length >= 2 ? parts[parts.length - 1][0].toLowerCase() : '';
+    const filtered = found.filter(id => !lastInitial || id[0] === lastInitial);
+    return (filtered.length > 0 ? filtered : found)[0];
+  }
+  return null;
+}
+
+function _genBRefCandidates(name) {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length < 2) return [];
+  const last  = parts[parts.length - 1].toLowerCase().replace(/[^a-z]/g, '');
+  const first = parts[0].toLowerCase().replace(/[^a-z]/g, '');
+  const prefix = last.slice(0, 5) + first.slice(0, 2);
+  return ['01','02','03','04','05'].map(n => prefix + n);
+}
+
+function _renderBRefCandidates(candidates, statusEl, inputEl) {
+  statusEl.innerHTML = '';
+  const label = document.createElement('span');
+  label.textContent = 'BR ID 候補: ';
+  label.style.cssText = 'color:#ffd700;margin-right:4px;';
+  statusEl.appendChild(label);
+  candidates.forEach(c => {
+    const btn = document.createElement('button');
+    btn.textContent = c;
+    btn.style.cssText =
+      'margin:2px 3px;padding:2px 7px;font-size:11px;' +
+      'background:#223344;color:#aaddff;border:1px solid #446688;' +
+      'border-radius:4px;cursor:pointer;font-family:monospace;';
+    btn.onclick = () => {
+      g_brefId = c;
+      inputEl.value = c;
+      statusEl.innerHTML = '';
+      statusEl.style.color = '#77cc88';
+      statusEl.textContent = `✓ BR ID 選択: ${c}`;
+    };
+    statusEl.appendChild(btn);
+  });
 }
 
 function clearMlbSelection() {
@@ -527,18 +669,12 @@ function fmtOPS(v) {
   const s = String(v).trim();
   // 4桁整数（例: 1379 → "1.379"）
   if (/^1\d{3}$/.test(s)) return s[0] + '.' + s.slice(1);
-  // 3桁整数（例: 750 → ".750"、378 → "1.378" ※OPS<0.65は現実的でないため1.XXXへ補正）
-  if (/^\d{3}$/.test(s)) {
-    const asDecimal = '.' + s;
-    const n = parseFloat(asDecimal);
-    return (!isNaN(n) && n < 0.65) ? '1' + asDecimal : asDecimal;
-  }
-  // 小数点始まり（例: ".750" → そのまま、".378" → "1.378"）
-  if (s.startsWith('.')) {
-    const n = parseFloat(s);
-    if (!isNaN(n) && n < 0.65) return '1' + s;
-    return s;
-  }
+  // 3桁整数（例: 750 → ".750"）
+  if (/^\d{3}$/.test(s)) return '.' + s;
+  // 小数点始まり（例: ".750" → そのまま）
+  if (s.startsWith('.')) return s;
+  // "0.750" 形式 → ".750"
+  if (/^0\./.test(s)) return s.slice(1);
   return s;
 }
 function fmtPct(v) {
@@ -593,7 +729,7 @@ function getColVal(row, headerRow, name, fallback = '--') {
 function estimateHitterWAR(row) {
   const ops    = parseFloat(fmtOPS(row[17]));
   const rawG   = parseInt(row[6]);
-  const games  = (!isNaN(rawG) && rawG >= 10 && rawG <= 162) ? rawG : 150;
+  const games  = (!isNaN(rawG) && rawG >= 1 && rawG <= 162) ? rawG : 150;
   const sb     = getSB(row);
   if (!ops || isNaN(ops) || ops <= 0) return null;
 
@@ -1040,12 +1176,33 @@ function getCardCSS(t) {
   #card-root .top-banner {
     position:absolute; top:0; left:0; right:0; height:42px;
     background:${t.bannerBg}; display:flex; align-items:center;
-    justify-content:space-between; padding:0 20px; z-index:20;
+    justify-content:space-between; padding:0 14px; z-index:20;
     border-bottom:3px solid ${t.bannerBorder}; box-shadow:0 3px 12px #00000066;
   }
-  #card-root .card-rank { color:#fff; font-size:20px; font-weight:900; letter-spacing:4px; text-shadow:2px 2px 0 #000,0 0 14px ${t.rankGlow}; }
-  #card-root .stars { color:${t.starsColor}; font-size:22px; text-shadow:1px 1px 0 #000,0 0 12px ${t.starsGlow}; letter-spacing:6px; }
-  #card-root .card-type { color:#fff; font-size:17px; font-weight:900; letter-spacing:3px; text-shadow:2px 2px 0 #000,0 0 10px ${t.typeGlow}; }
+  #card-root .banner-left { display:flex; align-items:center; gap:5px; flex-shrink:0; }
+  #card-root .banner-awards {
+    flex:1; text-align:center; padding:0 6px;
+    font-size:13px; font-weight:900; letter-spacing:2px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    /* プリズム＋ラメ：レインボーグラデーション */
+    background:linear-gradient(90deg,
+      #ff4040 0%,#ff9900 14%,#ffe600 28%,#44ee44 42%,
+      #00ccff 56%,#9966ff 70%,#ff44cc 85%,#ff4040 100%);
+    -webkit-background-clip:text; background-clip:text;
+    -webkit-text-fill-color:transparent;
+    /* 2段階太く見せる: text-stroke で輪郭線を追加 */
+    -webkit-text-stroke:0.7px rgba(255,230,80,0.55);
+    /* 四方向の黒シャドウで輪郭を締め、グロー強化 */
+    filter:
+      drop-shadow(-1px -1px 0 #000d) drop-shadow(1px -1px 0 #000d)
+      drop-shadow(-1px  1px 0 #000d) drop-shadow(1px  1px 0 #000d)
+      drop-shadow(0 0 5px #fffc) drop-shadow(0 0 10px #ffcc00cc);
+    background-size:200% auto; animation:prismShift 3s linear infinite;
+  }
+  @keyframes prismShift { to { background-position:200% center; } }
+  #card-root .card-rank { color:#fff; font-size:20px; font-weight:900; letter-spacing:3px; text-shadow:2px 2px 0 #000,0 0 14px ${t.rankGlow}; flex-shrink:0; }
+  #card-root .stars { color:${t.starsColor}; font-size:18px; text-shadow:1px 1px 0 #000,0 0 10px ${t.starsGlow}; letter-spacing:3px; flex-shrink:0; }
+  #card-root .card-type { color:#fff; font-size:15px; font-weight:900; letter-spacing:2px; text-shadow:2px 2px 0 #000,0 0 10px ${t.typeGlow}; flex-shrink:0; white-space:nowrap; }
   #card-root .left-panel { width:285px; min-width:285px; position:relative; border-right:3px solid ${t.leftBorder}; overflow:hidden; }
   #card-root .photo-frame { position:absolute; top:0; left:0; right:0; bottom:0; background:linear-gradient(180deg,#4a3800 0%,#806000 50%,#382800 100%); }
   #card-root .photo-frame img { width:100%; height:100%; object-fit:cover; object-position:center top; display:block; }
@@ -1080,13 +1237,14 @@ function getCardCSS(t) {
   #card-root .stat-val { color:#fff; font-size:20px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
   #card-root .stat-val.s-rank { color:${t.srank}; text-shadow:2px 2px 0 #000,0 0 14px ${t.srankGlow}; }
   #card-root .stat-val.a-rank { color:${t.arank}; text-shadow:2px 2px 0 #000,0 0 10px ${t.arankGlow}; }
-  #card-root .pitch-table { width:100%; border-collapse:collapse; }
-  #card-root .pitch-table th { color:${t.recLabel}; font-size:11px; font-weight:900; letter-spacing:2px; padding:3px 6px; text-align:center; border-bottom:2px solid ${t.pitchTblBorder}; text-shadow:1px 1px 0 #000; }
-  #card-root .pitch-table td { color:#fff; padding:3px 6px; text-align:center; border-bottom:1px solid ${t.pitchTblBorder}55; font-size:13px; font-weight:900; text-shadow:1px 1px 0 #000; }
-  #card-root .pn { color:${t.pitchNameColor}!important; text-align:left!important; font-size:12px!important; font-weight:900!important; text-shadow:1px 1px 0 #000!important; }
-  #card-root .ps { color:#88ddff!important; text-shadow:1px 1px 0 #000,0 0 8px #44aaff!important; }
-  #card-root .pp2 { color:#ffcc66!important; text-shadow:1px 1px 0 #000,0 0 8px #ff8800!important; }
-  #card-root .pr { color:#88ff88!important; text-shadow:1px 1px 0 #000,0 0 8px #22cc22!important; }
+  #card-root .pitch-table { width:100%; border-collapse:collapse; table-layout:fixed; }
+  #card-root .pitch-table th { color:${t.recLabel}; font-size:10px; font-weight:900; letter-spacing:1px; padding:3px 3px; text-align:right; border-bottom:2px solid ${t.pitchTblBorder}; text-shadow:1px 1px 0 #000; }
+  #card-root .pitch-table th:first-child { text-align:left; padding-left:4px; letter-spacing:2px; }
+  #card-root .pitch-table td { color:#fff; padding:2px 4px; text-align:right; border-bottom:1px solid ${t.pitchTblBorder}55; font-size:11px; font-weight:900; text-shadow:1px 1px 0 #000; }
+  #card-root .pn { color:${t.pitchNameColor}!important; text-align:left!important; font-size:12px!important; font-weight:900!important; text-shadow:1px 1px 0 #000!important; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; padding:2px 2px 2px 4px!important; }
+  #card-root .ps { color:#88ddff!important; text-align:right!important; text-shadow:1px 1px 0 #000,0 0 8px #44aaff!important; }
+  #card-root .pp2 { color:#ffcc66!important; text-align:right!important; text-shadow:1px 1px 0 #000,0 0 8px #ff8800!important; }
+  #card-root .pr { color:#88ff88!important; text-align:right!important; text-shadow:1px 1px 0 #000,0 0 8px #22cc22!important; }
   #card-root .pitch-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
   #card-root .pitch-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:5px; padding:3px 4px; display:flex; flex-direction:column; align-items:center; }
   #card-root .pitch-box.pos-b { border-color:#ff664488; }
@@ -1100,6 +1258,18 @@ function getCardCSS(t) {
   #card-root .era-note { grid-column:span 1; display:flex; align-items:center; justify-content:center; background:rgba(80,60,0,0.35); border:1px solid #88886688; border-radius:5px; padding:2px; }
   #card-root .era-note span { color:#aaa888; font-size:8px; font-weight:900; text-align:center; line-height:1.3; text-shadow:1px 1px 0 #000; }
   #card-root .drs-bar { background:rgba(0,0,0,0.45); border:2px solid ${t.drsBorder}; border-radius:7px; padding:3px 16px; display:flex; align-items:center; justify-content:center; gap:20px; flex-wrap:wrap; }
+  /* 4ポジション以下: 1行コンパクト */
+  #card-root .drs-bar.drs-single { flex-wrap:nowrap; gap:6px; padding:3px 8px; }
+  #card-root .drs-bar.drs-single .drs-num { font-size:13px; }
+  #card-root .drs-bar.drs-single .drs-pos { font-size:9px; letter-spacing:1px; padding:1px 4px; }
+  #card-root .drs-bar.drs-single .drs-inn { font-size:8px; }
+  #card-root .drs-bar.drs-single .drs-div { height:16px; }
+  /* 5ポジション以上: 2列グリッド・詰め詰め */
+  #card-root .drs-bar.drs-multi { display:grid; grid-template-columns:1fr 1fr; gap:2px 6px; padding:3px 8px; align-items:start; }
+  #card-root .drs-bar.drs-multi .drs-item { gap:3px; }
+  #card-root .drs-bar.drs-multi .drs-num { font-size:12px; }
+  #card-root .drs-bar.drs-multi .drs-pos { font-size:9px; letter-spacing:1px; padding:1px 3px; }
+  #card-root .drs-bar.drs-multi .drs-inn { font-size:7px; }
   #card-root .drs-item { display:flex; align-items:center; gap:5px; }
   #card-root .drs-pos { color:#aaddff; font-size:11px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; background:rgba(0,60,120,0.5); border:1px solid #4488ff88; border-radius:4px; padding:1px 5px; }
   #card-root .drs-num { font-size:17px; font-weight:900; text-shadow:2px 2px 0 #000; }
@@ -1127,7 +1297,7 @@ function getCardCSS(t) {
   #card-root .ca-val.lead { color:#ffdd66; text-shadow:2px 2px 0 #000,0 0 10px #ffaa00; }
   #card-root .ca-val.cs   { color:#66ffaa; text-shadow:2px 2px 0 #000,0 0 10px #22cc66; }
   #card-root .ca-unit { color:#a0b8a0; font-size:10px; font-weight:900; text-shadow:1px 1px 0 #000; align-self:flex-end; margin-bottom:2px; }
-  #card-root .retsuden { font-size:11px; color:${t.retColor}; line-height:1.6; border-top:2px solid ${t.retBorder}; padding-top:5px; font-weight:900; text-shadow:1px 1px 0 #000; flex:1; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:5; }
+  #card-root .retsuden { font-size:11px; color:${t.retColor}; line-height:1.55; border-top:2px solid ${t.retBorder}; padding-top:4px; font-weight:900; text-shadow:1px 1px 0 #000; flex:1; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:6; }
   #card-root .retsuden strong { color:${t.retStrong}; font-size:12px; text-shadow:1px 1px 0 #000; }
   #card-root .retsuden .ai-loading { color:#aaaaaa; font-style:normal; animation:blink 1s infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
@@ -1327,9 +1497,9 @@ function getCardCSS(t) {
     flex:1; overflow-y:auto; overflow-x:hidden; padding:4px 8px 4px;
     background:${t.overlay}; position:relative; z-index:5;
   }
-  #card-root .card-back-scroll::-webkit-scrollbar { width:4px; height:4px; }
-  #card-root .card-back-scroll::-webkit-scrollbar-track { background:transparent; }
-  #card-root .card-back-scroll::-webkit-scrollbar-thumb { background:${t.cardBorder}88; border-radius:3px; }
+  #card-root .card-back-scroll::-webkit-scrollbar { width:10px; height:10px; }
+  #card-root .card-back-scroll::-webkit-scrollbar-track { background:rgba(0,0,0,0.3); border-radius:5px; }
+  #card-root .card-back-scroll::-webkit-scrollbar-thumb { background:${t.cardBorder}cc; border-radius:5px; border:2px solid rgba(0,0,0,0.3); }
   #card-root .card-back-tbl { border-collapse:collapse; width:100%; table-layout:fixed; }
   #card-root .card-back-tbl th {
     color:${t.recLabel}; font-weight:900; padding:6px 3px;
@@ -1359,6 +1529,26 @@ function getCardCSS(t) {
   }
   #card-root .card-back-tbl tbody tr:nth-child(even) td { background:rgba(255,255,255,0.05); }
   #card-root .card-back-tbl tbody tr:hover td { background:rgba(255,255,255,0.12); }
+  /* ── 王冠ランクマーク ── */
+  /* セル全体: 相対配置ベース */
+  #card-root .card-back-tbl td[data-rank] { position:relative; overflow:visible; }
+  /* 数値テキスト: フォントサイズは変えず色グローのみ */
+  #card-root .rank-val { display:inline; }
+  #card-root .rank-val-1 { color:#FFE566 !important;
+    text-shadow:0 0 5px #FFD700,0 0 9px #FFA500,0 0 14px #FFD700,1px 1px 0 #8B6000 !important; }
+  #card-root .rank-val-2 { color:#E8EAFF !important;
+    text-shadow:0 0 5px #C0C0D0,0 0 9px #9090B0,0 0 14px #D8DAFF,1px 1px 0 #404060 !important; }
+  #card-root .rank-val-3 { color:#FFBB77 !important;
+    text-shadow:0 0 5px #CD8040,0 0 9px #8B4010,0 0 14px #D49040,1px 1px 0 #5B2500 !important; }
+  /* 順位バッジ: 絶対配置で右上に浮かせる（数字のみ・大きめ） */
+  #card-root .rank-badge {
+    position:absolute; top:-1px; right:1px;
+    font-size:10px; font-weight:900; line-height:1;
+    pointer-events:none;
+  }
+  #card-root .rank-badge-1 { color:#FFE566; text-shadow:0 0 4px #FFD700,0 0 8px #FFA500,1px 1px 0 #8B6000; }
+  #card-root .rank-badge-2 { color:#E8EAFF; text-shadow:0 0 4px #C0C0D0,0 0 8px #9090B0,1px 1px 0 #404060; }
+  #card-root .rank-badge-3 { color:#FFBB77; text-shadow:0 0 4px #CD8040,0 0 8px #8B4010,1px 1px 0 #5B2500; }
   `;
 }
 
@@ -1478,9 +1668,9 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
   if (isCatcher) {
     const lead   = safeNum(row[53]);
     const csRate = safeNum(row[54]);
-    if (lead !== null)   addConv(50 + lead * 5,       1.0); // +10→100, 0→50, -10→0
-    // 盗塁阻止スコア: 0%→30, 10%→45, 20%→60, 30%→75, 40%→90, 50%→105（+1.5/1%）
-    if (csRate !== null) addConv(30 + csRate * 1.5,   0.5);
+    if (lead !== null)   addConv((60 + lead * 5) * 1.1, 1.5); // +10→121, 0→66, -10→11
+    // 盗塁阻止スコア: 0%→35, 10%→50, 20%→65, 30%→80, 40%→95, 50%→110（+1.5/1%）
+    if (csRate !== null) addConv(35 + csRate * 1.5,   1.0);
   }
 
   const A = wTotal > 0 ? Math.round(wSum / wTotal) : 70;
@@ -1495,11 +1685,13 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
 
 /**
  * 投手総合力スコアを算出する。
- * A = Σ(スコア×重み) / Σ重み（WARは使わない）
- * @param {Array} row      - スプレッドシート行
+ * A = Σ(スコア×重み) / Σ重み → WAR実測値がある場合は野手と同様に (A + warScore) / 2 でブレンド。
+ * 通算行では g_careerWAR（IP加重平均）を使用するため異常値にならない。
+ * @param {Array} row        - スプレッドシート行
  * @param {number|null} fipValue - FIP値（BR取得 or 計算済み）。null なら row から自動計算。
+ * @param {string|number|null} warValue - 実測WAR値（'--' または null の場合はWARなしとして扱う）
  */
-function calcPitcherOverall(row, fipValue = null) {
+function calcPitcherOverall(row, fipValue = null, warValue = null) {
   // ── 能力値（0–100+ の絶対スコア。0はデータなしとして除外） ──
   const ctrl   = safeNum(row[51]);   // 制球
   const change = safeNum(row[52]);   // 緩急
@@ -1554,7 +1746,18 @@ function calcPitcherOverall(row, fipValue = null) {
   addAbs(pitchPowerScore, 2.5);   // 総合球威（×1.25済み）
   addAbs(fipScore,        2.0);   // FIP スコア
 
-  return wTotal > 0 ? Math.round(wSum / wTotal) : 70;
+  const A = wTotal > 0 ? Math.round(wSum / wTotal) : 70;
+
+  // ── WAR 実測値がある場合のみ総合力にブレンド（先発投手のみ）──
+  // リリーフ投手は WAR の歪みが大きいため能力加重平均 A をそのまま返す
+  // 通算行は IP加重平均WAR（g_careerWAR）が渡されるため異常値にならない
+  const warNum = (warValue !== null && warValue !== '--')
+    ? parseFloat(String(warValue).replace('~', ''))
+    : NaN;
+  if (!isNaN(warNum) && isStarterForFIP) {
+    return Math.round((A * 3 + warToScore(warNum)) / 4);
+  }
+  return A;
 }
 
 // ===== CARD HTML BUILDERS =====
@@ -1577,14 +1780,17 @@ function buildPitchPointBox(label, value) {
 
 function buildDrsSection(drsData) {
   if (!drsData || drsData.length === 0) return '';
+  const isMulti = drsData.length >= 5;
+  const barClass = isMulti ? 'drs-bar drs-multi' : 'drs-bar drs-single';
   const items = drsData.map((d, i) => {
     const n = safeNum(d.drs) || 0;
     const cls = n > 0 ? 'pos' : n < 0 ? 'neg' : 'neu';
     const disp = n > 0 ? '+' + n : n === 0 ? '±0' : String(n);
-    return (i > 0 ? '<div class="drs-div"></div>' : '') +
-      `<div class="drs-item"><span class="drs-pos">${d.pos}</span><span class="drs-num ${cls}">${disp}</span><span class="drs-inn">${d.inn} inn</span></div>`;
+    // 2列グリッド時はdividerなし、1列時はdividerあり
+    const sep = (!isMulti && i > 0) ? '<div class="drs-div"></div>' : '';
+    return sep + `<div class="drs-item"><span class="drs-pos">${d.pos}</span><span class="drs-num ${cls}">${disp}</span><span class="drs-inn">${d.inn} inn</span></div>`;
   }).join('');
-  return `<div class="drs-bar">${items}</div>`;
+  return `<div class="${barClass}">${items}</div>`;
 }
 
 // ===== PITCHER CARD BUILDER =====
@@ -1629,7 +1835,9 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
     if (brF !== null) return parseFloat(brF);
     return calcFIP(row);
   })();
-  const overallScore = calcPitcherOverall(row, _fipForOverall);
+  // WAR: 通算行は resolveWAREffective が g_careerWAR（IP加重平均）を返す
+  const _warForOverall = resolveWAREffective(row, headers[0], true);
+  const overallScore = calcPitcherOverall(row, _fipForOverall, _warForOverall);
 
   const isStarter   = gs >= totalG * 0.5;
   const posBadge    = isStarter ? '先発投手' : 'リリーフ';
@@ -1670,8 +1878,8 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
 
   return `
     <div class="top-banner">
-      <span class="card-rank">${t.rank}</span>
-      <span class="stars">${t.stars}</span>
+      <span class="banner-left"><span class="card-rank">${t.rank}</span><span class="stars">${t.stars}</span></span>
+      <span class="banner-awards" style="display:none;"></span>
       <span class="card-type">${cardTypeLabel}</span>
     </div>
     <div class="left-panel">
@@ -1706,7 +1914,7 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
       <div class="stats-grid">${statBoxes}</div>
       <div class="sec-title">■ 球種データ</div>
       <table class="pitch-table">
-        <thead><tr><th style="text-align:left;">球種</th><th>球速</th><th>球威</th><th>割合</th></tr></thead>
+        <thead><tr><th style="text-align:left;">球種</th><th style="width:18%;">球速</th><th style="width:18%;">球威</th><th style="width:18%;">割合</th></tr></thead>
         <tbody>${pitchRows}</tbody>
       </table>
       <div class="retsuden" id="retsuden-area"><strong>【列伝】</strong> <span class="ai-loading">AI生成中...</span></div>
@@ -1827,8 +2035,8 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
 
   return `
     <div class="top-banner">
-      <span class="card-rank">${t.rank}</span>
-      <span class="stars">${t.stars}</span>
+      <span class="banner-left"><span class="card-rank">${t.rank}</span><span class="stars">${t.stars}</span></span>
+      <span class="banner-awards" style="display:none;"></span>
       <span class="card-type">${cardTypeLabel}</span>
     </div>
     <div class="left-panel">
@@ -2013,28 +2221,71 @@ async function fetchMlbSeasonData(mlbId, year, isPitcher) {
   }
 }
 
+/**
+ * キャリア全受賞歴を一括取得して _awardsJaByYear に年度別に格納する。
+ * 通算カード表示時に呼ぶことで、個別年度を見ていなくても表示できるようにする。
+ */
+async function _fetchAndCacheAllAwards(mlbId) {
+  if (!mlbId) return;
+  try {
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/people/${mlbId}/awards`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const allAwards = data?.awards || [];
+    allAwards.forEach(a => {
+      const year = String(a.season || (a.date ? String(a.date).substring(0,4) : ''));
+      if (!/^\d{4}$/.test(year)) return;
+      const award = { name: a.name || '', id: a.id || '' };
+      const ja = awardToJa(award);
+      if (!ja) return;
+      if (!_awardsJaByYear[year]) _awardsJaByYear[year] = [];
+      if (!_awardsJaByYear[year].includes(ja)) _awardsJaByYear[year].push(ja);
+    });
+    console.log('[CareerAwards] 全受賞歴キャッシュ完了:', Object.keys(_awardsJaByYear));
+  } catch(e) {
+    console.warn('[CareerAwards] 取得エラー:', e.message);
+  }
+}
+
 // ── 受賞名（英語）→日本語変換 ────────────────────────────────
 function awardToJa(award) {
   const n = (award.name || award.id || '').toLowerCase();
-  // リーグ識別
+
+  // ① 月間・週間・オールスター等のシーズン外小賞は即スキップ（nullを返す）
+  if (n.includes('player of the month') || n.includes('player of the week')) return null;
+  if (n.includes('all-star game mvp') || n.includes('allstar game mvp'))    return null;
+  if (n.includes('minor league') || n.includes('milb') ||
+      n.includes('triple-a')    || n.includes('double-a'))                  return null;
+
+  // ② リーグ識別
   const isAL = n.includes('american league') || n.includes(' al ') || n.startsWith('al ');
   const isNL = n.includes('national league')  || n.includes(' nl ') || n.startsWith('nl ');
   const lg   = isAL ? 'AL' : isNL ? 'NL' : '';
-  if (n.includes('most valuable player') || n.includes('mvp'))
+
+  // ③ 具体的なMVP種別を「リーグMVP」より先にチェック（順序が重要！）
+  if (n.includes('world series') && n.includes('mvp'))  return 'ワールドシリーズMVP';
+  if (n.includes('championship series'))                return 'リーグ優勝シリーズMVP';
+  if (n.includes('all-star') || n.includes('allstar'))  return null; // オールスター選出は表示しない
+
+  // ④ リーグMVP（シーズンMVPのみ）
+  // AL/NLまたはBBWAAの明記がないMVPはチーム賞・球団賞として除外する
+  if (n.includes('most valuable player') || n.includes('mvp')) {
+    if (!isAL && !isNL && !n.includes('bbwaa')) return null;
     return lg ? `${lg} MVP` : 'MVP';
+  }
+
+  // ⑤ その他タイトル・表彰
   if (n.includes('cy young'))
     return lg ? `${lg}サイ・ヤング賞` : 'サイ・ヤング賞';
   if (n.includes('rookie of the year') || n.includes('rookie'))
     return lg ? `${lg}新人王` : '新人王';
   if (n.includes('gold glove'))           return 'ゴールドグラブ賞';
   if (n.includes('silver slugger'))       return 'シルバースラッガー賞';
-  if (n.includes('hank aaron'))          return 'ハンク・アーロン賞';
-  if (n.includes('world series') && n.includes('mvp')) return 'ワールドシリーズMVP';
-  if (n.includes('championship series')) return 'リーグ優勝シリーズMVP';
-  if (n.includes('comeback player'))     return 'カムバック賞';
-  if (n.includes('reliever'))            return 'リリーバー賞';
-  if (n.includes('all-star') || n.includes('allstar')) return 'オールスター';
-  if (n.includes('batting title'))       return '首位打者';
+  if (n.includes('hank aaron'))           return 'ハンク・アーロン賞';
+  if (n.includes('roberto clemente'))     return 'ロベルト・クレメンテ賞';
+  if (n.includes('comeback player'))      return 'カムバック賞';
+  if (n.includes('reliever'))             return 'リリーバー賞';
+  if (n.includes('batting title'))        return '首位打者';
   if (n.includes('home run') && n.includes('leader')) return '本塁打王';
   return award.name || award.id || '';
 }
@@ -2076,37 +2327,123 @@ function buildCardType(row, awardsJa) {
   // ⑤ 記録から生成
   if (!g_isPitcher) {
     const games = parseInt(row[6]) || 0;
-    const hasEnoughGames = games >= 80; // 出場数が少ない場合はOPS/打率系タイトルを付与しない
-    if (hr >= 73) return '本塁打記録男';
-    if (hr >= 60) return `${hr}HR王`;
-    if (hr >= 50) return `${hr}本塁打達成`;
+    const hasEnoughGames = games >= 80;
+    const sb  = getSB(row);
+    const rbi = parseInt(row[10]) || 0;
+    const avg = parseFloat(String(fmtRate(row[15])).replace(/^\./,'0.')) || 0;
+
+    // タイトル有無フラグ（awardsJa から判定）
+    // ※ SB・CSR はボーナステーブルでは3だが肩書優先度では2相当に調整
+    const hasAVG = awardsJa.some(a => a.includes('首位打者'));
+    const hasHR  = awardsJa.some(a => a.includes('本塁打王'));
+    const hasRBI = awardsJa.some(a => a.includes('打点王'));
+    const hasOPS = awardsJa.some(a => a.includes('OPS首位'));
+    const hasSB  = awardsJa.some(a => a.includes('盗塁王'));
+    const hasGG  = awardsJa.some(a => a.includes('ゴールドグラブ'));
+    const hasSS  = awardsJa.some(a => a.includes('シルバースラッガー'));
+    const hasCSR = awardsJa.some(a => a.includes('盗塁阻止率'));
+    const hasHAA = awardsJa.some(a => a.includes('ハンク・アーロン'));
+    const hasRC  = awardsJa.some(a => a.includes('ロベルト・クレメンテ'));
+    const hasCB  = awardsJa.some(a => a.includes('カムバック'));
+
+    // ① 歴史的本塁打記録（60本超=当時の記録水準を上回る偉業。二冠王より優先）
+    if (hr >= 73) return '本塁打記録男';          // ボンズの現行全体記録
+    if (hr >= 62) return `${hr}本塁打・AL新記録`; // ジャッジのAL記録(2022)
+    if (hr >= 60) return `${hr}HR王`;              // ルースの旧記録を超える歴史的偉業
+
+    // ② 三冠王・二冠王（首位打者・本塁打王・打点王の組み合わせ）＋ポジション名
+    const crownCount = [hasAVG, hasHR, hasRBI].filter(Boolean).length;
+    const crownPos = posJa || '';
+    if (crownCount === 3) return `三冠王${crownPos}`;
+    if (crownCount === 2) return `二冠王${crownPos}`;
+
+    // ③ 個別タイトルから肩書（優先度: HR=AVG=RBI=OPS=SB=GG=SS=CSR=2 > HAA=RC=CB=1）
+    if (hasHR)  return hr >= 40 ? `${hr}本塁打王` : '本塁打王';
+    if (hasAVG) return `打率${fmtRate(row[15])}首位打者`;
+    if (hasRBI) return `${rbi}打点王`;
+    if (hasOPS) return 'OPS王';
+    if (hasSB)  return sb >= 50 ? `${sb}盗塁王` : '盗塁王';
+    if (hasCSR && g_isCatcher) return '盗塁阻止率No.1捕手';
+    if (hasGG)  return `ゴールドグラブ${posJa || '野手'}`;
+    if (hasSS)  return `シルバースラッガー${posJa || '野手'}`;
+    if (hasHAA) return 'ハンク・アーロン賞';
+    if (hasRC)  return 'クレメンテ賞';
+    if (hasCB)  return 'カムバック賞';
+
+    // ③.5 タイトルなし・規定打席以上でリーグ5位以内の成績があれば肩書に反映
+    if (hasEnoughGames) {
+      const yearKey = String(row[1] ?? '').trim();
+      const rd = _rankDataByYear[yearKey] || {};
+      // rank 2〜5 のみ（1位はタイトルとして③で処理済み）
+      const pick = (key, labelFn) => {
+        const r = rd[key]?.rank;
+        return (r && r >= 2 && r <= 5) ? labelFn(r) : null;
+      };
+      // 優先順: HR > AVG > RBI > OPS > OBP > SB
+      const rankLabel =
+        pick('hr',  r => `リーグ本塁打${r}位の強打者`)  ||
+        pick('avg', r => `リーグ打率${r}位の巧打者`)     ||
+        pick('rbi', r => `リーグ打点${r}位の強打者`)     ||
+        pick('ops', r => `リーグOPS${r}位打者`)          ||
+        pick('obp', r => `リーグ出塁率${r}位打者`)       ||
+        pick('sb',  r => `リーグ盗塁${r}位の俊足選手`);
+      if (rankLabel) return rankLabel;
+    }
+
+    // ④ タイトルなし → 数字ベース（50本台はここで処理）
+    if (hr >= 50 && hasEnoughGames) return `${hr}本塁打達成`;
     if (hr >= 40 && hasEnoughGames) return `${hr}本塁打の強打者`;
     if (ops >= 1.20 && hasEnoughGames) return 'OPS怪物打者';
     if (ops >= 1.00 && hasEnoughGames) return '勝負強打者';
-    const avg = parseFloat(String(fmtRate(row[15])).replace(/^\./,'0.')) || 0;
     if (avg >= 0.370 && hasEnoughGames) return '首位打者候補';
     if (avg >= 0.340 && hasEnoughGames) return `打率${fmtRate(row[15])}の巧打者`;
-    const sb = getSB(row);
-    if (sb >= 60) return `${sb}盗塁王`;
+    if (sb >= 60) return `${sb}盗塁の俊足選手`;
     if (sb >= 40 && hasEnoughGames) return `${sb}盗塁の俊足選手`;
-    const rbi = parseInt(row[10]) || 0;
-    if (rbi >= 140) return `${rbi}打点王`;
+    if (rbi >= 140) return `${rbi}打点の勝負強打者`;
     if (rbi >= 100 && hasEnoughGames) return `${rbi}打点の勝負強打者`;
-    // 受賞歴があればそちらを優先
-    if (awardsJa.length) return awardsJa[0];
-    // 受賞歴なし・出場十分なら数字ベースのフォールバック（hr=0は除外）
     if (hr >= 20 && hasEnoughGames) return `${hr}本塁打の強打者`;
     if (sb >= 20 && hasEnoughGames) return `${sb}盗塁の俊足選手`;
     if (avg >= 0.300 && hasEnoughGames) return `打率${fmtRate(row[15])}の巧打者`;
-    // 試合数不足 or 特徴なし → ポジション名のみ
+
+    // ⑤ 試合数不足 or 特徴なし → ポジション名
     return posJa || '野手';
   } else {
+    const hasKTitle   = awardsJa.some(a => a.includes('奪三振王'));
+    const hasEraTitle = awardsJa.some(a => a.includes('最優秀防御率'));
+    const hasWTitle   = awardsJa.some(a => a.includes('最多勝'));
+    const hasSvTitle  = awardsJa.some(a => a.includes('最多セーブ'));
+    const hasHldTitle = awardsJa.some(a => a.includes('最多ホールド'));
+
+    // ① 奪三振数が極めて多い
     if (k >= 300) return `${k}奪三振${hand}`;
-    if (k >= 250) return `奪三振王${hand}`;
+    if (k >= 250) {
+      if (hasKTitle) return `奪三振王${hand}`;
+      // タイトルなし → ランクデータで事実ベース表示
+      const yearKey = String(row[1] ?? '').trim();
+      const kRank = _rankDataByYear[yearKey]?.k?.rank;
+      if (kRank && kRank <= 5) return `奪三振リーグ${kRank}位${hand}`;
+      return `${k}奪三振${hand}`;
+    }
+    // ② 突出した防御率（タイトル有無問わず）
     if (era < 1.80 && gs > 10) return `防御率${row[5]}の${hand}`;
+    // ③ 多勝
     if (wins >= 22) return `${wins}勝${hand}`;
+    // ④ タイトルから肩書を生成（ERA > W > K > SV > HLD の優先順）
+    if (hasEraTitle) return `最優秀防御率${hand}`;
+    if (hasWTitle)   return `最多勝${hand}`;
+    if (hasKTitle)   return `奪三振王${hand}`;
+    if (hasSvTitle)  return `最多セーブ投手`;
+    if (hasHldTitle) return `最多ホールド投手`;
+    // ⑤ クローザー実績（タイトルなし）
     if (!isStarter && era < 2.20) return '不滅の守護神';
-    return awardsJa.length ? awardsJa[0] : `${wins}勝${hand}投手`;
+    // ⑥ その他のタイトルがあれば手腕を付けて整形
+    if (awardsJa.length) {
+      const a = awardsJa[0];
+      return (a.includes('右腕') || a.includes('左腕') || a.includes('投手'))
+        ? a : `${a}の${hand}`;
+    }
+    // ⑦ タイトルなし → 勝利数＋手腕
+    return `${wins}勝${hand}投手`;
   }
 }
 
@@ -2276,6 +2613,63 @@ const _PLAYER_LORE = {
   'yu darvish':      { ep: '7球種以上を操る「変化球の魔術師」として日米で高い評価を受けるエース投手。勝負球のスプリットは世界最高水準と称される。' },
 };
 
+// ── 選手の異名（ニックネーム）データベース ────────────────────────
+// 通算カード・特徴が顕著な年の列伝に自動挿入される
+const _PLAYER_NICKNAMES = {
+  // ── 野手 ──
+  'ichiro suzuki':    { nicks:['エリア51'],              line:'「エリア51」の異名を持つ背番号51。宇宙的な守備範囲と強肩、そして速打の精度は球界の常識を覆し続けた速打の達人。' },
+  'ozzie smith':      { nicks:['オズの魔法使い'],        line:'「オズの魔法使い」の異名通り、バック転フィールディングを含む魔法のようなプレーでMLBの伝説となった遊撃手の神様。' },
+  'babe ruth':        { nicks:['バンビーノ','スルタン・オブ・スワット'], line:'「バンビーノ」「スルタン・オブ・スワット」と愛された球界の神様。60本塁打の当時記録とOPS1.164はいまも球史の頂点に輝く。' },
+  'lou gehrig':       { nicks:['鉄の馬'],                line:'「鉄の馬」の名にふさわしい2130試合連続出場の鉄人。「自分は世界一幸せな人間だ」という引退挨拶は球史に刻まれた不朽の名言。' },
+  'joe dimaggio':     { nicks:['ヤンキー・クリッパー'],  line:'「ヤンキー・クリッパー」の品格と56試合連続安打。半世紀以上が経った今も破られない伝説として輝き続ける。' },
+  'ted williams':     { nicks:['スプレンディッド・スプリンター'], line:'「スプレンディッド・スプ���ンター」として生涯打率.344・最後の4割打者という称号を永遠に手中にした打撃の神様。' },
+  'willie mays':      { nicks:['セイ・ヘイ・キッド'],    line:'「セイ・ヘイ・キッド」の愛称で親しまれ、豪快な本塁打と「ザ・キャッチ」に象徴される守備で史上最高の5ツールプレーヤーと称された。' },
+  'hank aaron':       { nicks:['ハンマリング・ハンク'],  line:'「ハンマリング・ハンク」のあだ名通りのパワーで通算755本塁打。差別と闘い続けながら刻んだ記録は不屈のレジェンドの証。' },
+  'mickey mantle':    { nicks:['コマース・コメット'],    line:'「コマース・コメット」として長打力・俊足・送球を備えた史上最高のスイッチヒッターに。3冠王・536本塁打の偉業は今も語り継がれる。' },
+  'reggie jackson':   { nicks:['ミスター・オクトーバー'], line:'「ミスター・オクトーバー」と恐れられた10月の魔物。1977年WS第6戦3打席連続本塁打は球史最高の舞台での芸術として永遠に輝く。' },
+  'derek jeter':      { nicks:['キャプテン'],            line:'「キャプテン」の称号を持つただ一人のヤンキース選手。勝負強さと品格は5度のWS制覇を支え、世代を超えてファンに愛され続けた。' },
+  'stan musial':      { nicks:['スタン・ザ・マン'],      line:'「スタン・ザ・マン」はブルックリンのファンが恐れを込めてつけた称号。22年間の忠誠と3630安打・3度のMVPは球史の宝石だ。' },
+  'cal ripken jr':    { nicks:['アイアンマン'],          line:'「アイアンマン」として2632試合連続出場という世界記録を樹立。頑強さとリーダーシップはオリオールズの象徴を超え球界全体への贈り物だった。' },
+  'cal ripken':       { nicks:['アイアンマン'],          line:'「アイアンマン」として2632試合連続出場という世界記録を樹立。頑強さとリーダーシップはオリオールズの象徴を超え球界全体���の贈り物だった。' },
+  'roberto clemente': { nicks:['グレート・ワン'],        line:'「グレート・ワン」として野球場内外で輝いたパイレーツの英雄。人道支援中の飛行機事故による夭折は球界に深い喪失をもたらした悲劇の伝説。' },
+  'tony gwynn':       { nicks:['ミスター・パドレ'],      line:'「ミスター・パドレ」として22年間パドレス一筋を貫いた。8度の首位打者・通算打率.338は現代最高のコンタクトヒッターの生涯証明書。' },
+  'ken griffey jr':   { nicks:['ザ・キッド'],            line:'「ザ・キッド」の愛称で天才の名を欲しいままにした。1990年代のシアトルを席巻したスーパースターの笑顔とスイングは世代を超えて愛された。' },
+  'rickey henderson': { nicks:['盗塁の神様'],            line:'「盗塁の神様」として通算1406盗塁という不滅の記録を打ち立てた。強打・俊足・高出塁率を兼ね備えた史上最高のリードオフマン。' },
+  'pete rose':        { nicks:['チャーリー・ハッスル'],  line:'「チャーリー・ハッスル」の異名通り全力プレーでMLB通算最多4256安打を積み上げた。どんな場面でも手を抜かないその姿勢は球史に刻まれた。' },
+  'frank thomas':     { nicks:['ビッグ・ハート'],        line:'「ビッグ・ハート」の異名を持つ6フィート5インチの怪力スラッガー。2年連続MVP（1993–94）という偉業でホワイトソックスの歴史に燦然と輝く。' },
+  'wade boggs':       { nicks:['打率の魔術師'],          line:'「打率の魔術師」として5度の首位打者に輝き、選球眼と技術で通算.328を積み上げた史上最高のコンタクトヒッターの一人。' },
+  'albert pujols':    { nicks:['ザ・マシーン'],          line:'「ザ・マシーン」の異名通りの完璧な打撃メカニズムで3度のMVP・通算700本塁打超を達成。2001年以降10年間の数字は史上最強打者の証。' },
+  'alex rodriguez':   { nicks:['A-ROD'],                 line:'「A-ROD」の愛称で全米に親しまれた696本塁打のスラッガー。遊撃手からの転向後もトップを走り続けた万能スーパースター。' },
+  'mike trout':       { nicks:['ミルビル・メテオール'],  line:'「ミルビル・メテオール（流星）」の異名を持つ現代最高の万能選手。3度のMVP受賞と10年超のトップ維持は人類最高水準の野球能力の証明。' },
+  'shohei ohtani':    { nicks:['二刀流'],                line:'「二刀流」として投打両方でトップレベルを体現したベーブ・ルース以来の選手。MLB史上最高の二刀流投手兼打者として球史に永遠に刻まれる。' },
+  // ── 投手 ──
+  'randy johnson':    { nicks:['ビッグ・ユニット'],      line:'「ビッグ・ユニット（大きな塊）」の異名を持つ6フィート10インチの巨漢。長い腕から繰り出す160km超の剛速球は打者にとって悪夢そのものだった。' },
+  'greg maddux':      { nicks:['精密機械','マッド・ダックス','プロフェッサー'], line:'「精密機械」「プロフェッサー」の異名を持ち「マッド・ダックス」とも呼ばれた頭脳派右腕。98mph以下の速球で4年連続サイ・ヤング賞を制した知将エース。' },
+  'roger clemens':    { nicks:['ザ・ロケット'],          line:'「ザ・ロケット」の豪速球で打者をねじ伏せた7度のサイ・ヤング賞右腕。マウンド上の鬼気迫る存在感はMLB史上最高クラスの先発投手の証。' },
+  'nolan ryan':       { nicks:['ライアン・エクスプレス','テキサス・エクスプレス'], line:'「ライアン・エクスプレス」「テキサス・エクスプレス」の剛速球の神様。7度のノーヒッターと5714奪三振は人類には永遠に破れない不世出の記録。' },
+  'pedro martinez':   { nicks:['エル・プレジデンテ'],    line:'「エル・プレジデンテ」として1999–2000年に防御率2.07という驚異の数字を記録。小柄ながら圧倒的なコマンドとキレで対戦打者を支配した稀代の右腕。' },
+  'sandy koufax':     { nicks:['左腕の神様'],            line:'「左腕の神様」として1963–66年にサイ・ヤング賞3度受賞。防御率1.86・4度のノーヒッターという短い全盛期の数字は永遠の伝説として輝く。' },
+  'bob gibson':       { nicks:['ギブスン'],              line:'「ギ��スン」の名前一つで対戦打者を震わせた闘将。1968年の防御率1.12は翌年のマウンド変更規則を招いた衝撃の数字で、歴史を変えたシーズンとなった。' },
+  'mariano rivera':   { nicks:['サンドマン','モ'],       line:'「サンドマン」「モ」の愛称で親しまれたカットボール1球種で制した守護神の神様。通算652セーブという不滅の記録はクローザーの頂点として永遠に輝く。' },
+  'walter johnson':   { nicks:['ビッグ・トレイン'],      line:'「ビッグ・トレイン」の剛速球で対戦打者が「打てない」と証言した20世紀初頭の投球の神様。通算417勝・3508奪三振の偉業は球史の礎となった。' },
+  'whitey ford':      { nicks:['チェアマン・オブ・ザ・ボード'], line:'「チェアマン・オブ・ザ・ボード（取締役会長）」の知将左腕。WS最多10勝・継続登板33.2回無失点という今も破られていない記録でヤンキース黄金期を支配した。' },
+  'max scherzer':     { nicks:['マッド・マックス'],      line:'「マッド・マックス」の鬼気迫る投球で3度のサイ・ヤング賞を制した。独特の色違いの目と圧倒的な奪三振力は現代最高クラスの先発投手の証。' },
+  'hideo nomo':       { nicks:['トルネード'],            line:'「トルネード投法」の独特のフォームで1995年に新人王を獲得。日本人投手がMLBで活躍する道を切り開いた先駆者として球史に輝く。' },
+  'hideki matsui':    { nicks:['ゴジラ'],                line:'「ゴジラ」の愛称でファンに愛されたヤンキースの主砲。2009年ワールドシリーズMVPという最高の舞台での輝きは日本人打者の到達点を世界に示した。' },
+  'gerrit cole':      { nicks:['コール'],                line:'「コール」という名前自体が畏怖の象徴となった現代最強クラスの先発右腕。奪三振能力と総合的な支配力でMLBの絶対エースとして君臨し続けた。' },
+};
+
+/** 英語名（部分一致可）から異名情報を取得 */
+function getPlayerNickname(nameEn) {
+  if (!nameEn) return null;
+  const key = nameEn.toLowerCase().trim();
+  if (_PLAYER_NICKNAMES[key]) return _PLAYER_NICKNAMES[key];
+  for (const [k, v] of Object.entries(_PLAYER_NICKNAMES)) {
+    if (key.includes(k) || k.includes(key)) return v;
+  }
+  return null;
+}
+
 /** 英語名（部分一致可）から選手エピソードを取得 */
 function getPlayerLore(nameEn) {
   if (!nameEn) return null;
@@ -2300,26 +2694,144 @@ function getLeagueInfo(teamCode) {
   return { leagueId: isAL ? 103 : 104, leagueLabel: isAL ? 'ア・リーグ' : 'ナ・リーグ' };
 }
 
+// ── バナー用アワード略称変換 ──────────────────────────────────
+// ※ 正規表現マッチ順（具体的なパターンを先に書く必要あり。ここは変更しない）
+const _AWARD_ABBR_LIST = [
+  [/ワールドシリーズMVP/,      'WSMVP'],   // WS MVP（先にマッチさせる）
+  [/リーグ優勝シリーズMVP/,    'LCSMVP'],  // LCS MVP
+  // リーグMVP のみ：'MVP' / 'AL MVP' / 'NL MVP' / '最優秀選手' に限定
+  [/^(AL |NL )?MVP$|最優秀選手/, 'MVP'],
+  [/サイ・ヤング/,              'CY'],
+  [/新人王/,                    'ROY'],
+  [/首位打者/,                  'AVG'],
+  [/最優秀防御率/,              'ERA'],
+  [/本塁打王/,                  'HR'],
+  [/打点王/,                    'RBI'],
+  [/盗塁王/,                    'SB'],
+  [/奪三振王/,                  'K'],
+  [/最多勝/,                    'W'],
+  [/最多セーブ/,                'SV'],
+  [/最多ホールド/,              'HLD'],
+  [/OPS首位/,                   'OPS'],
+  // 個人表彰・特別賞（通常タイトルの後に表記）
+  [/ハンク・アーロン/,          'HAA'],
+  [/ロベルト・クレメンテ/,      'RC'],
+  [/カムバック/,                'CB'],
+  [/ゴールドグラブ/,            'GG'],   // awardToJa は 'ゴールドグラブ賞' を返すので要一致
+  [/シルバースラッガー/,        'SS'],
+  [/盗塁阻止率No\.1|盗塁阻止率リーグ1位/, 'CSR'],  // 捕手専用：盗塁阻止率リーグNo.1
+];
+// ── 表示優先度（マッチ順とは独立。小さいほど先に表示）──
+// MVP 最優先 → 主要タイトル → 特別賞（HAA/RC/CB）→ 個人守備・打撃表彰（GG/SS）
+const _AWARD_PRIORITY = {
+  MVP: 0, WSMVP: 1, LCSMVP: 2,
+  CY: 3, ROY: 4,
+  AVG: 10, ERA: 11, HR: 12, RBI: 13, SB: 14,
+  K: 15, W: 16, SV: 17, HLD: 18, OPS: 19,
+  HAA: 25, RC: 26, CB: 27,
+  GG: 30, SS: 31,
+  CSR: 32,  // 捕手：盗塁阻止率No.1
+};
+// バナーに表示しない（軽微）なアワード
+// バナーに表示しない軽微・重複アワード（awardToJaがnullを返す設計に移行済みだが念のため）
+const _AWARD_SKIP_RE = /週間|月間|オールスター/;
+
+function _abbrevAward(awardJa) {
+  if (_AWARD_SKIP_RE.test(awardJa)) return null;
+  for (const [re, abbr] of _AWARD_ABBR_LIST) {
+    if (re.test(awardJa)) return abbr;
+  }
+  return null;
+}
+
+/**
+ * バナー表示用アワードテキストを生成。
+ * isCareer=true の通算行では _awardsJaByYear + _rankDataByYear から集計し「ERA2 K1」形式で返す。
+ * isCareer=false の年度行では当年のawardsJaから「CY ERA K」形式で返す。
+ */
+function _bannerAwardsText(awardsJa, isCareer) {
+  if (!isCareer) {
+    // 年度カードも優先度順でソート（MVP が先頭に来るよう）
+    const abbrs = [...new Set((awardsJa || []).map(_abbrevAward).filter(Boolean))]
+      .sort((a, b) => (_AWARD_PRIORITY[a] ?? 99) - (_AWARD_PRIORITY[b] ?? 99));
+    return abbrs.join(' ');
+  }
+
+  // 通算: 全年度の受賞歴を集計
+  const countMap = {};
+
+  // ① _awardsJaByYear に蓄積された受賞歴を集計
+  Object.values(_awardsJaByYear).forEach(awards => {
+    awards.forEach(a => {
+      const abbr = _abbrevAward(a);
+      if (abbr) countMap[abbr] = (countMap[abbr] || 0) + 1;
+    });
+  });
+
+  // ② _rankDataByYear のrank=1を補完（統計タイトル：HR/RBI等は/awardsに含まれないため常に全年度チェック）
+  // ※ 旧ロジック「_awardsJaByYear[year]があればスキップ」は通算カードで全年度がスキップされ
+  //    HR・RBIが永遠に反映されないバグの原因だったため廃止。
+  //    代わりに、同じ略称が既にその年の_awardsJaByYearで計上済みなら加算しないことで二重計上を防ぐ。
+  const rankKeyMap = { era:'ERA', k:'K', wins:'W', sv:'SV', hld:'HLD', avg:'AVG', hr:'HR', rbi:'RBI', ops:'OPS', sb:'SB' };
+  Object.entries(_rankDataByYear).forEach(([year, rd]) => {
+    // その年度の/awardsデータから既に計上済みの略称セットを作る（二重計上防止）
+    const alreadyCounted = new Set(
+      (_awardsJaByYear[year] || []).map(a => _abbrevAward(a)).filter(Boolean)
+    );
+    Object.entries(rankKeyMap).forEach(([key, abbr]) => {
+      if (rd[key]?.rank === 1 && !alreadyCounted.has(abbr)) {
+        countMap[abbr] = (countMap[abbr] || 0) + 1;
+      }
+    });
+  });
+
+  if (!Object.keys(countMap).length) return '';
+
+  // 生涯1度しか受賞できない賞はカウントを1に固定
+  const ONE_TIME_AWARDS = new Set(['ROY']);
+  Object.keys(countMap).forEach(abbr => {
+    if (ONE_TIME_AWARDS.has(abbr)) countMap[abbr] = 1;
+  });
+
+  // 優先度順でソート（_AWARD_PRIORITY を使用。MVP が最優先）
+  const sorted = Object.entries(countMap)
+    .sort((a, b) => (_AWARD_PRIORITY[a[0]] ?? 99) - (_AWARD_PRIORITY[b[0]] ?? 99));
+  return sorted.map(([abbr, cnt]) => cnt > 1 ? `${abbr}${cnt}` : abbr).join(' ');
+}
+
 /** MLB Stats API からリーグ年度別ランキングを取得（無料・APIキー不要） */
 async function fetchLeagueLeaders(year, isPitcher, leagueId) {
   const cats = isPitcher
-    ? 'earnedRunAverage,strikeouts,wins,whip'
-    : 'battingAverage,homeRuns,rbi,onBasePlusSlugging,stolenBases';
+    ? 'earnedRunAverage,strikeouts,wins,walksAndHitsPerInningPitched,saves,holds'
+    : 'battingAverage,homeRuns,runsBattedIn,onBasePlusSlugging,onBasePercentage,stolenBases';
+  const statGroup = isPitcher ? 'pitching' : 'hitting';
+  // leagueId が指定されていない場合は全MLBで取得（フォールバック）
+  const leagueParam = leagueId ? `&leagueId=${leagueId}` : '';
   try {
-    const url = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=${cats}&season=${year}&sportId=1&leagueId=${leagueId}&limit=20`;
+    const url = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=${cats}&season=${year}&sportId=1${leagueParam}&statGroup=${statGroup}&limit=30`;
     const res = await fetch(url);
-    if (!res.ok) return {};
+    if (!res.ok) {
+      console.warn(`[LeadersAPI] ${year} HTTP ${res.status}`);
+      return {};
+    }
     const data = await res.json();
     const result = {};
     (data.leagueLeaders || []).forEach(cat => {
+      // rank が "T1" "T2" のような文字列に対応（数字部分のみ抽出）
       result[cat.leaderCategory] = (cat.leaders || []).map(l => ({
-        rank: parseInt(l.rank) || 99,
+        rank: (parseInt(String(l.rank).replace(/\D/g, ''), 10) || 99),
         value: l.value,
         personId: l.person?.id,
       }));
     });
+    const keys = Object.keys(result);
+    const counts = keys.map(k => `${k}:${result[k].length}`).join(', ');
+    console.log(`[LeadersAPI] ${year} L=${leagueId} keys=[${counts}]`);
     return result;
-  } catch { return {}; }
+  } catch(e) {
+    console.warn(`[LeadersAPI] ${year} 例外:`, e.message);
+    return {};
+  }
 }
 
 /**
@@ -2330,45 +2842,75 @@ async function fetchLeagueLeaders(year, isPitcher, leagueId) {
 function buildRankData(leaders, mlbId, leagueLabel, localStats = {}) {
   const result = { leagueLabel };
   const catMap = {
-    earnedRunAverage: 'era', strikeouts: 'k', wins: 'wins', whip: 'whip',
-    battingAverage: 'avg', homeRuns: 'hr', rbi: 'rbi',
-    onBasePlusSlugging: 'ops', stolenBases: 'sb',
+    earnedRunAverage: 'era', strikeouts: 'k', wins: 'wins',
+    walksAndHitsPerInningPitched: 'whip',   // API は "whip" でなくこのキーを返す
+    saves: 'sv', holds: 'hld',
+    battingAverage: 'avg', homeRuns: 'hr', runsBattedIn: 'rbi',
+    onBasePlusSlugging: 'ops', onBasePercentage: 'obp', stolenBases: 'sb',
   };
-  // 小数統計の許容誤差（絶対値）
-  // avg: 3桁精度なので0.005（=5厘）超えたら別人or誤データとみなす
-  const decimalTol = { avg: 0.005, era: 0.020, ops: 0.020, whip: 0.020 };
+
+  const leaderKeys = Object.keys(leaders);
+  console.log(`[buildRankData] mlbId=${mlbId} availableKeys=[${leaderKeys.join(',')}]`);
 
   for (const [apiKey, shortKey] of Object.entries(catMap)) {
     const list = leaders[apiKey] || [];
-    const entry = list.find(e => e.personId === mlbId);
-    if (!entry || entry.rank > 10) continue;
-
-    // クロスバリデーション
-    const localVal = localStats[shortKey];
-    if (localVal !== undefined && localVal !== null && localVal !== '--') {
-      const apiNum   = parseFloat(entry.value);
-      const localNum = parseFloat(String(localVal).replace(/[^0-9.\-]/g, ''));
-      if (!isNaN(apiNum) && !isNaN(localNum)) {
-        const tol = decimalTol[shortKey];
-        if (tol !== undefined) {
-          // 小数統計：絶対差が許容誤差を超えたらスキップ
-          if (Math.abs(apiNum - localNum) > tol) {
-            console.warn(`[CrossVal] ${shortKey} skip: API=${apiNum} local=${localNum} diff=${Math.abs(apiNum - localNum).toFixed(3)}`);
-            continue;
-          }
-        } else {
-          // 整数統計：差が1.5超でスキップ
-          if (Math.abs(apiNum - localNum) > 1.5) {
-            console.warn(`[CrossVal] ${shortKey} skip: API=${apiNum} local=${localNum} diff=${Math.abs(apiNum - localNum)}`);
-            continue;
-          }
+    if (list.length === 0) {
+      // APIキー名が期待と異なる可能性 → 大文字小文字無視でフォールバック検索
+      const lowerApiKey = apiKey.toLowerCase();
+      const altKey = leaderKeys.find(k => k.toLowerCase() === lowerApiKey);
+      if (altKey) {
+        console.log(`[buildRankData] キー別名ヒット: ${apiKey} → ${altKey}`);
+        // 再試行
+        const altList = leaders[altKey] || [];
+        const altEntry = altList.find(e => Number(e.personId) === Number(mlbId));
+        if (altEntry && altEntry.rank <= 10) {
+          console.log(`[buildRankData] ${shortKey}(via ${altKey}): rank=${altEntry.rank} val=${altEntry.value}`);
+          result[shortKey] = { rank: altEntry.rank, value: altEntry.value };
         }
+      } else {
+        console.log(`[buildRankData] ${apiKey}: リストなし`);
       }
+      continue;
     }
 
+    // personId は JSON では数値として返るが念のため Number() で比較
+    const entry = list.find(e => Number(e.personId) === Number(mlbId));
+    if (!entry) {
+      const top3 = list.slice(0, 3).map(e => `id=${e.personId}(${e.rank})`).join(', ');
+      console.log(`[buildRankData] ${shortKey}: 選手未発見 (上位3: ${top3})`);
+      continue;
+    }
+    if (entry.rank > 10) {
+      console.log(`[buildRankData] ${shortKey}: rank=${entry.rank} (10位以下のため除外)`);
+      continue;
+    }
+
+    console.log(`[buildRankData] ${shortKey}: ✓ rank=${entry.rank} val=${entry.value}`);
     result[shortKey] = { rank: entry.rank, value: entry.value };
   }
   return result;
+}
+
+/**
+ * rankData のうちリーグ1位の項目をアワード文字列に変換する。
+ * （MLB Stats API の /awards には含まれない統計タイトルを補完）
+ */
+function rankDataToAwards(rankData) {
+  const titleMap = {
+    sb:   '盗塁王',
+    era:  '最優秀防御率',
+    k:    '奪三振王',
+    wins: '最多勝',
+    sv:   '最多セーブ',
+    hld:  '最多ホールド',
+    avg:  '首位打者',
+    hr:   '本塁打王',
+    rbi:  '打点王',
+    ops:  'OPS首位',
+  };
+  return Object.entries(titleMap)
+    .filter(([key]) => rankData[key]?.rank === 1)
+    .map(([, label]) => label);
 }
 
 /**
@@ -2433,7 +2975,17 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
   const ops   = apiSt.ops  || fmtOPS(row[17]);
   const obp   = apiSt.obp  || fmtRate(row[16]);
   const sb    = parseInt(apiSt.stolenBases ?? getSB(row)) || 0;
+  const hits  = parseInt(apiSt.hits        ?? 0)        || 0;
   const games = parseInt(apiSt.gamesPlayed ?? row[6]) || 0;
+  // 重要度でソートした受賞歴（シーズンタイトル→特別賞の順。オールスター等は除外済み）
+  const AWARD_TOP = ['MVP', 'サイ・ヤング', '新人王', '首位打者', '本塁打王', '打点王', '盗塁王', '奪三振王',
+                     '最優秀防御率', '最多勝', '最多セーブ', 'ゴールドグラブ', 'シルバースラッガー',
+                     'ハンク・アーロン', 'ロベルト・クレメンテ', 'カムバック'];
+  const awardsJaSorted = [...awardsJa].sort((a, b) => {
+    const ai = AWARD_TOP.findIndex(t => a.includes(t));
+    const bi = AWARD_TOP.findIndex(t => b.includes(t));
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+  });
   const opsN  = parseFloat(ops) || 0;
   const avgN  = parseFloat(avg) || 0;
   const obpN  = parseFloat(obp) || 0;
@@ -2485,11 +3037,14 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     }
     if (topText) lines.push(topText);
 
-    // 行4: lore OR 副次的な特筆
+    // 行4: 異名（nickname）優先 → lore → OPS補足
+    const nickH = getPlayerNickname(g_mlbNameEn);
     const loreH = getPlayerLore(g_mlbNameEn);
-    if (loreH && lines.length < 4) {
+    if (nickH && lines.length < 5) {
+      lines.push(nickH.line);
+    } else if (loreH && lines.length < 5) {
       lines.push(loreH.ep);
-    } else if (!topText && opsN >= 0.900 && lines.length < 4) {
+    } else if (!topText && opsN >= 0.900 && lines.length < 5) {
       lines.push(`通算OPS${ops}はキャリアを通じて一線級打者だった証明で、対戦投手を常に苦しめ続けた。`);
     }
 
@@ -2535,8 +3090,16 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
 
   // 行2：受賞歴 OR 特筆成績（確実なデータのみ使用・APIリーグ順位は使わない）
   if (!isSparsePA) {
-    if (awardsJa.length > 0) {
-      lines.push(`${awardsJa.slice(0,3).join('・')}を受賞し、リーグ最高の打者として名を刻んだシーズン。`);
+    // 捕手専用: 盗塁阻止率No.1を受賞している場合は守備特記を優先表示
+    if (g_isCatcher && awardsJaSorted.some(a => a.includes('盗塁阻止率'))) {
+      const csRateDisp = parseFloat(row[54]);
+      const leadDisp   = parseFloat(row[53]);
+      const csStr  = !isNaN(csRateDisp) ? `盗塁阻止率${csRateDisp}%` : '盗塁阻止率';
+      const ldStr  = !isNaN(leadDisp)   ? `リード${leadDisp}` : '';
+      const suffix = ldStr ? `${ldStr}とともに、` : '';
+      lines.push(`${csStr}はリーグNo.1の鉄壁守備で走者を封じ、${suffix}投手陣の柱として攻守両面でチームを牽引した。`);
+    } else if (awardsJaSorted.length > 0) {
+      lines.push(`${awardsJaSorted.slice(0,3).join('・')}を受賞し、リーグ最高の打者として名を刻んだシーズン。`);
     } else if (hr >= 50) {
       lines.push(`${hr}本塁打という圧倒的な長打力でリーグ全投手を震え上がらせた。`);
     } else if (opsN >= 1.10) {
@@ -2558,13 +3121,16 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     } else if (opsN >= 0.920) {
       lines.push(`出塁率・長打率ともにリーグ水準を大きく上回り、打線の核として機能したシーズン。`);
     }
-  } else if (awardsJa.length > 0) {
-    lines.push(`${awardsJa.slice(0,3).join('・')}を受賞し、リーグ最高の打者として名を刻んだシーズン。`);
+  } else if (awardsJaSorted.length > 0) {
+    lines.push(`${awardsJaSorted.slice(0,3).join('・')}を受賞し、リーグ最高の打者として名を刻んだシーズン。`);
   }
 
   // 行3：記録・スタイル（少出場時は省略）
   if (!isSparsePA) {
-    if (hr >= 73) {
+    // MLB単一シーズン最多安打記録（イチロー2004：262安打）
+    if (hits >= 257) {
+      lines.push(`シーズン${hits}安打を記録し、ジョージ・シスラーが1920年に樹立した257安打の${hits > 257 ? 'MLB新記録を更新。84年ぶりの快挙として球史に永遠に刻まれた' : '記録に並ぶ歴史的快挙'}。`);
+    } else if (hr >= 73) {
       lines.push(`マーク・マグワイアの70本塁打記録を超え、MLB史上最多のシングルシーズン本塁打記録を樹立。`);
     } else if (hr >= 62) {
       lines.push(`ロジャー・マリスの61本塁打記録を打ち破り、MLB新記録を樹立した歴史的快挙。`);
@@ -2606,6 +3172,11 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
   if (!isSparsePA && lines.length < 4) {
     const traj  = trajectory || {};
     const loreS = getPlayerLore(g_mlbNameEn);
+    const nickS = getPlayerNickname(g_mlbNameEn);
+    // ピーク年・受賞年・覚醒年は異名を優先して挿入
+    const isNotableYear = traj.isPeakSeason || traj.isBreakthrough ||
+      awardsJa.some(a => a.includes('MVP') || a.includes('サイ・ヤング') || a.includes('新人王') ||
+                         a.includes('首位打者') || a.includes('本塁打王') || a.includes('打点王'));
     if (hr >= 60 && obpN >= 0.480) {
       lines.push(`出塁率${obp}も記録し、打者として全指標で頂点に立った歴史的シーズン。`);
     } else if (traj.isBreakthrough && traj.prevMetric != null) {
@@ -2617,6 +3188,8 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
       lines.push(`キャリアを通じてのベストシーズンであり、打者として真価を発揮した一年。`);
     } else if (sb >= 30 && hr >= 30 && !lines.some(l => l.includes('30-30'))) {
       lines.push(`30本塁打・30盗塁を同時達成し、パワーとスピードを高次元で両立させた。`);
+    } else if (isNotableYear && nickS) {
+      lines.push(nickS.line);
     } else if (loreS) {
       lines.push(loreS.ep);
     }
@@ -2707,9 +3280,14 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     }
     if (topText) lines.push(topText);
 
-    // lore（歴代エピソード）が未追加で余裕があれば追加
+    // 異名（nickname）優先 → lore → 余白があれば追加
+    const nickPC = getPlayerNickname(g_mlbNameEn);
     const lorePC = getPlayerLore(g_mlbNameEn);
-    if (lorePC && lines.length < 4) lines.push(lorePC.ep);
+    if (nickPC && lines.length < 5) {
+      lines.push(nickPC.line);
+    } else if (lorePC && lines.length < 5) {
+      lines.push(lorePC.ep);
+    }
 
     // 最終行: 締め（常に1行）
     const closings = [
@@ -2836,10 +3414,15 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     lines.push(styleLines[wins % styleLines.length]);
   }
 
-  // 行4：軌跡ストーリー OR lore（lines.length < 4 のときのみ）
+  // 行4：軌跡ストーリー OR 異名 OR lore（lines.length < 4 のときのみ）
   if (lines.length < 4) {
-    const traj  = trajectory || {};
+    const traj   = trajectory || {};
     const lorePS = getPlayerLore(g_mlbNameEn);
+    const nickPS = getPlayerNickname(g_mlbNameEn);
+    // ピーク年・受賞年は異名を優先して挿入
+    const isNotableYearP = traj.isPeakSeason || traj.isBreakthrough ||
+      awardsJa.some(a => a.includes('サイ・ヤング') || a.includes('MVP') || a.includes('新人王') ||
+                         a.includes('最優秀防御率') || a.includes('奪三振王') || a.includes('最多勝'));
     if (traj.isBreakthrough && traj.prevMetric != null) {
       lines.push(`前年防御率${traj.prevMetric.toFixed(2)}から大幅に改善し、制球力を磨き上げて覚醒した転機のシーズン。`);
     } else if (traj.isImprovement && traj.prevMetric != null) {
@@ -2849,6 +3432,8 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
       lines.push(`キャリアを通じてのベストシーズンであり、真のエースとして球界に君臨した一年。`);
     } else if (traj.isFirstYear) {
       lines.push(`メジャー${traj.yearsInLeague ? traj.yearsInLeague + '年目' : '初年度'}にして即戦力として台頭し、将来のエース候補として球界を驚かせた。`);
+    } else if (isNotableYearP && nickPS) {
+      lines.push(nickPS.line);
     } else if (lorePS) {
       lines.push(lorePS.ep);
     }
@@ -2884,7 +3469,15 @@ function buildRetsudenFromMLBData(row, mlbData, rankData = {}, trajectory = {}) 
 
 // ── 列伝を生成してカードに反映（APIキー不要） ─────────────────
 async function fetchRetsudenFromAPI(row) {
-  // ① MLB Stats API からシーズン成績・受賞歴を取得
+  const yearKey = String(row[1] || '');
+  const isCareer = !/^\d{4}$/.test(yearKey);
+
+  // ① 通算行の場合：全キャリア受賞歴を一括取得して _awardsJaByYear に格納
+  if (isCareer && g_mlbId) {
+    await _fetchAndCacheAllAwards(g_mlbId);
+  }
+
+  // ② MLB Stats API からシーズン成績・受賞歴を取得
   let mlbData = { stats: {}, awards: [] };
   if (g_mlbId && row[1]) {
     console.log(`[MLB Stats API] ID=${g_mlbId} year=${row[1]} 取得中…`);
@@ -2892,8 +3485,23 @@ async function fetchRetsudenFromAPI(row) {
     console.log('[MLB Stats API] 受賞数:', mlbData.awards.length, '/ stats keys:', Object.keys(mlbData.stats).length);
   }
 
-  // ② リーグ年度別ランキング取得は精度が確保できないため停止
-  const rankData = {};
+  // ③ リーグ年度別ランキング取得（1位のみアワードとして使用）
+  let rankData = {};
+  if (g_mlbId && row[1] && /^\d{4}$/.test(yearKey)) {
+    try {
+      const { leagueId, leagueLabel } = getLeagueInfo(row[2]);
+      const localStats = g_isPitcher
+        ? { era: row[5], k: parseInt(row[15]) || null, wins: parseInt(row[3]) || null, whip: row[17] }
+        : { avg: row[15], hr: parseInt(row[9]) || null, rbi: parseInt(row[10]) || null,
+            ops: row[17], sb: getSB(row) };
+      const leaders = await fetchLeagueLeaders(row[1], g_isPitcher, leagueId);
+      rankData = buildRankData(leaders, g_mlbId, leagueLabel, localStats);
+      _rankDataByYear[String(row[1])] = rankData;  // 年度別キャッシュに保存
+      console.log('[LeagueLeaders] rankData:', JSON.stringify(rankData));
+    } catch (e) {
+      console.warn('[LeagueLeaders] 取得失敗:', e.message);
+    }
+  }
 
   // ③ 前年比較による軌跡分析（同期・g_dataRows 使用）
   const trajectory = analyzeCareerTrajectory(row);
@@ -2902,44 +3510,278 @@ async function fetchRetsudenFromAPI(row) {
   else if (trajectory.isPeakSeason) console.log('[Trajectory] キャリアベスト検出');
 
   const retsuden = buildRetsudenFromMLBData(row, mlbData, rankData, trajectory);
-  const awardsJa = (mlbData.awards || []).map(awardToJa).filter(Boolean);
+  // MLB公式アワード + リーグリーダー1位タイトルをマージ（重複除去）
+  const apiAwards   = (mlbData.awards || []).map(awardToJa).filter(Boolean);
+  const rankAwards  = rankDataToAwards(rankData);
+  const awardsJa    = [...new Set([...apiAwards, ...rankAwards])];
+  if (rankAwards.length) console.log('[LeagueLeaders] 追加アワード:', rankAwards);
+
+  // 捕手専用：盗塁阻止率が40%以上（単年）または37%以上（通算）はリーグNo.1タイトルとして追加
+  // ※ league-leading の目安。ExcelのcsRate(row[54])を参照
+  if (g_isCatcher) {
+    const csRateVal  = parseFloat(row[54]);
+    const isCareerRow = !/^\d{4}$/.test(String(row[1] ?? '').trim());
+    const csThreshold = isCareerRow ? 37 : 40;
+    if (!isNaN(csRateVal) && csRateVal >= csThreshold && !awardsJa.includes('盗塁阻止率No.1')) {
+      awardsJa.push('盗塁阻止率No.1');
+    }
+  }
+
   const cardType  = buildCardType(row, awardsJa);
+
+  // 年度別アワードキャッシュに保存（通算行は除外）
+  if (!isCareer) _awardsJaByYear[yearKey] = awardsJa;
 
   // 変化球異名（投手のみ）
   const pitchNicknames = g_isPitcher ? (getPitchNicknames(g_mlbNameEn) || {}) : {};
 
-  return { retsuden, cardType, pitchNicknames };
+  return { retsuden, cardType, pitchNicknames, awardsJa, isCareer };
 }
 
 // カード上のcardTypeラベルと変化球ニックネームを更新
-function updateCardExtras(cardType, pitchNicknames) {
+function updateCardExtras(cardType, pitchNicknames, awardsJa, isCareer) {
+  // 通算バナー再描画・テーマ再適用のために最新状態を保存
+  g_lastAwardsJa   = awardsJa || [];
+  g_lastIsCareer   = !!isCareer;
+  g_lastCardExtras = { cardType, pitchNicknames, awardsJa: awardsJa || [], isCareer: !!isCareer };
   // ① 右上の肩書ラベルを更新
   if (cardType) {
     const el = document.querySelector('#card-root .card-type');
     if (el) el.textContent = cardType;
   }
-  // ② 変化球ニックネームを球種名セルに追記（1行表示・!important対応）
+  // ② 変化球ニックネームを球種名セルに追記
+  // 球種名は通常フォント(12px)のまま、異名は次行に小さく黄色ボールドで表示
   if (pitchNicknames && typeof pitchNicknames === 'object') {
     Object.entries(pitchNicknames).forEach(([pitchName, nickname]) => {
       if (!nickname) return;
       document.querySelectorAll('#card-root td.pn[data-pitch]').forEach(td => {
         if (td.dataset.pitch === pitchName) {
-          const label = `${pitchName}（${nickname}）`;
-          td.textContent = label;
-          // 文字数に応じてフォントを縮小（!important で CSS を上書き）
-          const len = label.length;
-          const fs = len > 14 ? '7px' : len > 11 ? '8px' : len > 8 ? '9px' : '11px';
-          td.style.setProperty('font-size', fs, 'important');
-          td.style.setProperty('letter-spacing', '-0.5px', 'important');
-          td.style.setProperty('white-space', 'nowrap', 'important');
+          // 球種名と異名を同一行に横並びで表示（改行なし）
+          // 球種名：12px / 異名（）：8.5px・黄色ボールド・同一行
+          td.innerHTML =
+            `<span style="font-size:12px;white-space:nowrap;">${escapeHtml(pitchName)}</span>` +
+            `<span style="font-size:8.5px;color:#ffdd33;font-weight:900;` +
+            `letter-spacing:0;white-space:nowrap;">（${escapeHtml(nickname)}）</span>`;
+          td.style.setProperty('white-space',   'nowrap',  'important');
+          td.style.setProperty('overflow',      'hidden',  'important');
+          td.style.setProperty('text-overflow', 'ellipsis','important');
+          td.style.setProperty('padding',       '1px 4px', 'important');
+          td.style.removeProperty('font-size');
+          td.style.removeProperty('letter-spacing');
+          td.style.removeProperty('line-height');
         }
       });
     });
+  }
+  // ③ バナーのアワード略称を更新
+  const bannerEl = document.querySelector('#card-root .banner-awards');
+  _setBannerText(bannerEl, _bannerAwardsText(awardsJa || [], !!isCareer));
+
+  // ④ タイトル加点（基本スコアが100未満の場合のみ）
+  _applyTitleBonus(awardsJa || [], !!isCareer);
+}
+
+/**
+ * バナーにテキストをセットし、幅に合わせてフォントサイズを自動縮小する共通処理。
+ */
+function _setBannerText(bannerEl, text) {
+  if (!bannerEl) return;
+  if (!text) {
+    bannerEl.textContent = '';
+    bannerEl.style.display = 'none';
+    return;
+  }
+  bannerEl.textContent = `タイトル: ${text}`;
+  bannerEl.style.display = '';
+  bannerEl.style.fontSize = '';
+  bannerEl.style.letterSpacing = '';
+  requestAnimationFrame(() => {
+    let fs = 13;
+    bannerEl.style.fontSize = `${fs}px`;
+    bannerEl.style.letterSpacing = '2px';
+    while (bannerEl.scrollWidth > bannerEl.offsetWidth && fs > 8) {
+      fs -= 0.5;
+      bannerEl.style.fontSize = `${fs}px`;
+      if (fs <= 11) bannerEl.style.letterSpacing = '1px';
+      if (fs <= 9)  bannerEl.style.letterSpacing = '0.5px';
+    }
+  });
+}
+
+/**
+ * 通算バナーを _rankDataByYear の最新内容で再描画する。
+ * _enrichBackCrownsAsync 完了後に呼ぶことで、統計タイトルが即時反映される。
+ */
+function _refreshCareerBanner() {
+  if (!g_lastIsCareer) return;
+  const bannerEl = document.querySelector('#card-root .banner-awards');
+  if (!bannerEl) return;
+  const text = _bannerAwardsText(g_lastAwardsJa, true);
+  _setBannerText(bannerEl, text);
+  // 通算データが揃ったタイミングでタイトル加点も再適用（stars変化時はテーマ再描画も行う）
+  _applyTitleBonus(g_lastAwardsJa, true);
+}
+
+/**
+ * タイトル加点ボーナスを計算する。
+ * 基本スコアが100以上の場合は加点しない。
+ * 通算カードでは各タイトル種は複数受賞でも1回分のみカウント。
+ */
+function _calcTitleBonus(awardsJa, isCareer) {
+  const BONUS_MAP = {
+    MVP:5, WSMVP:3, LCSMVP:3, CY:5,
+    ERA:2, K:2, W:2, SV:2, HLD:2,
+    ROY:3, AVG:2, HR:2, RBI:2, SB:3,
+    OPS:2, CSR:3, GG:2, SS:2,
+    HAA:1, RC:1, CB:1,
+  };
+  let abbrs;
+  if (isCareer) {
+    // 通算: _awardsJaByYear の全アワード + _rankDataByYear のrank=1 を統合しタイプ別に重複除去
+    const allAwards = Object.values(_awardsJaByYear).flat();
+    const fromAwards = allAwards.map(a => _abbrevAward(a)).filter(Boolean);
+    const rankKeyMap = { era:'ERA', k:'K', wins:'W', sv:'SV', hld:'HLD',
+                         avg:'AVG', hr:'HR', rbi:'RBI', ops:'OPS', sb:'SB' };
+    const fromRank = [];
+    Object.values(_rankDataByYear).forEach(rd => {
+      Object.entries(rankKeyMap).forEach(([key, abbr]) => {
+        if (rd[key]?.rank === 1) fromRank.push(abbr);
+      });
+    });
+    abbrs = [...new Set([...fromAwards, ...fromRank])];
+  } else {
+    // 単年: awardsJa をそのまま使用（同年で重複はないが念のため除去）
+    abbrs = [...new Set(awardsJa.map(a => _abbrevAward(a)).filter(Boolean))];
+  }
+  const rawBonus = abbrs.reduce((sum, abbr) => sum + (BONUS_MAP[abbr] || 0), 0);
+  // 通算カードは加点を半減（ROUND(÷2)）
+  return isCareer ? Math.round(rawBonus / 2) : rawBonus;
+}
+
+/** スコア → 星数変換（_doGenerateと同じロジック） */
+function _scoreToStars(score) {
+  return score > 99 ? 6
+       : score >= 90 ? 5
+       : score >= 80 ? 4
+       : score >= 70 ? 3
+       : score >= 60 ? 2
+       : score >= 50 ? 1 : 0;
+}
+
+/**
+ * 総合力スコアが星ティアを越えた場合にカード表面を新テーマで再描画する。
+ * CSS・カードHTML・列伝・バナー・ニックネームをすべて再適用する。
+ */
+function _reapplyCardTheme(newScore) {
+  const newStars = _scoreToStars(newScore);
+  currentStars = newStars;
+  const t = getThemeVars(newStars);
+
+  // ① CSS全体を新テーマで更新
+  const styleEl = document.getElementById('card-dynamic-css');
+  if (styleEl) styleEl.textContent = getCardCSS(t);
+
+  // ② カード表面HTMLを再生成して差し替え
+  if (!g_selectedRow || !g_rows) return;
+  const nameEn = g_mlbNameEn || '';
+  let newContent = g_isPitcher
+    ? buildPitcherCard(g_selectedRow, g_rows, g_resolvedPhotoUrl || '', t, g_isPeakRow, nameEn)
+    : buildHitterCard(g_selectedRow, g_rows, g_resolvedPhotoUrl || '', t, g_isCatcher, g_isPeakRow, nameEn);
+  // __PHOTO__が残っていれば置換
+  if (g_resolvedPhotoUrl) newContent = newContent.replace(/__PHOTO__/g, g_resolvedPhotoUrl);
+
+  const frontCard = document.querySelector('#card-root .card-front-face .card');
+  if (frontCard) frontCard.innerHTML = newContent;
+
+  // ③ 再描画後の後処理（RAF内で実行してレイアウト確定後に）
+  requestAnimationFrame(() => {
+    fitPlayerNames();
+
+    // 総合力数値を更新
+    const powerEl = document.querySelector('#card-root .power-value');
+    if (powerEl) {
+      powerEl.textContent = String(newScore);
+      if (newScore >= 100) powerEl.style.fontSize = '26px';
+    }
+
+    // カード追加情報を再適用
+    if (g_lastCardExtras) {
+      const { cardType, pitchNicknames, awardsJa, isCareer } = g_lastCardExtras;
+      const cardTypeEl = document.querySelector('#card-root .card-type');
+      if (cardTypeEl && cardType) cardTypeEl.textContent = cardType;
+
+      // 球種ニックネーム
+      if (pitchNicknames && typeof pitchNicknames === 'object') {
+        Object.entries(pitchNicknames).forEach(([pitchName, nickname]) => {
+          if (!nickname) return;
+          document.querySelectorAll('#card-root td.pn[data-pitch]').forEach(td => {
+            if (td.dataset.pitch !== pitchName) return;
+            td.innerHTML =
+              `<span style="font-size:12px;white-space:nowrap;">${escapeHtml(pitchName)}</span>` +
+              `<span style="font-size:8.5px;color:#ffdd33;font-weight:900;letter-spacing:0;white-space:nowrap;">（${escapeHtml(nickname)}）</span>`;
+            td.style.setProperty('white-space',   'nowrap',   'important');
+            td.style.setProperty('overflow',      'hidden',   'important');
+            td.style.setProperty('text-overflow', 'ellipsis', 'important');
+            td.style.setProperty('padding',       '1px 4px',  'important');
+            td.style.removeProperty('font-size');
+            td.style.removeProperty('letter-spacing');
+            td.style.removeProperty('line-height');
+          });
+        });
+      }
+
+      // バナー
+      const bannerEl = document.querySelector('#card-root .banner-awards');
+      if (bannerEl) _setBannerText(bannerEl, _bannerAwardsText(awardsJa, isCareer));
+    }
+
+    // 列伝テキストを再適用
+    if (g_lastRetsuden) updateRetsuden(g_lastRetsuden);
+  });
+}
+
+/**
+ * タイトル加点をDOMの総合力表示に反映する。
+ * 基本スコアが100以上の場合は何もしない。
+ * 星数が変わった場合はカードテーマごと再描画する。
+ */
+function _applyTitleBonus(awardsJa, isCareer) {
+  const bonus = _calcTitleBonus(awardsJa, isCareer);
+  if (bonus <= 0) return;
+
+  // 100点以下は全加点、100点を超える分はROUND(超過分÷3)で計算
+  let newScore;
+  if (g_baseOverallScore >= 100) {
+    // 既に100以上：全加点をROUND(÷3)で追加
+    newScore = g_baseOverallScore + Math.round(bonus / 3);
+  } else if (g_baseOverallScore + bonus > 100) {
+    // 100を超える場合：100までは全点、超えた分をROUND(÷3)
+    const over = (g_baseOverallScore + bonus) - 100;
+    newScore = 100 + Math.round(over / 3);
+  } else {
+    // 100以内に収まる：全加点適用
+    newScore = g_baseOverallScore + bonus;
+  }
+  const newStars = _scoreToStars(newScore);
+
+  console.log(`[TitleBonus] base=${g_baseOverallScore} bonus=${bonus}${isCareer ? '(通算÷2)' : ''} → ${newScore} stars:${currentStars}→${newStars}`);
+
+  if (newStars !== currentStars) {
+    // 星数が変わった → テーマごと再描画
+    _reapplyCardTheme(newScore);
+  } else {
+    // 同じ星数 → 数値のみ更新
+    const powerEl = document.querySelector('#card-root .power-value');
+    if (powerEl) {
+      powerEl.textContent = String(newScore);
+      if (newScore >= 100) powerEl.style.fontSize = '26px';
+    }
   }
 }
 
 // 列伝エリアを更新（カード描画後に呼ぶ）
 function updateRetsuden(text) {
+  g_lastRetsuden = text || '';   // テーマ再適用時に再描画できるよう保存
   const el = document.getElementById('retsuden-area');
   if (!el) return;
   // 改行を全角スペース区切りに変換（改行なし・連続テキスト）
@@ -3223,6 +4065,10 @@ function toggleCardFlip(event) {
   const flipping = !inner.classList.contains('flipped');
   inner.classList.toggle('flipped');
   _syncFlipPointerEvents(inner, flipping);
+  // 裏面に切り替わる時：フリップアニメーション(~300ms)後に王冠マークを適用
+  if (flipping) {
+    setTimeout(() => _applyBackTableCrowns(), 350);
+  }
 }
 
 // 裏面クリックで表面へ戻る
@@ -3267,6 +4113,90 @@ function hitterTeamDisplay(row, allRows) {
   const primaryCode = String(primary[2] || '').toUpperCase();
   if (teamRaw === 'TOT') return primaryCode + nonTot.length;
   return teamRaw;
+}
+
+// ── 順位ランクHTML生成 ──
+// 数値テキスト全体に蛍光グロー色をかけ、右上に順位数字（1/2/3）を絶対配置
+function _rankWrapHtml(val, rank) {
+  if (rank < 1 || rank > 3) return val;
+  return `<span class="rank-val rank-val-${rank}">${val}</span>` +
+         `<span class="rank-badge rank-badge-${rank}">${rank}</span>`;
+}
+
+// 既に描画済みの裏面テーブルに王冠マークを適用（DOM更新）
+function _applyBackTableCrowns() {
+  const backFace = document.getElementById('card-back-face');
+  if (!backFace) return;
+  backFace.querySelectorAll('td[data-statkey][data-year]').forEach(td => {
+    const year  = td.dataset.year;
+    const key   = td.dataset.statkey;
+    const val   = td.dataset.val ?? '';        // 元の数値テキスト
+    const rdYear = _rankDataByYear[year];
+    if (!rdYear) return;
+    const entry = rdYear[key];
+    const rank  = entry ? entry.rank : 99;
+    if (rank <= 3) {
+      td.setAttribute('data-rank', rank);
+      td.innerHTML = _rankWrapHtml(val, rank);
+    } else {
+      td.removeAttribute('data-rank');
+      td.innerHTML = val;                      // 王冠なし→元テキストに戻す
+    }
+  });
+}
+
+// 未取得年度のリーグ順位データを非同期で一括取得し、王冠マークを更新
+async function _enrichBackCrownsAsync() {
+  if (!g_dataRows || !g_mlbId) return;
+  const hdr = g_headers ? g_headers[0] || [] : [];
+
+  // 未取得年度とその行データを収集
+  // 年度ごとに全行を保持し、チームコード取得時にTOT行を避ける
+  const yearRowsAll = {};
+  g_dataRows.forEach(r => {
+    const y = String(r[1] ?? '');
+    if (/^\d{4}$/.test(y)) {
+      if (!yearRowsAll[y]) yearRowsAll[y] = [];
+      yearRowsAll[y].push(r);
+    }
+  });
+
+  // 未取得年度のみ処理
+  const years = Object.keys(yearRowsAll)
+    .filter(y => !_rankDataByYear[y])
+    .sort();
+  if (years.length === 0) {
+    // 全年度取得済み：王冠・通算バナーを即時更新して終了
+    _applyBackTableCrowns();
+    _refreshCareerBanner();
+    return;
+  }
+
+  // 全年度を並列フェッチ（速度優先。件数は最大20年程度なので並列でも問題なし）
+  const fetchOne = async (year) => {
+    if (_rankDataByYear[year]) return;  // 取得済みならスキップ
+    try {
+      const rows = yearRowsAll[year];
+      const totRow = rows.find(r => String(r[2] ?? '').toUpperCase() === 'TOT') || rows[rows.length - 1];
+      const teamRow = rows.find(r => {
+        const tc = String(r[2] ?? '').toUpperCase();
+        return tc !== 'TOT' && tc !== '' && tc !== '--';
+      }) || rows[0];
+      const { leagueId } = getLeagueInfo(String(teamRow[2] ?? ''));
+      const leaders = await fetchLeagueLeaders(year, g_isPitcher, leagueId);
+      _rankDataByYear[year] = buildRankData(leaders, g_mlbId, '', {});
+      console.log(`[Crowns] ${year} L=${leagueId}`, JSON.stringify(_rankDataByYear[year]));
+    } catch (e) {
+      console.warn(`[Crowns] ${year} 取得失敗:`, e.message);
+      _rankDataByYear[year] = {};
+    }
+    _applyBackTableCrowns();  // 各年度完了次第即座に更新
+  };
+  await Promise.all(years.map(fetchOne));
+
+  // 全年度完了後：最終まとめ更新 + 通算バナー再描画
+  _applyBackTableCrowns();
+  _refreshCareerBanner();
 }
 
 // 裏面HTMLを生成してDOMに注入
@@ -3356,18 +4286,35 @@ function buildAndAttachCardBack() {
     ? new Set(['防御率', '勝利', 'SV', 'K'])
     : new Set(['打率', '本塁打', '打点']);
 
+  // ── 列名 → rankDataキー マッピング ──
+  const _COL_RANK_MAP = {
+    '防御率':'era', '勝利':'wins', 'SV':'sv', 'K':'k', 'WHIP':'whip', 'HLD':'hld',
+    '打率':'avg', '本塁打':'hr', '打点':'rbi', '盗塁':'sb', 'OPS':'ops',
+  };
+
   // ── テーブルHTML ──
   const thead = '<tr>' + cols.map(c => `<th>${escapeHtml(c.label)}</th>`).join('') + '</tr>';
   const tbody = g_dataRows.map(row => {
+    const rowYear = String(row[1] ?? '');
+    const rdYear  = /^\d{4}$/.test(rowYear) ? (_rankDataByYear[rowYear] || null) : null;
     const cells = cols.map((c, i) => {
       const v = c.fn(row);
       const s = (v === null || v === undefined || v === '') ? '--' : String(v);
       let cls = '';
-      if      (i === 0)              cls = ' class="cb-year"';
-      else if (i === 1)              cls = ' class="cb-team"';
+      if      (i === 0)               cls = ' class="cb-year"';
+      else if (i === 1)               cls = ' class="cb-team"';
       else if (hiLabels.has(c.label)) cls = ' class="cb-hi"';
       else if (ppLabels.has(c.label)) cls = ' class="cb-pp"';
-      return `<td${cls}>${escapeHtml(s)}</td>`;
+      // 王冠マーク
+      const rankKey   = _COL_RANK_MAP[c.label];
+      const rankEntry = (rankKey && rdYear) ? rdYear[rankKey] : null;
+      const rank      = rankEntry ? rankEntry.rank : 99;
+      const rankAttrs = rankKey
+        ? ` data-statkey="${rankKey}" data-year="${rowYear}" data-val="${escapeHtml(s)}"` +
+          (rank <= 3 ? ` data-rank="${rank}"` : '')
+        : '';
+      const inner = (rank <= 3 && rankKey) ? _rankWrapHtml(escapeHtml(s), rank) : escapeHtml(s);
+      return `<td${cls}${rankAttrs}>${inner}</td>`;
     });
     return '<tr>' + cells.join('') + '</tr>';
   }).join('');
@@ -3386,9 +4333,16 @@ function buildAndAttachCardBack() {
       `</div>` +
     `</div>`;
 
-  // 裏面 face 全体をクリック対象にする
+  // 未取得年度の順位データを非同期で補完し、王冠マークを更新
+  _enrichBackCrownsAsync();
+
+  // 裏面 face クリックで表面へ（右端 ~38px＝約1cm はスクロールバー領域のため除外）
   backFace.style.cursor = 'pointer';
-  backFace.addEventListener('click', flipToFront);
+  backFace.addEventListener('click', function(e) {
+    const rect = backFace.getBoundingClientRect();
+    if (e.clientX > rect.right - 38) return;  // 右端1cmはフリップしない
+    flipToFront();
+  });
 }
 
 // ===== 名前はみ出し防止 =====
@@ -3519,11 +4473,16 @@ async function _doGenerate(photoInput) {
         const brF = /^\d{4}$/.test(yr) ? getBRefFIP(yr) : null;
         return brF !== null ? parseFloat(brF) : calcFIP(selectedRow);
       })();
-      overallScore = calcPitcherOverall(selectedRow, _fipOvr);
+      // WAR: 通算行は g_careerWAR（IP加重平均）を優先、単年は resolveWAR で取得
+      const realWarP = g_careerWAR ?? (g_headers ? resolveWAR(selectedRow, g_headers[0], true) : '--');
+      overallScore = calcPitcherOverall(selectedRow, _fipOvr, realWarP);
     } else {
       const realWarG = g_careerWAR ?? (g_headers ? resolveWAR(selectedRow, g_headers[0], false) : '--');
       overallScore = calcHitterOverall(selectedRow, g_isCatcher, realWarG);
     }
+    g_baseOverallScore = overallScore; // タイトル加点前のスコアを保存
+    g_selectedRow      = selectedRow;
+    g_isPeakRow        = isPeakRow;
 
     const stars = overallScore > 99 ? 6
                 : overallScore >= 90 ? 5
@@ -3548,10 +4507,13 @@ async function _doGenerate(photoInput) {
     if (photoInput && photoInput.files && photoInput.files[0]) {
       const photoURL = URL.createObjectURL(photoInput.files[0]);
       cardContent = cardContent.replace(/__PHOTO__/g, photoURL);
+      g_resolvedPhotoUrl = photoURL;
     } else if (g_mlbHeadshot) {
       cardContent = cardContent.replace(/__PHOTO__/g, g_mlbHeadshot);
+      g_resolvedPhotoUrl = g_mlbHeadshot;
     } else {
       cardContent = cardContent.replace(/__PHOTO__/g, '');
+      g_resolvedPhotoUrl = '';
     }
 
     // スコープ付き CSS をページに注入
@@ -3606,11 +4568,11 @@ async function _doGenerate(photoInput) {
 
     area.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-    // AI列伝生成（非同期）― JSON形式で retsuden / cardType / pitchNicknames を取得
+    // AI列伝生成（非同期）― JSON形式で retsuden / cardType / pitchNicknames / awardsJa を取得
     fetchRetsudenFromAPI(selectedRow)
       .then(result => {
         updateRetsuden(result.retsuden || result);
-        updateCardExtras(result.cardType || null, result.pitchNicknames || {});
+        updateCardExtras(result.cardType || null, result.pitchNicknames || {}, result.awardsJa || [], !!result.isCareer);
       })
       .catch(err => {
         console.warn('AI列伝エラー（統計テキストで代替）:', err.message);
