@@ -13,6 +13,15 @@ const { spawnSync, spawn } = require('child_process');
 const PORT    = 3941;
 const OUT_DIR = __dirname;
 
+// ── .env 読み込み ────────────────────────────────────────────────────────────
+const ENV_PATH = path.join(__dirname, '.env');
+if (fs.existsSync(ENV_PATH)) {
+  fs.readFileSync(ENV_PATH, 'utf8').split(/\r?\n/).forEach(line => {
+    const m = line.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.+)$/);
+    if (m) process.env[m[1]] = m[2].trim();
+  });
+}
+
 // ── Chrome detection ──────────────────────────────────────────────────────────
 function findChrome() {
   const lapp = process.env.LOCALAPPDATA || '';
@@ -56,6 +65,102 @@ function mlbGet(url) {
       });
     }).on('error', reject);
   });
+}
+
+// ── Anthropic API (Claude + web search) ──────────────────────────────────────
+function httpsPost(options, bodyStr) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, res => {
+      let raw = '';
+      res.on('data', c => raw += c);
+      res.on('end', () => resolve({ status: res.statusCode, body: raw }));
+    });
+    req.on('error', reject);
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
+
+/**
+ * Claude にウェブ検索させて投手の球種データを推定。
+ * 戻り値: { pitches: [{name, speed, pct}, ...], note: '' } または null
+ */
+async function callClaudeForPitchData(apiKey, playerName, years) {
+  const prompt =
+`あなたはMLBの球種データ専門家です。以下の投手の球種情報をウェブ検索で調べ、JSONのみで回答してください。
+
+投手名: ${playerName}
+対象年度: ${years.join(', ')}（この期間を代表する球種レパートリー）
+
+以下フォーマットのJSONのみを返してください（説明文・マークダウン・コードブロック不要）:
+{"pitches":[{"name":"4-Seam Fastball","speed":92,"pct":55},{"name":"Slider","speed":83,"pct":30},{"name":"Changeup","speed":80,"pct":15}],"note":"データ根拠"}
+
+・球種名は必ず次のいずれか: 4-Seam Fastball, Two-Seam Fastball, Sinker, Slider, Sweeper, Changeup, Circle Change, Curveball, 12-6 Curve, Cutter, Splitter, Forkball, Split Finger
+・speed は実際の球速(mph)を整数で記載
+・pct は投球割合(合計100になるよう整数で調整)
+・球種は最大5種類、使用率5%未満は省略`;
+
+  const messages = [{ role: 'user', content: prompt }];
+
+  for (let turn = 0; turn < 8; turn++) {
+    const body = JSON.stringify({
+      model: 'claude-opus-4-5',
+      max_tokens: 1024,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages,
+    });
+    let parsed;
+    try {
+      const { body: raw } = await httpsPost({
+        hostname: 'api.anthropic.com',
+        port: 443,
+        path: '/v1/messages',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'web-search-2025-03-05',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      }, body);
+      parsed = JSON.parse(raw);
+    } catch { break; }
+
+    if (parsed.error) throw new Error(parsed.error.message || 'Claude API error');
+
+    const content    = parsed.content || [];
+    const stopReason = parsed.stop_reason;
+
+    if (stopReason === 'end_turn') {
+      const textBlock = content.find(b => b.type === 'text');
+      if (!textBlock) break;
+      const m = textBlock.text.trim().match(/\{[\s\S]*\}/);
+      if (!m) break;
+      try { return JSON.parse(m[0]); } catch { break; }
+    }
+
+    if (stopReason === 'tool_use') {
+      messages.push({ role: 'assistant', content });
+      const autoResults = content.filter(b => b.type === 'tool_result');
+      if (autoResults.length > 0) {
+        messages.push({ role: 'user', content: '検索完了。JSONのみ返してください。' });
+        continue;
+      }
+      const toolUseBlocks = content.filter(b => b.type === 'tool_use');
+      if (!toolUseBlocks.length) break;
+      messages.push({ role: 'user', content: toolUseBlocks.map(b => ({ type: 'tool_result', tool_use_id: b.id, content: '' })) });
+      continue;
+    }
+
+    const textBlock = content.find(b => b.type === 'text');
+    if (textBlock) {
+      const m = textBlock.text.match(/\{[\s\S]*\}/);
+      if (m) { try { return JSON.parse(m[0]); } catch {} }
+    }
+    break;
+  }
+  return null;
 }
 
 async function searchPlayers(name) {
@@ -845,7 +950,7 @@ async function fetchMLBTheShowCard(playerName) {
 //         → pct列は「同一年の合計≈100」ヒューリスティックで特定
 //  Step2: 2016年以前の未取得年 → MLB The Show API で球種・球速・球威を取得
 //         （Brooksbaseball.net は廃止のため削除）
-async function fetchBrowserData(slug, id, years, onProgress, playerName = '') {
+async function fetchBrowserData(slug, id, years, onProgress, playerName = '', apiKey = '') {
   const chromePath = findChrome();
   if (!chromePath) throw new Error('Chromeが見つかりません。Google ChromeまたはEdgeをインストールしてください。');
 
@@ -1050,7 +1155,37 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '') {
           }
           onProgress(`MLB The Show: ${preShowYears.length} 年 × ${showCard.pitches.length} 球種 設定完了`);
         } else {
-          onProgress('MLB The Show: 該当カード未収録（pre-2017 球種データなし）');
+          // ── The Show 未収録 → Claude ウェブ検索でフォールバック ─────────────
+          if (apiKey) {
+            onProgress('MLB The Show: 未収録 → Claude ウェブ検索で球種を推定中...');
+            try {
+              const claudeData = await callClaudeForPitchData(apiKey, playerName, preShowYears);
+              if (claudeData && Array.isArray(claudeData.pitches) && claudeData.pitches.length > 0) {
+                for (const yr of preShowYears) {
+                  claudeData.pitches.forEach(p => {
+                    const idx = PITCH_MAP_SHOW[p.name];
+                    if (idx === undefined) return;
+                    const key = PITCH_KEYS[idx];
+                    rawPitch[yr][key] = { velo: String(p.speed), ba: '--', slg: '--', pct: String(p.pct) };
+                    // 球威: speed のみで推定（control=70, movement=70 を仮定）
+                    const kyui = calcKyuiFromShow(p.speed, 70, 70);
+                    if (kyui !== '') {
+                      if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+                      showKyuiMap[yr][idx] = kyui;
+                    }
+                  });
+                }
+                const noteStr = claudeData.note ? `（${claudeData.note}）` : '';
+                onProgress(`Claude 推定完了: ${claudeData.pitches.length} 球種 × ${preShowYears.length} 年${noteStr}`);
+              } else {
+                onProgress('Claude: 球種データを取得できませんでした（pre-2017 球種データなし）');
+              }
+            } catch (e) {
+              onProgress('⚠ Claude 球種推定失敗: ' + e.message);
+            }
+          } else {
+            onProgress('MLB The Show: 該当カード未収録（pre-2017 球種データなし / Claude APIキー未設定）');
+          }
         }
       } catch (e) {
         onProgress('⚠ MLB The Show API 取得失敗: ' + e.message);
@@ -1230,7 +1365,8 @@ async function runCreateJob(jobId, params) {
     const { years, basic, vsLeftByYear } = await fetchPitchingStats(params.id, params.y1, params.y2);
 
     upd('ブラウザを起動して Baseball Savant / MLB The Show から球種データを取得中...');
-    const { rawPitch, showKyuiMap } = await fetchBrowserData(params.slug, params.id, years, upd, params.name);
+    const apiKey = params.apiKey || process.env.ANTHROPIC_API_KEY || '';
+    const { rawPitch, showKyuiMap } = await fetchBrowserData(params.slug, params.id, years, upd, params.name, apiKey);
 
     upd('Excel ファイルを生成中...');
     const outFile = await buildExcel(params.name, years, basic, vsLeftByYear, rawPitch);
@@ -1357,6 +1493,11 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
     </div>
 
     <div class="sec" style="margin-top:4px">
+      <label>Claude APIキー <span class="opt-label">（省略可）pre-2017年のMLB The Show未収録選手に使用</span></label>
+      <input id="apiKey" type="password" placeholder="sk-ant-..." oninput="saveApiKey(this.value)">
+    </div>
+
+    <div class="sec" style="margin-top:4px">
       <div class="badge-row">
         <span class="badge">投手成績取得</span>
         <span style="font-size:14px;color:#aaa;align-self:center">→</span>
@@ -1391,6 +1532,16 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
 
 <script>
 let cTimer = null;
+
+// APIキー localStorage 読み書き
+(function(){
+  const k = localStorage.getItem('mlb_tool_apikey');
+  if (k) { const el = document.getElementById('apiKey'); if (el) el.value = k; }
+})();
+function saveApiKey(v) {
+  if (v && v.trim()) localStorage.setItem('mlb_tool_apikey', v.trim());
+  else localStorage.removeItem('mlb_tool_apikey');
+}
 
 function switchTab(id, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -1428,6 +1579,7 @@ async function doCreate() {
   const slug=document.getElementById('slug').value.trim(), id=parseInt(document.getElementById('pid').value);
   const name=document.getElementById('jaName').value.trim(), fullName=document.getElementById('fullName').value.trim();
   const y1=parseInt(document.getElementById('y1').value), y2=parseInt(document.getElementById('y2').value);
+  const apiKey=(document.getElementById('apiKey').value||'').trim();
   if (!slug||!id||!name||!fullName||!y1||!y2){alert('すべての項目を入力してください');return;}
   document.getElementById('btnCreate').disabled=true;
   document.getElementById('cPbox').style.display='block';
@@ -1435,7 +1587,7 @@ async function doCreate() {
   document.getElementById('cErr').style.display='none';
   setCP('処理を開始しています...');
   const r=await fetch('/api/create',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({slug,id,name,fullName,y1,y2})});
+    body:JSON.stringify({slug,id,name,fullName,y1,y2,apiKey})});
   const {jobId}=await r.json();
   cTimer=setInterval(()=>pollCreate(jobId),1500);
 }
