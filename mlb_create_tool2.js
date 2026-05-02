@@ -502,7 +502,7 @@ const OMOSA_COL     = 56;
 const TAILEFT_COL   = 57;
 const TAITOURUI_COL = 58;
 
-async function addAbilityToFile(xlsxPath) {
+async function addAbilityToFile(xlsxPath, showKyuiMap = {}) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(xlsxPath);
   const ws = wb.worksheets[0];
@@ -548,7 +548,7 @@ async function addAbilityToFile(xlsxPath) {
       if (pctStr && pctStr !== '--' && !isNaN(pctNum) && pctNum > 0) pitchActiveSet.add(pg.idx);
       pitchData[pg.idx] = { velo, ba, slg, pct };
     }
-    dataRows.push({ rn, ipRaw, g, gs, bb, eraRaw, hr, so, avgRaw, vsLRaw, sb, pk, cs, pitchData });
+    dataRows.push({ rn, yr, ipRaw, g, gs, bb, eraRaw, hr, so, avgRaw, vsLRaw, sb, pk, cs, pitchData });
   });
 
   const activePitchList = PITCH_GROUPS.filter(pg => pitchActiveSet.has(pg.idx));
@@ -563,7 +563,7 @@ async function addAbilityToFile(xlsxPath) {
   });
 
   let count = 0;
-  for (const { rn, ipRaw, g, gs, bb, eraRaw, hr, so, avgRaw, vsLRaw, sb, pk, cs, pitchData } of dataRows) {
+  for (const { rn, yr, ipRaw, g, gs, bb, eraRaw, hr, so, avgRaw, vsLRaw, sb, pk, cs, pitchData } of dataRows) {
     const ip = parseIP(ipRaw);
     if (!ip) continue;
 
@@ -621,9 +621,16 @@ async function addAbilityToFile(xlsxPath) {
 
       const ah = calcAH_pitch(pg.idx, baNum);
       const ai = calcAI_pitch(pg.idx, slgNum);
-      const aj = (ah !== '' && ai !== '') ? (Number(ah) + Number(ai)) / 2 : '';
-      const ak = calcAK_pitch(pg.idx, aj, pctNum);
-      const kyui = calcKyuI(aj, ak, pctNum);
+      let kyui = '';
+      if (ah !== '' && ai !== '') {
+        const aj = (Number(ah) + Number(ai)) / 2;
+        const ak = calcAK_pitch(pg.idx, aj, pctNum);
+        kyui = calcKyuI(aj, ak, pctNum);
+      } else {
+        // MLB The Show ゲームデータから算出した球威を使用 (pre-2017)
+        const showKyui = showKyuiMap[yr]?.[pg.idx];
+        if (showKyui !== undefined) kyui = showKyui;
+      }
       if (kyui !== '') redPurpleCell(ws.getCell(rn, base + 1), kyui, fontSize);
 
       redPurpleCell(ws.getCell(rn, base + 2), pctNum, fontSize);
@@ -733,17 +740,7 @@ const PITCH_MAP_P    = {
   'Split-Finger': 'fs', 'Splitter': 'fs', 'Split Finger': 'fs',
 };
 
-// brooksbaseball.net pitch name → 球種キー（Twoseam は フォーシーム優先）
-const PITCH_MAP_B = {
-  'Fourseam':    'ff', 'Four-Seam': 'ff', 'Four Seam': 'ff', 'FA': 'ff',
-  'Twoseam':     'ff', 'Two-Seam':  'ff', 'Two Seam':  'ff', 'FT': 'ff',
-  'Sinker':      'si', 'SI': 'si',
-  'Slider':      'sl', 'SL': 'sl', 'Sweeper': 'sl',
-  'Changeup':    'ch', 'CH': 'ch', 'Change-up': 'ch',
-  'Curveball':   'cu', 'CU': 'cu', 'Knuckle Curve': 'cu', 'KC': 'cu', 'KnuckleCurve': 'cu',
-  'Cutter':      'fc', 'FC': 'fc',
-  'Splitter':    'fs', 'FS': 'fs', 'Split-Finger': 'fs', 'Split Finger': 'fs', 'SplitFinger': 'fs',
-};
+// ※ brooksbaseball.net は廃止のため PITCH_MAP_B 削除済み (2025-05)
 
 // Baseball Savant JSON API pitch_type コード → 球種キー
 const PITCH_TYPE_JSON = {
@@ -763,14 +760,92 @@ const emptyPitchP = () => Object.fromEntries(
 // ── ユーティリティ ──────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ── Baseball Savant + brooksbaseball.net browser scraping ────────────────────
+// ── MLB The Show pitch data (pre-2017 年用) ──────────────────────────────────
+// MLB The Show カード球種名 → pitch idx (0=FF,1=SL,2=CH,3=CU,4=FC,5=SI,6=FS)
+const PITCH_MAP_SHOW = {
+  '4-Seam Fastball': 0, 'Fastball': 0, 'Rising Fastball': 0, 'Running Fastball': 0,
+  'Two-Seam Fastball': 5, 'Sinker': 5,
+  'Slider': 1, 'Sweeper': 1, 'Slurve': 1,
+  'Changeup': 2, 'Circle Change': 2, 'Vulcan Change': 2,
+  'Curveball': 3, '12-6 Curve': 3, 'Slow Curve': 3, 'Knuckle-Curve': 3, 'Power Curve': 3,
+  'Cutter': 4,
+  'Splitter': 6, 'Forkball': 6, 'Split-Finger': 6, 'Split Finger': 6,
+};
+
+// 球威計算 (MLB The Show ゲームデータ基準)
+// speed: 実際mph(100mph=100%), control/movement: 0〜99スケール
+// 平均>=90%: 90+(avg-90)*2 → 90%=球威90, 95%=球威100, 100%=球威110
+// 平均<90% : (speedPct+movementPct)/2 を直接球威値として使用
+function calcKyuiFromShow(speed, control, movement) {
+  if (!speed || !control || !movement) return '';
+  const speedPct    = Math.min(speed / 100 * 100, 105);
+  const controlPct  = control / 99 * 100;
+  const movementPct = movement / 99 * 100;
+  const avg3 = (speedPct + controlPct + movementPct) / 3;
+  if (avg3 >= 90) return Math.min(Math.round(90 + (avg3 - 90) * 2), 110);
+  return Math.round((speedPct + movementPct) / 2);
+}
+
+// 球種数 → 推定投球割合
+function estimateShowUsagePct(n) {
+  const tables = { 1:[100], 2:[62,38], 3:[50,30,20], 4:[42,28,18,12], 5:[35,25,20,12,8] };
+  return tables[Math.min(n, 5)] || tables[5];
+}
+
+// MLB The Show API から選手カードを検索
+// ※ items API は name フィルタが効かないためバイナリサーチ（最大 log2(146)≈7 回）で探索
+async function fetchMLBTheShowCard(playerName) {
+  if (!playerName) return null;
+  const nameLower = playerName.trim().toLowerCase();
+  const lastName  = nameLower.split(/\s+/).pop();
+
+  const showGet = async (yr, page) =>
+    mlbGet(`https://mlb${yr}.theshow.com/apis/items.json?type=mlb_card&page=${page}`);
+
+  for (const yr of [25, 24]) {
+    try {
+      const first = await showGet(yr, 1);
+      const total = first.total_pages || 0;
+      if (!total) continue;
+
+      // バイナリサーチ: カードはアルファベット順 (full name)
+      let lo = 1, hi = total;
+      let found = null;
+      while (lo <= hi && !found) {
+        const mid = Math.floor((lo + hi) / 2);
+        const pg  = mid === 1 ? first : await showGet(yr, mid);
+        const items = pg.items || [];
+        if (!items.length) break;
+
+        // このページに対象選手がいるか確認
+        found = items.find(item =>
+          !item.is_hitter &&
+          (item.name || '').toLowerCase().includes(lastName) &&
+          Array.isArray(item.pitches) && item.pitches.length > 0
+        );
+        if (found) break;
+
+        // ソート位置による進行方向判定
+        const midName = (items[0].name || '').toLowerCase();
+        if (midName < lastName) lo = mid + 1;
+        else                    hi = mid - 1;
+      }
+      if (found) {
+        console.log(`[The Show MLB${yr}] カード発見: ${found.name} (${found.rarity})`);
+        return found;
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+// ── Baseball Savant browser scraping + MLB The Show API (pre-2017) ──────────
 // 設計:
-//  Step1: Baseball Savant JSON API を in-page fetch で直接叩く（HTMLパース不要・最高精度）
-//  Step2: JSON API が失敗した年は HTMLテーブルにフォールバック
-//         → pct列は「同一年の合計≈100」ヒューリスティックで特定（列名マッチング廃止）
-//  Step3: Statcastが存在しない年(2015以前等)や BA/SLG が欠損している年は
-//         brooksbaseball.net で補完
-async function fetchBrowserData(slug, id, years, onProgress) {
+//  Step1: Baseball Savant JSON API を in-page fetch で直接叩く（2017年以降・HTMLパース不要）
+//         → pct列は「同一年の合計≈100」ヒューリスティックで特定
+//  Step2: 2016年以前の未取得年 → MLB The Show API で球種・球速・球威を取得
+//         （Brooksbaseball.net は廃止のため削除）
+async function fetchBrowserData(slug, id, years, onProgress, playerName = '') {
   const chromePath = findChrome();
   if (!chromePath) throw new Error('Chromeが見つかりません。Google ChromeまたはEdgeをインストールしてください。');
 
@@ -949,124 +1024,40 @@ async function fetchBrowserData(slug, id, years, onProgress) {
       onProgress('⚠ Baseball Savant 取得失敗: ' + e.message);
     }
 
-    // ── Step 2: brooksbaseball.net 補完 ──────────────────────────────────────
-    // ・Statcast が存在しない年（2015以前）: pct が全て '--' → Brooks を主ソースとして使用
-    // ・データはあるが BA/SLG が欠けている球種がある年: Brooks で補完
-    // ・Brooks の pct 列も「合計≈100」ヒューリスティックで特定
-    const BROOKS_KW = ['Fourseam','Four-Seam','Four Seam','Twoseam','Two-Seam','Two Seam',
-                       'Sinker','Slider','Changeup','Change-up','Curveball','KnuckleCurve',
-                       'Knuckle Curve','Cutter','Splitter','Split-Finger','Split Finger',
-                       'Sweeper','FA','FT','SI','SL','CH','CU','FC','FS','KC'];
-
-    for (const yr of years) {
-      const hasAnyPct = PITCH_KEYS.some(k => {
-        const d = rawPitch[yr][k];
-        if (!d || !d.pct || d.pct === '--') return false;
-        return !isNaN(parseFloat(String(d.pct).replace('%', ''))) &&
-               parseFloat(String(d.pct).replace('%', '')) > 0;
-      });
-      const hasMissingStats = PITCH_KEYS.some(k => {
-        const d = rawPitch[yr][k];
-        if (!d || !d.pct || d.pct === '--') return false;
-        const pn = parseFloat(String(d.pct).replace('%', ''));
-        if (isNaN(pn) || pn <= 0) return false;
-        return (!d.ba || d.ba === '--' || !d.slg || d.slg === '--');
-      });
-      // Savantデータ完全 → Brooks不要。それ以外（未カバー年 or 欠損あり）→ Brooks補完
-      if (hasAnyPct && !hasMissingStats) continue;
-
+    // ── Step 2: pre-2017 年 → MLB The Show API で球種データ取得 ──────────────────────
+    // Brooksbaseball.net は廃止のため削除。2016年以前の年かつ未取得分をThe Showで補完。
+    const showKyuiMap = {};
+    const preShowYears = years.filter(yr => +yr < 2017 && !yearHasPct(yr));
+    if (preShowYears.length > 0) {
+      onProgress(`MLB The Show API 検索中 (${preShowYears.length} 年分)...`);
       try {
-        onProgress(`brooksbaseball.net から ${yr} 年のデータを補完中...`);
-        const brooksUrl =
-          `http://www.brooksbaseball.net/tabs.php?player=${id}&time=season` +
-          `&startDate=01/01/${yr}&endDate=12/31/${yr}&tgt=pitch_type&pitchSel=&prevGame=0&prevAB=0&s_type=3`;
-        await page.goto(brooksUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-        await sleep(3000);
-
-        // brooksbaseball.net がリダイレクトで別ドメインに飛んだ場合はスキップ
-        const finalBrooksUrl = page.url();
-        if (!finalBrooksUrl.includes('brooksbaseball')) {
-          onProgress(`⚠ brooksbaseball.net ${yr}: 別サイトにリダイレクト、スキップ`);
-          continue;
-        }
-
-        const brooksRaw = await page.evaluate((kws) => {
-          function hasBrooksKw(txt) { return kws.some(kw => txt.includes(kw)); }
-          const result = {};
-          for (const tbl of document.querySelectorAll('table')) {
-            if (!hasBrooksKw(tbl.innerText || '')) continue;
-            const rows = [...tbl.querySelectorAll('tr')];
-            if (rows.length < 2) continue;
-            const headers = [...rows[0].querySelectorAll('th,td')]
-              .map(c => c.innerText.trim().toLowerCase());
-            let pitchIdx = headers.findIndex(h =>
-              h === 'pitch type' || h === 'pitch name' || h === 'pitch' || h === 'type' || h === 'name');
-            if (pitchIdx < 0) pitchIdx = 0;
-            let veloIdx = headers.findIndex(h => h.includes('velo') || h.includes('mph') || h === 'avg velo');
-            let baIdx   = headers.findIndex(h => h === 'ba' || h === 'avg' || h.includes('batting avg'));
-            let slgIdx  = headers.findIndex(h => h === 'slg' || h === 'slg%' || h.startsWith('slg') || h.includes('slugging'));
-
-            // pct 列検出:
-            // 1) ヘッダーで明示的な "%" / "pct" / "freq" / "usage" を探す
-            // 2) なければ 左→右 スキャンで合計≈100 の最初の列（右→左だと K% 等を拾いやすい）
-            const allCells = rows.slice(1).map(r => [...r.querySelectorAll('td,th')]);
-            const nCols = Math.max(0, ...allCells.map(c => c.length));
-            let pctIdx = -1;
-
-            // Step1: ヘッダー名で完全一致または部分一致
-            const explicitPct = headers.findIndex(h =>
-              h === '%' || h === 'pct' || h === 'freq' || h === 'usage' ||
-              h === 'pitch%' || h === 'pitch %' || h === 'usage%' ||
-              (h.includes('pitch') && h.includes('%'))
-            );
-            if (explicitPct >= 0 && explicitPct !== pitchIdx) {
-              pctIdx = explicitPct;
-            }
-
-            // Step2: 明示的ヘッダーが見つからない場合 → 左→右スキャン（usage% は左寄り）
-            if (pctIdx < 0) {
-              for (let col = 0; col < nCols; col++) {
-                if (col === pitchIdx || col === veloIdx || col === baIdx || col === slgIdx) continue;
-                let sum = 0, cnt = 0;
-                for (const cells of allCells) {
-                  if (col >= cells.length) continue;
-                  const v = parseFloat((cells[col]?.innerText || '').replace('%', '').trim());
-                  if (!isNaN(v) && v > 0 && v <= 100) { sum += v; cnt++; }
-                }
-                if (cnt >= 2 && sum >= 85 && sum <= 115) { pctIdx = col; break; }
+        const showCard = await fetchMLBTheShowCard(playerName);
+        if (showCard) {
+          onProgress(`MLB The Show: "${showCard.name}" (${showCard.rarity}) カード発見`);
+          const pcts = estimateShowUsagePct(showCard.pitches.length);
+          for (const yr of preShowYears) {
+            showCard.pitches.forEach((p, i) => {
+              const idx = PITCH_MAP_SHOW[p.name];
+              if (idx === undefined) return;
+              const key = PITCH_KEYS[idx];
+              const kyui = calcKyuiFromShow(p.speed, p.control, p.movement);
+              rawPitch[yr][key] = { velo: String(p.speed), ba: '--', slg: '--', pct: String(pcts[i] || 5) };
+              if (kyui !== '') {
+                if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+                showKyuiMap[yr][idx] = kyui;
               }
-            }
-
-            for (let ri = 1; ri < rows.length; ri++) {
-              const cells = [...rows[ri].querySelectorAll('td,th')];
-              if (cells.length < 2) continue;
-              const pt = cells[pitchIdx]?.innerText.trim();
-              if (!pt || !hasBrooksKw(pt)) continue;
-              const g = (idx) => idx >= 0 ? (cells[idx]?.innerText.trim() || '--') : '--';
-              result[pt] = { velo: g(veloIdx), ba: g(baIdx), slg: g(slgIdx), pct: g(pctIdx) };
-            }
-            if (Object.keys(result).length > 0) break;
+            });
           }
-          return result;
-        }, BROOKS_KW);
-
-        for (const [ptName, vals] of Object.entries(brooksRaw)) {
-          const key = PITCH_MAP_B[ptName];
-          if (!key) continue;
-          const cur = rawPitch[yr][key];
-          rawPitch[yr][key] = {
-            velo: (cur.velo && cur.velo !== '--') ? cur.velo : (vals.velo || '--'),
-            ba:   (cur.ba   && cur.ba   !== '--') ? cur.ba   : (vals.ba   || '--'),
-            slg:  (cur.slg  && cur.slg  !== '--') ? cur.slg  : (vals.slg  || '--'),
-            pct:  (cur.pct  && cur.pct  !== '--') ? cur.pct  : (vals.pct  || '--'),
-          };
+          onProgress(`MLB The Show: ${preShowYears.length} 年 × ${showCard.pitches.length} 球種 設定完了`);
+        } else {
+          onProgress('MLB The Show: 該当カード未収録（pre-2017 球種データなし）');
         }
       } catch (e) {
-        onProgress(`⚠ brooksbaseball.net ${yr} 年取得失敗: ` + e.message);
+        onProgress('⚠ MLB The Show API 取得失敗: ' + e.message);
       }
     }
 
-    return { rawPitch };
+    return { rawPitch, showKyuiMap };
   } finally {
     await browser.close();
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
@@ -1238,8 +1229,8 @@ async function runCreateJob(jobId, params) {
     upd('MLB Stats API から投手成績を取得中...');
     const { years, basic, vsLeftByYear } = await fetchPitchingStats(params.id, params.y1, params.y2);
 
-    upd('ブラウザを起動して Baseball Savant から球種データを取得中...');
-    const { rawPitch } = await fetchBrowserData(params.slug, params.id, years, upd);
+    upd('ブラウザを起動して Baseball Savant / MLB The Show から球種データを取得中...');
+    const { rawPitch, showKyuiMap } = await fetchBrowserData(params.slug, params.id, years, upd, params.name);
 
     upd('Excel ファイルを生成中...');
     const outFile = await buildExcel(params.name, years, basic, vsLeftByYear, rawPitch);
@@ -1247,7 +1238,7 @@ async function runCreateJob(jobId, params) {
     upd('スタミナ・制球を計算中...');
     let abilityRows = 0;
     try {
-      abilityRows = await addAbilityToFile(outFile);
+      abilityRows = await addAbilityToFile(outFile, showKyuiMap);
       upd(`スタミナ・制球追加完了: ${abilityRows} 行`);
     } catch (e) {
       upd('⚠ スタミナ・制球追加失敗: ' + e.message);
