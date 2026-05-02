@@ -897,6 +897,135 @@ function estimateShowUsagePct(n) {
   return tables[Math.min(n, 5)] || tables[5];
 }
 
+// ── FanGraphs pitch data (2002+、API key不要) ────────────────────────────────
+// BIS era (pre-2008): FB%1/FBv, SL%/SLv, CH%/CHv, CB%/CBv, CT%/CTv, SF%/SFv
+// PITCHf/x era (2008+): pfxFA%/pfxvFA, pfxSL%/pfxvSL, ...
+// pct は 0〜1 の小数（0.51 = 51%）
+const FG_BIS_PITCH_MAP = [
+  { pct: 'FB%1', velo: 'FBv', idx: 0 },
+  { pct: 'SL%',  velo: 'SLv', idx: 1 },
+  { pct: 'CH%',  velo: 'CHv', idx: 2 },
+  { pct: 'CB%',  velo: 'CBv', idx: 3 },
+  { pct: 'CT%',  velo: 'CTv', idx: 4 },
+  { pct: 'SF%',  velo: 'SFv', idx: 6 },
+];
+const FG_PFX_PITCH_MAP = [
+  { pct: 'pfxFA%', velo: 'pfxvFA', idx: 0 },
+  { pct: 'pfxSL%', velo: 'pfxvSL', idx: 1 },
+  { pct: 'pfxST%', velo: 'pfxvST', idx: 1 },  // Sweeper → SL
+  { pct: 'pfxCH%', velo: 'pfxvCH', idx: 2 },
+  { pct: 'pfxCU%', velo: 'pfxvCU', idx: 3 },
+  { pct: 'pfxKC%', velo: 'pfxvKC', idx: 3 },  // Knuckle-curve → CU
+  { pct: 'pfxFC%', velo: 'pfxvFC', idx: 4 },
+  { pct: 'pfxSI%', velo: 'pfxvSI', idx: 5 },
+  { pct: 'pfxFT%', velo: 'pfxvFT', idx: 5 },  // 2-seam → SI
+  { pct: 'pfxFS%', velo: 'pfxvFS', idx: 6 },
+  { pct: 'pfxFO%', velo: 'pfxvFO', idx: 6 },  // Forkball → FS
+];
+
+function fgGet(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+        'Referer': 'https://www.fangraphs.com/',
+      }
+    }, res => {
+      let buf = '';
+      res.on('data', c => buf += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(buf)); }
+        catch (e) { reject(new Error('FanGraphs parse error: ' + buf.slice(0, 120))); }
+      });
+    }).on('error', reject);
+  });
+}
+
+// FanGraphs 選手検索 → FG numeric ID を返す
+async function fetchFanGraphsId(playerName) {
+  if (!playerName) return null;
+  const lastName = playerName.trim().split(/\s+/).pop();
+  try {
+    const data = await fgGet(`https://www.fangraphs.com/api/search/players/?search=${encodeURIComponent(lastName)}`);
+    const hits  = Array.isArray(data) ? data : (data.hits || []);
+    const parts = playerName.trim().toLowerCase().split(/\s+/);
+    const match = hits.find(h => {
+      const levels = Array.isArray(h.level) ? h.level : [h.level || ''];
+      if (!levels.includes('mlb')) return false;
+      const hName = (h.name || '').toLowerCase();
+      return parts.every(p => hName.includes(p));
+    });
+    if (match && match.id) {
+      console.log(`[FanGraphs] 発見: ${match.name} (ID: ${match.id})`);
+      return String(match.id);
+    }
+  } catch (e) {
+    console.log(`[FanGraphs] 検索エラー: ${e.message}`);
+  }
+  return null;
+}
+
+// FanGraphs の1年分データを rawPitch / showKyuiMap に反映
+function applyFgRow(row, yr, rawPitch, showKyuiMap) {
+  const usePfx = FG_PFX_PITCH_MAP.some(m => {
+    const v = parseFloat(row[m.pct]);
+    return !isNaN(v) && v > 0;
+  });
+  const map = usePfx ? FG_PFX_PITCH_MAP : FG_BIS_PITCH_MAP;
+
+  // idx ごとに集計（pct 加算、velo は加重平均）
+  const agg = {};
+  for (const m of map) {
+    const pctRaw  = parseFloat(row[m.pct]);
+    const veloRaw = parseFloat(row[m.velo]);
+    if (isNaN(pctRaw) || pctRaw <= 0) continue;
+    if (!agg[m.idx]) agg[m.idx] = { pctSum: 0, veloNum: 0, veloDen: 0 };
+    agg[m.idx].pctSum  += pctRaw;
+    if (!isNaN(veloRaw) && veloRaw > 0) {
+      agg[m.idx].veloNum += pctRaw * veloRaw;
+      agg[m.idx].veloDen += pctRaw;
+    }
+  }
+
+  let found = false;
+  for (const [idxStr, { pctSum, veloNum, veloDen }] of Object.entries(agg)) {
+    const idx    = Number(idxStr);
+    const pctVal = Math.round(pctSum * 100);  // FG は 0〜1 の小数
+    if (pctVal < 5) continue;
+    const veloVal = veloDen > 0 ? Math.round(veloNum / veloDen) : null;
+    const key     = PITCH_KEYS[idx];
+    rawPitch[yr][key] = {
+      velo: veloVal ? String(veloVal) : '--',
+      ba: '--', slg: '--',
+      pct: String(pctVal),
+    };
+    if (veloVal) {
+      const kyui = calcKyuiFromShow(veloVal, 70, 70);
+      if (kyui !== '') {
+        if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+        showKyuiMap[yr][idx] = kyui;
+      }
+    }
+    found = true;
+  }
+  return found;
+}
+
+// FanGraphs から複数年分の球種データを一括取得
+async function fetchFanGraphsPitchData(fgId, targetYears, rawPitch, showKyuiMap) {
+  let count = 0;
+  for (const yr of targetYears) {
+    try {
+      const url = `https://www.fangraphs.com/api/leaders/major-league/data?pos=P&stats=pit&lg=all&qual=0&season=${yr}&season1=${yr}&type=4&players=${fgId}&pageitems=1&pagenum=1`;
+      const data = await fgGet(url);
+      const rows = data.data || [];
+      if (rows.length && applyFgRow(rows[0], yr, rawPitch, showKyuiMap)) count++;
+    } catch { /* 年別エラーは無視 */ }
+  }
+  return count;
+}
+
 // MLB The Show API から選手カードを検索
 // ※ items API は name フィルタが効かないためバイナリサーチ（最大 log2(146)≈7 回）で探索
 async function fetchMLBTheShowCard(playerName) {
@@ -1129,66 +1258,91 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       onProgress('⚠ Baseball Savant 取得失敗: ' + e.message);
     }
 
-    // ── Step 2: pre-2017 年 → MLB The Show API で球種データ取得 ──────────────────────
-    // Brooksbaseball.net は廃止のため削除。2016年以前の年かつ未取得分をThe Showで補完。
+    // ── Step 2: pre-2017 年 → FanGraphs → MLB The Show → Claude の順でフォールバック ──
     const showKyuiMap = {};
     const preShowYears = years.filter(yr => +yr < 2017 && !yearHasPct(yr));
+
     if (preShowYears.length > 0) {
-      onProgress(`MLB The Show API 検索中 (${preShowYears.length} 年分)...`);
-      try {
-        const showCard = await fetchMLBTheShowCard(playerName);
-        if (showCard) {
-          onProgress(`MLB The Show: "${showCard.name}" (${showCard.rarity}) カード発見`);
-          const pcts = estimateShowUsagePct(showCard.pitches.length);
-          for (const yr of preShowYears) {
-            showCard.pitches.forEach((p, i) => {
-              const idx = PITCH_MAP_SHOW[p.name];
-              if (idx === undefined) return;
-              const key = PITCH_KEYS[idx];
-              const kyui = calcKyuiFromShow(p.speed, p.control, p.movement);
-              rawPitch[yr][key] = { velo: String(p.speed), ba: '--', slg: '--', pct: String(pcts[i] || 5) };
-              if (kyui !== '') {
-                if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
-                showKyuiMap[yr][idx] = kyui;
-              }
-            });
-          }
-          onProgress(`MLB The Show: ${preShowYears.length} 年 × ${showCard.pitches.length} 球種 設定完了`);
-        } else {
-          // ── The Show 未収録 → Claude ウェブ検索でフォールバック ─────────────
-          if (apiKey) {
-            onProgress('MLB The Show: 未収録 → Claude ウェブ検索で球種を推定中...');
-            try {
-              const claudeData = await callClaudeForPitchData(apiKey, playerName, preShowYears);
-              if (claudeData && Array.isArray(claudeData.pitches) && claudeData.pitches.length > 0) {
-                for (const yr of preShowYears) {
-                  claudeData.pitches.forEach(p => {
-                    const idx = PITCH_MAP_SHOW[p.name];
-                    if (idx === undefined) return;
-                    const key = PITCH_KEYS[idx];
-                    rawPitch[yr][key] = { velo: String(p.speed), ba: '--', slg: '--', pct: String(p.pct) };
-                    // 球威: speed のみで推定（control=70, movement=70 を仮定）
-                    const kyui = calcKyuiFromShow(p.speed, 70, 70);
-                    if (kyui !== '') {
-                      if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
-                      showKyuiMap[yr][idx] = kyui;
-                    }
-                  });
-                }
-                const noteStr = claudeData.note ? `（${claudeData.note}）` : '';
-                onProgress(`Claude 推定完了: ${claudeData.pitches.length} 球種 × ${preShowYears.length} 年${noteStr}`);
-              } else {
-                onProgress('Claude: 球種データを取得できませんでした（pre-2017 球種データなし）');
-              }
-            } catch (e) {
-              onProgress('⚠ Claude 球種推定失敗: ' + e.message);
+      // ── 2a: FanGraphs (API key不要、2002年以降) ────────────────────────────
+      const fgTargetYears = preShowYears.filter(yr => +yr >= 2002);
+      if (fgTargetYears.length > 0) {
+        onProgress(`FanGraphs 選手検索中... (${fgTargetYears.length}年分を取得予定)`);
+        try {
+          const fgId = await fetchFanGraphsId(playerName);
+          if (fgId) {
+            onProgress(`FanGraphs ID: ${fgId} → 球種データ取得中...`);
+            const fgCount = await fetchFanGraphsPitchData(fgId, fgTargetYears, rawPitch, showKyuiMap);
+            if (fgCount > 0) {
+              onProgress(`FanGraphs: ${fgCount}/${fgTargetYears.length}年分 取得完了`);
+            } else {
+              onProgress('FanGraphs: 球種データなし');
             }
           } else {
-            onProgress('MLB The Show: 該当カード未収録（pre-2017 球種データなし / Claude APIキー未設定）');
+            onProgress('FanGraphs: 選手が見つかりませんでした');
           }
+        } catch (e) {
+          onProgress('⚠ FanGraphs 取得失敗: ' + e.message);
         }
-      } catch (e) {
-        onProgress('⚠ MLB The Show API 取得失敗: ' + e.message);
+      }
+
+      // ── 2b: MLB The Show (FanGraphs で未取得の年 + pre-2002) ──────────────
+      const afterFgMissing = preShowYears.filter(yr => !yearHasPct(yr));
+      if (afterFgMissing.length > 0) {
+        onProgress(`MLB The Show API 検索中 (未取得 ${afterFgMissing.length}年分)...`);
+        try {
+          const showCard = await fetchMLBTheShowCard(playerName);
+          if (showCard) {
+            onProgress(`MLB The Show: "${showCard.name}" (${showCard.rarity}) カード発見`);
+            const pcts = estimateShowUsagePct(showCard.pitches.length);
+            for (const yr of afterFgMissing) {
+              showCard.pitches.forEach((p, i) => {
+                const idx = PITCH_MAP_SHOW[p.name];
+                if (idx === undefined) return;
+                const key = PITCH_KEYS[idx];
+                const kyui = calcKyuiFromShow(p.speed, p.control, p.movement);
+                rawPitch[yr][key] = { velo: String(p.speed), ba: '--', slg: '--', pct: String(pcts[i] || 5) };
+                if (kyui !== '') {
+                  if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+                  showKyuiMap[yr][idx] = kyui;
+                }
+              });
+            }
+            onProgress(`MLB The Show: ${afterFgMissing.length}年 × ${showCard.pitches.length}球種 設定完了`);
+          } else {
+            // ── 2c: Claude ウェブ検索 (APIキーがある場合のみ) ─────────────
+            if (apiKey) {
+              onProgress('MLB The Show: 未収録 → Claude ウェブ検索で球種を推定中...');
+              try {
+                const claudeData = await callClaudeForPitchData(apiKey, playerName, afterFgMissing);
+                if (claudeData && Array.isArray(claudeData.pitches) && claudeData.pitches.length > 0) {
+                  for (const yr of afterFgMissing) {
+                    claudeData.pitches.forEach(p => {
+                      const idx = PITCH_MAP_SHOW[p.name];
+                      if (idx === undefined) return;
+                      const key = PITCH_KEYS[idx];
+                      rawPitch[yr][key] = { velo: String(p.speed), ba: '--', slg: '--', pct: String(p.pct) };
+                      const kyui = calcKyuiFromShow(p.speed, 70, 70);
+                      if (kyui !== '') {
+                        if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+                        showKyuiMap[yr][idx] = kyui;
+                      }
+                    });
+                  }
+                  const noteStr = claudeData.note ? `（${claudeData.note}）` : '';
+                  onProgress(`Claude 推定完了: ${claudeData.pitches.length}球種 × ${afterFgMissing.length}年${noteStr}`);
+                } else {
+                  onProgress('Claude: 球種データを取得できませんでした');
+                }
+              } catch (e) {
+                onProgress('⚠ Claude 球種推定失敗: ' + e.message);
+              }
+            } else {
+              onProgress('MLB The Show: 該当カード未収録（pre-2017 球種データなし）');
+            }
+          }
+        } catch (e) {
+          onProgress('⚠ MLB The Show API 取得失敗: ' + e.message);
+        }
       }
     }
 
@@ -1514,6 +1668,7 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
     <div class="err"  id="cErr"></div>
     <div class="note">
       ※ Chromeが自動起動します（Baseball Savant へのアクセス）<br>
+      ※ pre-2017年は <strong>FanGraphs</strong>（2002+・API key不要）→ MLB The Show → Claude の順で球種を補完<br>
       ※ AY=スタミナ・AZ=制球・BA=精神・BB=奪三振・BC=重さ・BD=対左・BE=対盗塁 を自動追加<br>
       ※ 出力先: このツールと同じフォルダ
     </div>
