@@ -196,7 +196,7 @@ function calcSanshinFromK9(k9) {
   if (k9 == null || isNaN(k9) || k9 < 0) return '';
   if (k9 <= 6)  return Math.round(40 + (k9 - 6)  / 0.2);
   if (k9 <= 10) return Math.round(80 + (k9 - 10) / 0.1);
-  if (k9 <= 16) return Math.round(100 + (k9 - 14) / 0.2);
+  if (k9 <= 30) return Math.round(100 + (k9 - 14) / 0.2);
   return '';
 }
 
@@ -285,14 +285,14 @@ function calcAH_pitch(idx, p) {
       if (p >= 215) return Math.round(90  - (p-215)/4);
       if (p >= 190) return Math.round(95  - (p-190)/5);
       if (p >= 150) return Math.round(100 - (p-150)/8);
-      if (p >= 70)  return Math.round(105 - (p-70)/16);
+      if (p >= 1)   return Math.round(105 - (p-70)/16);
       return '';
     case 1:
       if (p >= 300) return Math.round(55  - (p-300)/6);
       if (p >= 200) return Math.round(80  - (p-200)/4);
       if (p >= 150) return Math.round(90  - (p-150)/5);
       if (p >= 120) return Math.round(95  - (p-120)/6);
-      if (p >= 60)  return Math.round(105 - (p-60)/6);
+      if (p >= 1)   return Math.round(105 - (p-60)/6);
       return '';
     case 2: case 3:
       if (p >= 300) return Math.round(55  - (p-300)/6);
@@ -300,7 +300,7 @@ function calcAH_pitch(idx, p) {
       if (p >= 150) return Math.round(90  - (p-150)/5);
       if (p >= 120) return Math.round(95  - (p-120)/6);
       if (p >= 80)  return Math.round(100 - (p-80)/8);
-      if (p >= 30)  return Math.round(100 - (p-80)/12);
+      if (p >= 1)   return Math.round(100 - (p-80)/12);
       return '';
     case 4:
       if (p >= 290) return Math.round(55  - (p-290)/4);
@@ -308,7 +308,7 @@ function calcAH_pitch(idx, p) {
       if (p >= 225) return Math.round(85  - (p-225)/3);
       if (p >= 205) return Math.round(90  - (p-205)/4);
       if (p >= 180) return Math.round(95  - (p-180)/5);
-      if (p >= 80)  return Math.round(105 - (p-80)/10);
+      if (p >= 1)   return Math.round(105 - (p-80)/10);
       return '';
     case 5:
       if (p >= 330) return Math.round(50  - (p-330)/6);
@@ -318,14 +318,14 @@ function calcAH_pitch(idx, p) {
       if (p >= 220) return Math.round(90  - (p-220)/5);
       if (p >= 195) return Math.round(95  - (p-195)/5);
       if (p >= 150) return Math.round(100 - (p-150)/9);
-      if (p >= 70)  return Math.round(105 - (p-70)/16);
+      if (p >= 1)   return Math.round(105 - (p-70)/16);
       return '';
     case 6:
       if (p >= 285) return Math.round(55  - (p-285)/5);
       if (p >= 245) return Math.round(65  - (p-245)/4);
       if (p >= 200) return Math.round(80  - (p-200)/3);
       if (p >= 110) return Math.round(95  - (p-110)/6);
-      if (p >= 30)  return Math.round(105 - (p-30)/8);
+      if (p >= 1)   return Math.round(105 - (p-30)/8);
       return '';
     default: return '';
   }
@@ -338,7 +338,7 @@ function calcAI_pitch(idx, q) {
       if (q >= 500) return Math.round(70  - (q-500)/7);
       if (q >= 300) return Math.round(90  - (q-300)/10);
       if (q >= 100) return Math.round(100 - (q-100)/20);
-      if (q >= 50)  return Math.round(105 - (q-50)/10);
+      if (q >= 1)   return Math.round(105 - (q-50)/10);
       return '';
     case 1: case 2: case 3:
       if (q >= 470) return Math.round(65  - (q-470)/8);
@@ -348,12 +348,12 @@ function calcAI_pitch(idx, q) {
       if (q >= 215) return Math.round(95  - (q-215)/7);
       if (q >= 180) return Math.round(100 - (q-180)/7);
       if (q >= 100) return Math.round(105 - (q-100)/16);
-      if (q >= 50)  return Math.round(110 - (q-50)/10);
+      if (q >= 1)   return Math.round(110 - (q-50)/10);
       return '';
     case 6:
       if (q >= 310) return Math.round(80  - (q-310)/6);
       if (q >= 270) return Math.round(85  - (q-270)/8);
-      if (q >= 32)  return Math.round(102 - (q-32)/14);
+      if (q >= 1)   return Math.round(102 - (q-32)/14);
       return '';
     default: return '';
   }
