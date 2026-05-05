@@ -1027,6 +1027,18 @@ function applyFgRow(row, yr, rawPitch, showKyuiMap) {
     }
   }
 
+  // BIS era: FB%1 は4シームと2シーム/シンカーを含む汎用バケット。
+  // 球速≦90.5mph かつ主要球種(>40%)の場合はシンカー系(idx:5)として再分類。
+  if (agg[0] && !agg[5]) {
+    const veloAvg = agg[0].veloDen > 0 ? agg[0].veloNum / agg[0].veloDen : 0;
+    const pctPct  = agg[0].pctSum * 100;
+    if (veloAvg > 0 && veloAvg <= 90.5 && pctPct > 40) {
+      agg[5] = agg[0];
+      delete agg[0];
+      console.log(`[FanGraphs] BIS FB→SI 再分類 (${Math.round(veloAvg)}mph, ${Math.round(pctPct)}%)`);
+    }
+  }
+
   let found = false;
   for (const [idxStr, { pctSum, veloNum, veloDen }] of Object.entries(agg)) {
     const idx    = Number(idxStr);
@@ -1118,7 +1130,7 @@ async function fetchMLBTheShowCard(playerName) {
 //         → pct列は「同一年の合計≈100」ヒューリスティックで特定
 //  Step2: 2016年以前の未取得年 → MLB The Show API で球種・球速・球威を取得
 //         （Brooksbaseball.net は廃止のため削除）
-async function fetchBrowserData(slug, id, years, onProgress, playerName = '', apiKey = '') {
+async function fetchBrowserData(slug, id, years, onProgress, playerName = '', apiKey = '', englishName = '') {
   const chromePath = findChrome();
   if (!chromePath) throw new Error('Chromeが見つかりません。Google ChromeまたはEdgeをインストールしてください。');
 
@@ -1307,7 +1319,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       if (fgTargetYears.length > 0) {
         onProgress(`FanGraphs 選手検索中... (${fgTargetYears.length}年分を取得予定)`);
         try {
-          const fgId = await fetchFanGraphsId(playerName);
+          const fgId = await fetchFanGraphsId(englishName || playerName);
           if (fgId) {
             onProgress(`FanGraphs ID: ${fgId} → 球種データ取得中...`);
             const fgCount = await fetchFanGraphsPitchData(fgId, fgTargetYears, rawPitch, showKyuiMap);
@@ -1329,7 +1341,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       if (afterFgMissing.length > 0) {
         onProgress(`MLB The Show API 検索中 (未取得 ${afterFgMissing.length}年分)...`);
         try {
-          const showCard = await fetchMLBTheShowCard(playerName);
+          const showCard = await fetchMLBTheShowCard(englishName || playerName);
           if (showCard) {
             onProgress(`MLB The Show: "${showCard.name}" (${showCard.rarity}) カード発見`);
             const pcts = estimateShowUsagePct(showCard.pitches.length);
@@ -1352,7 +1364,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             if (apiKey) {
               onProgress('MLB The Show: 未収録 → Claude ウェブ検索で球種を推定中...');
               try {
-                const claudeData = await callClaudeForPitchData(apiKey, playerName, afterFgMissing);
+                const claudeData = await callClaudeForPitchData(apiKey, englishName || playerName, afterFgMissing);
                 if (claudeData && Array.isArray(claudeData.pitches) && claudeData.pitches.length > 0) {
                   for (const yr of afterFgMissing) {
                     claudeData.pitches.forEach(p => {
@@ -1381,6 +1393,56 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
           }
         } catch (e) {
           onProgress('⚠ MLB The Show API 取得失敗: ' + e.message);
+        }
+      }
+    }
+
+    // ── 2d: キャリア軌跡推定 (全データソースで未取得の年を前後データから推定) ──
+    const stillMissing = preShowYears.filter(yr => !yearHasPct(yr));
+    if (stillMissing.length > 0) {
+      const refYears = years.filter(yr => yearHasPct(yr));
+      if (refYears.length > 0) {
+        // 取得済み年から球種プロファイル（平均球速・割合）を算出
+        const profileByKey = {};
+        for (const key of PITCH_KEYS) {
+          const valid = refYears
+            .map(yr => rawPitch[yr]?.[key])
+            .filter(d => d && d.velo !== '--' && parseFloat(d.velo) > 0 &&
+                         d.pct !== '--' && parseFloat(String(d.pct).replace('%','')) >= 5);
+          if (!valid.length) continue;
+          const avgVelo = valid.reduce((s, d) => s + parseFloat(d.velo), 0) / valid.length;
+          const avgPct  = valid.reduce((s, d) => s + parseFloat(String(d.pct).replace('%','')), 0) / valid.length;
+          profileByKey[key] = { avgVelo, avgPct };
+        }
+        if (Object.keys(profileByKey).length > 0) {
+          const oldestRef = Math.min(...refYears.map(Number));
+          for (const yr of stillMissing) {
+            // 最も古い参照年より前の年ほど球速を +0.4mph/yr で加算（若年＝球速高め）
+            const yearDiff = oldestRef - Number(yr);
+            for (const [key, { avgVelo, avgPct }] of Object.entries(profileByKey)) {
+              const estVelo = Math.round(avgVelo + yearDiff * 0.4);
+              rawPitch[yr][key] = { velo: String(estVelo), ba: '--', slg: '--', pct: String(Math.round(avgPct)) };
+            }
+            // 割合を100に正規化してから球威を計算
+            const rawPcts = PITCH_KEYS.map(k => rawPitch[yr][k]?.pct ?? '--');
+            const normalized = normalizePctToSum100(rawPcts);
+            PITCH_KEYS.forEach((key, ki) => {
+              if (!profileByKey[key]) return;
+              const normPct = normalized[ki];
+              if (normPct === '--' || Number(normPct) < 5) {
+                rawPitch[yr][key] = { velo: '--', ba: '--', slg: '--', pct: '--' };
+                return;
+              }
+              rawPitch[yr][key].pct = normPct;
+              const veloNum = parseFloat(rawPitch[yr][key].velo);
+              const kyui = calcKyuiPreStatcast(veloNum, ki, Number(normPct));
+              if (kyui !== '') {
+                if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+                showKyuiMap[yr][ki] = kyui;
+              }
+            });
+          }
+          onProgress(`キャリア軌跡推定完了: ${stillMissing.join(', ')} (${Object.keys(profileByKey).length}球種)`);
         }
       }
     }
@@ -1559,7 +1621,7 @@ async function runCreateJob(jobId, params) {
 
     upd('ブラウザを起動して Baseball Savant / MLB The Show から球種データを取得中...');
     const apiKey = params.apiKey || process.env.ANTHROPIC_API_KEY || '';
-    const { rawPitch, showKyuiMap } = await fetchBrowserData(params.slug, params.id, years, upd, params.name, apiKey);
+    const { rawPitch, showKyuiMap } = await fetchBrowserData(params.slug, params.id, years, upd, params.name, apiKey, params.fullName || '');
 
     upd('Excel ファイルを生成中...');
     const outFile = await buildExcel(params.name, years, basic, vsLeftByYear, rawPitch);
