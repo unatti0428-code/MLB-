@@ -586,9 +586,16 @@ function calcKankyuu(eraStr, seikyu, pitchData, kyuiMap = {}) {
       const ki = calcKyuI(aj, calcAK_pitch(idx, aj, pctNum), pctNum);
       return ki !== '' ? Number(ki) : null;
     }
-    // BA/SLG なし → showKyuiMap の推定球威を使用
+    // フォールバック①: showKyuiMap（The Show / FanGraphs / 推定データ）
     const override = kyuiMap[idx];
-    return override !== undefined ? Number(override) : null;
+    if (override !== undefined) return Number(override);
+    // フォールバック②: 通算行など kyuiMap にキーがない場合 → 球速から推定
+    const veloN = parseFloat(String(pd.velo || ''));
+    if (!isNaN(veloN) && veloN > 0) {
+      const est = calcKyuiPreStatcast(veloN, idx, pctNum);
+      return est !== '' ? Number(est) : null;
+    }
+    return null;
   };
 
   const cands = [];
@@ -739,9 +746,15 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}) {
         const ak = calcAK_pitch(pg.idx, aj, pctNum);
         kyui = calcKyuI(aj, ak, pctNum);
       } else {
-        // MLB The Show ゲームデータから算出した球威を使用 (pre-2017)
+        // フォールバック①: showKyuiMap（The Show / FanGraphs / 推定データ）
         const showKyui = showKyuiMap[yr]?.[pg.idx];
-        if (showKyui !== undefined) kyui = showKyui;
+        if (showKyui !== undefined) {
+          kyui = showKyui;
+        } else if (!isNaN(veloNum) && veloNum > 0) {
+          // フォールバック②: 通算行など showKyuiMap にキーがない場合 → 球速から推定
+          const est = calcKyuiPreStatcast(veloNum, pg.idx, pctNum);
+          if (est !== '') kyui = est;
+        }
       }
       if (kyui !== '') redPurpleCell(ws.getCell(rn, base + 1), kyui, fontSize);
 
