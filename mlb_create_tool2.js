@@ -891,6 +891,45 @@ function calcKyuiFromShow(speed, control, movement) {
   return Math.round((speedPct + movementPct) / 2);
 }
 
+// ── Pre-Statcast (pre-2008) 球威推定 ─────────────────────────────────────────
+// 球速・球種・投球割合から BA/SLG を推計し、既存の calcAH/AI/AK/KyuI ロジックを適用。
+// ベースライン: 参考選手データ（ボックスバーガー/レスター/リンスカム/コール/ウィリアムズ/
+//              スクーバル/田中/シース/コービン）から逆算した「平均的MLB投手」の想定値。
+// [平均球速(mph), 平均BA(×1000), 平均SLG(×1000), BA変化量/mph, SLG変化量/mph]
+const PRE08_PITCH_BASELINES = [
+  [91, 265, 420, 10, 15],  // 0: FF  (4-seam)
+  [82, 255, 415,  8, 12],  // 1: SL  (slider)
+  [81, 260, 400,  8, 12],  // 2: CH  (changeup)
+  [76, 240, 375,  7, 10],  // 3: CU  (curve)
+  [86, 265, 415,  8, 12],  // 4: FC  (cutter)
+  [89, 265, 400, 10, 15],  // 5: SI  (sinker)
+  [83, 220, 340,  8, 12],  // 6: FS  (split)
+];
+
+/**
+ * Pre-Statcast 球威推定
+ * @param {number} speed  実際の球速 (mph)
+ * @param {number} idx    球種インデックス (0=FF,1=SL,2=CH,3=CU,4=FC,5=SI,6=FS)
+ * @param {number} pctNum 投球割合 (0〜100の整数)
+ * @returns {number|string} 球威 (整数) または '' (計算不能)
+ */
+function calcKyuiPreStatcast(speed, idx, pctNum) {
+  if (!speed || isNaN(speed)) return '';
+  const bl = PRE08_PITCH_BASELINES[idx] || PRE08_PITCH_BASELINES[0];
+  const spd = speed - bl[0];
+  // 球速偏差から BA/SLG を推計（速いほど低 BA/SLG → 高球威）
+  const estBA  = Math.max(80,  Math.min(380, Math.round(bl[1] - spd * bl[3])));
+  const estSLG = Math.max(120, Math.min(620, Math.round(bl[2] - spd * bl[4])));
+  const ah = calcAH_pitch(idx, estBA);
+  const ai = calcAI_pitch(idx, estSLG);
+  // フォールバック: calcAH/AI が空の場合は単純線形推定
+  if (ah === '' || ai === '') return Math.max(30, Math.min(110, Math.round(75 + spd * 2)));
+  const aj = (Number(ah) + Number(ai)) / 2;
+  const ak = calcAK_pitch(idx, aj, pctNum || 20);
+  const kyui = calcKyuI(aj, ak, pctNum || 20);
+  return kyui !== '' ? Number(kyui) : Math.max(30, Math.min(110, Math.round(75 + spd * 2)));
+}
+
 // 球種数 → 推定投球割合
 function estimateShowUsagePct(n) {
   const tables = { 1:[100], 2:[62,38], 3:[50,30,20], 4:[42,28,18,12], 5:[35,25,20,12,8] };
@@ -1001,7 +1040,7 @@ function applyFgRow(row, yr, rawPitch, showKyuiMap) {
       pct: String(pctVal),
     };
     if (veloVal) {
-      const kyui = calcKyuiFromShow(veloVal, 70, 70);
+      const kyui = calcKyuiPreStatcast(veloVal, idx, pctVal);
       if (kyui !== '') {
         if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
         showKyuiMap[yr][idx] = kyui;
@@ -1321,7 +1360,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
                       if (idx === undefined) return;
                       const key = PITCH_KEYS[idx];
                       rawPitch[yr][key] = { velo: String(p.speed), ba: '--', slg: '--', pct: String(p.pct) };
-                      const kyui = calcKyuiFromShow(p.speed, 70, 70);
+                      const kyui = calcKyuiPreStatcast(p.speed, idx, Number(p.pct));
                       if (kyui !== '') {
                         if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
                         showKyuiMap[yr][idx] = kyui;
