@@ -563,13 +563,15 @@ function _kSLFS(p) {
 }
 // 緩急メイン: ROUND((①+②+③)÷2)
 // eraStr = 防御率文字列、seikyu = 制球能力値(数値 or '')、pitchData = {[idx]:{ba,slg,pct}}
-function calcKankyuu(eraStr, seikyu, pitchData) {
+// kyuiMap: BA/SLG なし年（pre-Statcast）用フォールバック { [idx]: kyui値 }
+function calcKankyuu(eraStr, seikyu, pitchData, kyuiMap = {}) {
   const v1 = _kERA(parseFloat(String(eraStr || '').trim()));
   if (v1 === null) return '';
   const v2 = _kSeikyu(seikyu !== '' && seikyu != null ? Number(seikyu) : NaN);
   if (v2 === null) return '';
 
   // 各変化球の球威を計算してテーブルで変換、最大値を③に採用
+  // BA/SLG が '--' の場合は kyuiMap（showKyuiMap の年分）をフォールバックとして使用
   const kyuiOf = (idx, pd) => {
     if (!pd) return null;
     const pctStr = String(pd.pct ?? '').trim();
@@ -579,10 +581,14 @@ function calcKankyuu(eraStr, seikyu, pitchData) {
     const slgNum = pd.slg != null && String(pd.slg) !== '--' ? Number(pd.slg) : NaN;
     const ah = calcAH_pitch(idx, baNum);
     const ai = calcAI_pitch(idx, slgNum);
-    if (ah === '' || ai === '') return null;
-    const aj = (Number(ah) + Number(ai)) / 2;
-    const ki = calcKyuI(aj, calcAK_pitch(idx, aj, pctNum), pctNum);
-    return ki !== '' ? Number(ki) : null;
+    if (ah !== '' && ai !== '') {
+      const aj = (Number(ah) + Number(ai)) / 2;
+      const ki = calcKyuI(aj, calcAK_pitch(idx, aj, pctNum), pctNum);
+      return ki !== '' ? Number(ki) : null;
+    }
+    // BA/SLG なし → showKyuiMap の推定球威を使用
+    const override = kyuiMap[idx];
+    return override !== undefined ? Number(override) : null;
   };
 
   const cands = [];
@@ -681,7 +687,8 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}) {
     const eraStr = String(eraRaw || '').trim();
 
     // 緩急 (①ERA + ②制球 + ③変化球威力MAX) ÷ 2
-    const kankyuu = calcKankyuu(eraStr, seikyu, pitchData);
+    // showKyuiMap[yr] を渡すことで BA/SLG なし年（FanGraphs/推定データ）でも計算可能
+    const kankyuu = calcKankyuu(eraStr, seikyu, pitchData, showKyuiMap[yr] || {});
     if (kankyuu !== '') purpleCell(ws.getCell(rn, KANKYUU_COL), kankyuu, fontSize);
 
     // 精神
