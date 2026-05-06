@@ -340,12 +340,13 @@ function calcStaminaFromIP(ip, g, gs) {
   if (ip >= 230) return Math.round(ratio * 12.5);
   if (ip >= 210) return Math.round(ratio * 13.1);
   if (ip >= 86)  return Math.round(ratio * 13.5);
+  // IP 85以下: スタミナ上限 69（先発でも投球回数不足なら上限を設ける）
   if (ip >= 65) {
     const mult = (gs > 0 && (gs / g) > 0.5) ? 13 : 20;
-    return Math.round(ratio * mult);
+    return Math.min(69, Math.round(ratio * mult));
   }
-  if (ip >= 50)  return Math.round(ratio * 21);
-  return Math.round(ratio * 22);  // ip <= 49
+  if (ip >= 50)  return Math.min(69, Math.round(ratio * 21));
+  return Math.min(69, Math.round(ratio * 22));  // ip <= 49
 }
 
 // ── 制球計算式 (守備.ods AC2 の等価実装) ─────────────────────────────────────
@@ -702,7 +703,7 @@ const OMOSA_COL     = 56;
 const TAILEFT_COL   = 57;
 const TAITOURUI_COL = 58;
 
-async function addAbilityToFile(xlsxPath, showKyuiMap = {}) {
+async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides = {}) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(xlsxPath);
   const ws = wb.worksheets[0];
@@ -755,7 +756,9 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}) {
 
   activePitchList.forEach((pg, i) => {
     const base = PITCH_ABILITY_START_COL + i * 3;
-    redPurpleCell(ws.getCell(1, base), pg.name, fontSize);
+    // pitchNameOverrides に登録がある場合はサブタイプ優先表示名を使用
+    const displayName = pitchNameOverrides[pg.idx] ?? pg.name;
+    redPurpleCell(ws.getCell(1, base), displayName, fontSize);
     try { ws.mergeCells(1, base, 1, base + 2); } catch {}
     redPurpleCell(ws.getCell(2, base + 0), '球速', fontSize);
     redPurpleCell(ws.getCell(2, base + 1), '球威', fontSize);
@@ -858,6 +861,27 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}) {
   return count;
 }
 
+// ── チーム略称の正規化テーブル ────────────────────────────────────────────────
+// MLB Stats API が返す略称はシーズン・移転により揺れがあるため統一する
+const TEAM_ABBR_NORMALIZE = {
+  // アメリカンリーグ東
+  'TBD': 'TB',  'TBR': 'TB',                    // Devil Rays / Rays 表記揺れ
+  'KCR': 'KC',                                    // Royals alt
+  'CHW': 'CWS',                                   // White Sox alt
+  // アメリカンリーグ西
+  'ANA': 'LAA',  'CAL': 'LAA',                   // Angels 旧名
+  'OAK': 'ATH',                                   // Athletics（Oakland→Sacramento移転後）
+  // ナショナルリーグ東
+  'FLA': 'MIA',                                   // Florida Marlins → Miami Marlins
+  'MON': 'WSH',  'WSN': 'WSH',                   // Montreal Expos → Washington Nationals
+  // ナショナルリーグ西
+  'SDP': 'SD',                                    // Padres alt
+  'SFG': 'SF',                                    // Giants alt
+};
+function normalizeTeamAbbr(raw) {
+  return TEAM_ABBR_NORMALIZE[raw] || raw;
+}
+
 // ── Pitching stats fetch ──────────────────────────────────────────────────────
 async function fetchPitchingStats(id, y1, y2) {
   const yby = await mlbGet(
@@ -881,9 +905,9 @@ async function fetchPitchingStats(id, y1, y2) {
     if (rows.length > 1) {
       const named   = rows.filter(r => r.team);
       const primary = named.reduce((a, b) => (a.stat.gamesPitched >= b.stat.gamesPitched ? a : b));
-      teamStr = (primary.team?.abbreviation || primary.team?.name?.slice(0,3)?.toUpperCase() || '???') + named.length;
+      teamStr = normalizeTeamAbbr(primary.team?.abbreviation || primary.team?.name?.slice(0,3)?.toUpperCase() || '???') + named.length;
     } else {
-      teamStr = row.team?.abbreviation || row.team?.name?.slice(0,3)?.toUpperCase() || '???';
+      teamStr = normalizeTeamAbbr(row.team?.abbreviation || row.team?.name?.slice(0,3)?.toUpperCase() || '???');
     }
     const st = row.stat;
     basic[yr] = {
@@ -941,31 +965,68 @@ async function fetchPitchingStats(id, y1, y2) {
 const PITCH_KEYS     = ['ff', 'sl', 'ch', 'cu', 'fc', 'si', 'fs'];
 const PITCH_NAMES_JA = ['4シーム', 'スライダー', 'チェンジアップ', 'カーブ', 'カット', 'シンカー', 'スプリット'];
 
+// サブタイプ → 日本語表示名（デフォルト PITCH_NAMES_JA を上書きする球種のみ定義）
+const SUBTYPE_DISPLAY_JA = {
+  // sl バケット
+  'Sweeper':          'スイーパー',
+  'Slurve':           'スライダー',
+  'Hard Slider':      'スライダー',
+  // ch バケット
+  'Circle Change':    'チェンジアップ',
+  'Vulcan Change':    'チェンジアップ',
+  'Eephus':           'イーファス',
+  // cu バケット
+  'Knuckle Curve':    'ナックルカーブ',
+  'Knuckle-Curve':    'ナックルカーブ',
+  'Slow Curve':       'スローカーブ',
+  '12-6 Curve':       'カーブ',
+  'Power Curve':      'カーブ',
+  // si バケット
+  'Sinker':           'シンカー',
+  'Two-Seam Fastball':'ツーシーム',
+  '2-Seam Fastball':  'ツーシーム',
+  'Two Seamer':       'ツーシーム',
+  // fs バケット
+  'Knuckleball':      'ナックル',
+  'Forkball':         'フォーク',
+  'Splitter':         'スプリット',
+  'Split-Finger':     'スプリット',
+  'Split Finger':     'スプリット',
+};
+
 // Baseball Savant pitch name → 球種キー
 const PITCH_MAP_P    = {
   '4-Seam Fastball': 'ff', '4-seam Fastball': 'ff', 'Four-Seam Fastball': 'ff',
   'Four Seamer': 'ff', 'Four-Seamer': 'ff', '4-Seamer': 'ff', '4 Seamer': 'ff',
-  'Fastball': 'ff',        // 初期Statcat年代の汎用分類
-  'Riding Fastball': 'ff', 'Rising Fastball': 'ff',  // 高スピン4シームの新分類名
-  'Slider': 'sl', 'Sweeper': 'sl', 'Hard Slider': 'sl',
-  'Changeup': 'ch', 'Change-up': 'ch',
-  'Curveball': 'cu', 'Knuckle Curve': 'cu', 'Knuckleball': 'cu', 'Slow Curve': 'cu',
+  'Fastball': 'ff',        // 初期Statcast年代の汎用分類
+  'Riding Fastball': 'ff', 'Rising Fastball': 'ff',
+  // sl: スライダー系（スイーパー・スラーブ含む）
+  'Slider': 'sl', 'Sweeper': 'sl', 'Hard Slider': 'sl', 'Slurve': 'sl',
+  // ch: チェンジアップ系（イーファス含む）
+  'Changeup': 'ch', 'Change-up': 'ch', 'Circle Change': 'ch', 'Eephus': 'ch',
+  // cu: カーブ系（ナックルカーブ・スローカーブ含む）
+  'Curveball': 'cu', 'Knuckle Curve': 'cu', 'Slow Curve': 'cu',
+  '12-6 Curve': 'cu', 'Power Curve': 'cu',
   'Cutter': 'fc',
-  'Sinker': 'si', 'Two-Seam Fastball': 'si', '2-Seam Fastball': 'si',
+  // si: シンカー系（ツーシーム合算）
+  'Sinker': 'si', 'Two-Seam Fastball': 'si', '2-Seam Fastball': 'si', 'Two Seamer': 'si',
+  // fs: スプリット系（ナックルボール・フォーク含む）
   'Split-Finger': 'fs', 'Splitter': 'fs', 'Split Finger': 'fs',
+  'Forkball': 'fs', 'Knuckleball': 'fs',
 };
 
 // ※ brooksbaseball.net は廃止のため PITCH_MAP_B 削除済み (2025-05)
 
 // Baseball Savant JSON API pitch_type コード → 球種キー
 const PITCH_TYPE_JSON = {
-  'FF': 'ff', 'FA': 'ff', 'FT': 'ff',       // 4-Seam / generic / Two-seam（4S優先）
-  'SI': 'si',                                  // Sinker
+  'FF': 'ff', 'FA': 'ff',                    // 4-Seam / generic
+  'FT': 'si',                                 // Two-Seam → Sinker系に統合
+  'SI': 'si',                                 // Sinker
   'SL': 'sl', 'ST': 'sl', 'SV': 'sl',       // Slider / Sweeper / Slurve
-  'CH': 'ch', 'SC': 'ch',                    // Changeup / Screwball
-  'CU': 'cu', 'KC': 'cu', 'CS': 'cu',       // Curveball / Knuckle-curve
-  'FC': 'fc',                                  // Cutter
-  'FS': 'fs', 'FO': 'fs',                    // Split-finger / Forkball
+  'CH': 'ch', 'SC': 'ch', 'EP': 'ch',       // Changeup / Screwball / Eephus
+  'CU': 'cu', 'KC': 'cu', 'CS': 'cu',       // Curveball / Knuckle-curve / Slow Curve
+  'FC': 'fc',                                 // Cutter
+  'FS': 'fs', 'FO': 'fs', 'KN': 'fs',       // Split-finger / Forkball / Knuckleball
 };
 
 const emptyPitchP = () => Object.fromEntries(
@@ -980,11 +1041,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const PITCH_MAP_SHOW = {
   '4-Seam Fastball': 0, 'Fastball': 0, 'Rising Fastball': 0, 'Running Fastball': 0,
   'Two-Seam Fastball': 5, 'Sinker': 5,
-  'Slider': 1, 'Sweeper': 1, 'Slurve': 1,
-  'Changeup': 2, 'Circle Change': 2, 'Vulcan Change': 2,
+  'Slider': 1, 'Sweeper': 1, 'Slurve': 1, 'Hard Slider': 1,
+  'Changeup': 2, 'Circle Change': 2, 'Vulcan Change': 2, 'Eephus': 2,
   'Curveball': 3, '12-6 Curve': 3, 'Slow Curve': 3, 'Knuckle-Curve': 3, 'Power Curve': 3,
   'Cutter': 4,
-  'Splitter': 6, 'Forkball': 6, 'Split-Finger': 6, 'Split Finger': 6,
+  'Splitter': 6, 'Forkball': 6, 'Split-Finger': 6, 'Split Finger': 6, 'Knuckleball': 6,
 };
 
 // 球威計算 (MLB The Show ゲームデータ基準)
@@ -1343,6 +1404,17 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
     const rawPitch = {};
     for (const yr of years) rawPitch[yr] = emptyPitchP();
 
+    // ── サブタイプ追跡（表示名決定用）──────────────────────────────────────
+    // { [key]: { [engName]: 累積pct } } 各データソースから球種名と割合を記録し
+    // 最も比率の高いサブタイプを BG1以降の表示名として使用する
+    const subtypeTracker = {};
+    const trackSubtype = (key, engName, pctVal) => {
+      const pct = parseFloat(String(pctVal).replace('%', ''));
+      if (!key || !engName || isNaN(pct) || pct <= 0) return;
+      if (!subtypeTracker[key]) subtypeTracker[key] = {};
+      subtypeTracker[key][engName] = (subtypeTracker[key][engName] || 0) + pct;
+    };
+
     // ── ヘルパー ─────────────────────────────────────────────────────────────
     const yearHasPct = (yr) => PITCH_KEYS.some(k => {
       const p = rawPitch[yr]?.[k]?.pct;
@@ -1354,6 +1426,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       for (const [ptName, vals] of Object.entries(htmlData)) {
         const key = PITCH_MAP_P[ptName];
         if (!key) continue;
+        trackSubtype(key, ptName, vals.pct); // サブタイプ追跡
         const cur = rawPitch[yr][key];
         rawPitch[yr][key] = {
           velo: (cur.velo && cur.velo !== '--') ? cur.velo : (vals.velo || '--'),
@@ -1544,6 +1617,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
                 const idx = PITCH_MAP_SHOW[p.name];
                 if (idx === undefined) return;
                 const key = PITCH_KEYS[idx];
+                trackSubtype(key, p.name, pcts[i] || 5); // サブタイプ追跡
                 const kyui = calcKyuiFromShow(p.speed, p.control, p.movement);
                 rawPitch[yr][key] = { velo: String(p.speed), ba: '--', slg: '--', pct: String(pcts[i] || 5) };
                 if (kyui !== '') {
@@ -1600,6 +1674,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         if (claudeProfile) {
           const cp = claudeProfile.pitches.find(p => PITCH_MAP_SHOW[p.name] === ki);
           if (cp && cp.peakSpeed > 0) {
+            trackSubtype(key, cp.name, cp.avgPct || 20); // サブタイプ追跡
             profileByKey[key] = { peakVelo: cp.peakSpeed, avgPct: cp.avgPct || 20 };
             onProgress(`[aging curve] ${key}: Claude peakVelo=${cp.peakSpeed}mph avgPct=${cp.avgPct}%`);
             continue;
@@ -1652,7 +1727,20 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       }
     }
 
-    return { rawPitch, showKyuiMap };
+    // ── pitchNameOverrides を算出（サブタイプ追跡結果から）──────────────────
+    // SUBTYPE_DISPLAY_JA に登録されているサブタイプのうち、
+    // 累積 pct が最大のものを各 key の表示名として採用する
+    const pitchNameOverrides = {};
+    const KEY_TO_IDX = Object.fromEntries(PITCH_KEYS.map((k, i) => [k, i]));
+    for (const [key, nameMap] of Object.entries(subtypeTracker)) {
+      const dominant = Object.entries(nameMap).sort((a, b) => b[1] - a[1])[0]?.[0];
+      const idx = KEY_TO_IDX[key];
+      if (dominant !== undefined && SUBTYPE_DISPLAY_JA[dominant] !== undefined && idx !== undefined) {
+        pitchNameOverrides[idx] = SUBTYPE_DISPLAY_JA[dominant];
+      }
+    }
+
+    return { rawPitch, showKyuiMap, pitchNameOverrides };
   } finally {
     await browser.close();
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
@@ -1826,7 +1914,7 @@ async function runCreateJob(jobId, params) {
 
     upd('ブラウザを起動して Baseball Savant / MLB The Show から球種データを取得中...');
     const apiKey = params.apiKey || process.env.ANTHROPIC_API_KEY || '';
-    const { rawPitch, showKyuiMap } = await fetchBrowserData(params.slug, params.id, years, upd, params.name, apiKey, params.fullName || '');
+    const { rawPitch, showKyuiMap, pitchNameOverrides } = await fetchBrowserData(params.slug, params.id, years, upd, params.name, apiKey, params.fullName || '');
 
     upd('Excel ファイルを生成中...');
     const outFile = await buildExcel(params.name, years, basic, vsLeftByYear, rawPitch);
@@ -1834,7 +1922,7 @@ async function runCreateJob(jobId, params) {
     upd('スタミナ・制球を計算中...');
     let abilityRows = 0;
     try {
-      abilityRows = await addAbilityToFile(outFile, showKyuiMap);
+      abilityRows = await addAbilityToFile(outFile, showKyuiMap, pitchNameOverrides);
       upd(`スタミナ・制球追加完了: ${abilityRows} 行`);
     } catch (e) {
       upd('⚠ スタミナ・制球追加失敗: ' + e.message);
