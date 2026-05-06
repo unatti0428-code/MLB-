@@ -885,9 +885,12 @@ function normalizeTeamAbbr(raw) {
 
 // ── Pitching stats fetch ──────────────────────────────────────────────────────
 async function fetchPitchingStats(id, y1, y2) {
-  const yby = await mlbGet(
-    `https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=yearByYear&group=pitching&sportId=1`
-  );
+  // yearByYear と career を並列取得（career は year list 確定前に先行フェッチ）
+  const [yby, careerData] = await Promise.all([
+    mlbGet(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=yearByYear&group=pitching&sportId=1`),
+    mlbGet(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=career&group=pitching&sportId=1`),
+  ]);
+
   const allSplits = (yby.stats[0]?.splits || []).filter(s => s.sport?.id === 1);
   const byYear = {};
   for (const s of allSplits) {
@@ -925,9 +928,6 @@ async function fetchPitchingStats(id, y1, y2) {
     };
   }
 
-  const careerData = await mlbGet(
-    `https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=career&group=pitching&sportId=1`
-  );
   const cs2 = careerData.stats[0]?.splits[0]?.stat || {};
   basic['通算'] = {
     team: basic[years[years.length - 1]]?.team?.replace(/\d+$/, '') || '---',
@@ -942,22 +942,26 @@ async function fetchPitchingStats(id, y1, y2) {
     sb: cs2.stolenBases || 0, pk: cs2.pickoffs || 0, cs: cs2.caughtStealing || 0,
   };
 
+  // vsLeft（年別 + 通算）をすべて並列取得
   const vsLeftByYear = {};
-  await Promise.all(years.map(async yr => {
-    try {
-      const vl = await mlbGet(
-        `https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=statSplits&group=pitching&sportId=1&sitCodes=vl&season=${yr}`
-      );
-      vsLeftByYear[yr] = vl.stats[0]?.splits[0]?.stat?.avg || '--';
-    } catch { vsLeftByYear[yr] = '--'; }
-  }));
-
-  try {
-    const carVL = await mlbGet(
-      `https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=careerStatSplits&group=pitching&sportId=1&sitCodes=vl`
-    );
-    vsLeftByYear['通算'] = carVL.stats[0]?.splits[0]?.stat?.avg || '--';
-  } catch { vsLeftByYear['通算'] = '--'; }
+  await Promise.all([
+    ...years.map(async yr => {
+      try {
+        const vl = await mlbGet(
+          `https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=statSplits&group=pitching&sportId=1&sitCodes=vl&season=${yr}`
+        );
+        vsLeftByYear[yr] = vl.stats[0]?.splits[0]?.stat?.avg || '--';
+      } catch { vsLeftByYear[yr] = '--'; }
+    }),
+    (async () => {
+      try {
+        const carVL = await mlbGet(
+          `https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=careerStatSplits&group=pitching&sportId=1&sitCodes=vl`
+        );
+        vsLeftByYear['通算'] = carVL.stats[0]?.splits[0]?.stat?.avg || '--';
+      } catch { vsLeftByYear['通算'] = '--'; }
+    })(),
+  ]);
 
   return { years, basic, vsLeftByYear };
 }
@@ -1275,14 +1279,20 @@ function applyFgRow(row, yr, rawPitch, showKyuiMap) {
 
 // FanGraphs から複数年分の球種データを一括取得
 async function fetchFanGraphsPitchData(fgId, targetYears, rawPitch, showKyuiMap) {
+  // 年別リクエストを並列取得（最大4並列でFanGraphsのレート制限を回避）
+  const CONCURRENCY = 4;
   let count = 0;
-  for (const yr of targetYears) {
-    try {
+  for (let i = 0; i < targetYears.length; i += CONCURRENCY) {
+    const batch = targetYears.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(batch.map(yr => {
       const url = `https://www.fangraphs.com/api/leaders/major-league/data?pos=P&stats=pit&lg=all&qual=0&season=${yr}&season1=${yr}&type=4&players=${fgId}&pageitems=1&pagenum=1`;
-      const data = await fgGet(url);
-      const rows = data.data || [];
-      if (rows.length && applyFgRow(rows[0], yr, rawPitch, showKyuiMap)) count++;
-    } catch { /* 年別エラーは無視 */ }
+      return fgGet(url).then(data => ({ yr, rows: data.data || [] }));
+    }));
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value.rows.length) {
+        if (applyFgRow(r.value.rows[0], r.value.yr, rawPitch, showKyuiMap)) count++;
+      }
+    }
   }
   return count;
 }
@@ -1399,6 +1409,14 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       window.chrome = { runtime: {} };
     });
 
+    // 画像・フォント・メディア・スタイルシートをブロックして読み込みを高速化
+    await page.setRequestInterception(true);
+    const BLOCK_TYPES = new Set(['image', 'media', 'font', 'stylesheet']);
+    page.on('request', req => {
+      if (BLOCK_TYPES.has(req.resourceType())) req.abort();
+      else req.continue();
+    });
+
     const rawPitch = {};
     for (const yr of years) rawPitch[yr] = emptyPitchP();
 
@@ -1468,19 +1486,20 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
     try {
       onProgress('Baseball Savant を読み込み中...');
       const savantUrl = `https://baseballsavant.mlb.com/savant-player/${slug}-${id}?stats=statcast-r-pitching-mlb`;
-      await page.goto(savantUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+      // load イベント（DOMContentLoaded より少し後）で進む。networkidle2 は遅すぎるため使わない。
+      await page.goto(savantUrl, { waitUntil: 'load', timeout: 45000 });
 
-      // テーブル描画を待機（最大20秒）
+      // テーブル描画を待機（最大25秒）
       try {
         await page.waitForFunction(
           () => [...document.querySelectorAll('table')].some(t =>
             /\d{4}/.test(t.innerText || '') &&
             ['4-Seam','Fastball','Sinker','Slider','Riding'].some(k => (t.innerText||'').includes(k))
           ),
-          { timeout: 20000 }
+          { timeout: 25000 }
         );
       } catch { /* テーブルが見つからなくても続行 */ }
-      await sleep(2000);
+      // sleep 不要: waitForFunction がテーブル出現を確認済み
 
       // キャリアページの多年度 Pitch Tracking テーブルを一括パース
       // ── 設計方針 ────────────────────────────────────────────────────────────
