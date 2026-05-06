@@ -1190,6 +1190,46 @@ async function fetchMLBTheShowCard(playerName) {
   return null;
 }
 
+// ── キャリア速度カーブ (aging curve) ─────────────────────────────────────────
+// debutYear: MLBデビュー年, careerLength: キャリア稼働年数
+// 返値:
+//   toPeak(yr, refVelo)  → refVelo が yr 年時点の観測値として、ピーク球速を逆算
+//   fromPeak(yr, peakVelo) → ピーク球速からyr年の推定球速を算出
+function buildVeloCurve(debutYear, careerLength) {
+  const PEAK_CAREER_YEAR = 5;   // デビューから5年後にピーク
+  const RISE_RATE        = 0.35; // mph/yr（上昇期）
+  const DECLINE_RATE     = 0.35; // mph/yr（下降期）
+  let declineStart;
+  if (careerLength >= 20) {
+    declineStart = Math.round(careerLength * 0.8);
+  } else if (careerLength >= 16) {
+    declineStart = 16;
+  } else {
+    declineStart = 12;
+  }
+  const careerYearOf = yr => Number(yr) - debutYear; // 0-indexed
+  // refVelo: yr年での観測球速 → ピーク球速を逆算
+  const toPeak = (yr, refVelo) => {
+    const cy = careerYearOf(yr);
+    if (cy < PEAK_CAREER_YEAR) return refVelo + (PEAK_CAREER_YEAR - cy) * RISE_RATE;
+    if (cy <= declineStart)    return refVelo;
+    return refVelo + (cy - declineStart) * DECLINE_RATE;
+  };
+  // peakVelo: ピーク球速 → yr年の推定球速
+  const fromPeak = (yr, peakVelo) => {
+    const cy = careerYearOf(yr);
+    let v;
+    if (cy < PEAK_CAREER_YEAR) v = peakVelo - (PEAK_CAREER_YEAR - cy) * RISE_RATE;
+    else if (cy <= declineStart) v = peakVelo;
+    else v = peakVelo - (cy - declineStart) * DECLINE_RATE;
+    return Math.max(v, peakVelo - 6); // フロア: ピーク -6mph
+  };
+  return {
+    toPeak, fromPeak,
+    info: `debut=${debutYear} careerLen=${careerLength} peakAt=+${PEAK_CAREER_YEAR}yr declineFrom=+${declineStart}yr`,
+  };
+}
+
 // ── Baseball Savant browser scraping + MLB The Show API (pre-2017) ──────────
 // 設計:
 //  Step1: Baseball Savant JSON API を in-page fetch で直接叩く（2017年以降・HTMLパース不要）
@@ -1463,30 +1503,42 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       }
     }
 
-    // ── 2d: キャリア軌跡推定 (全データソースで未取得の年を前後データから推定) ──
+    // ── 2d: キャリア軌跡推定 (全データソースで未取得の年を aging curve で推定) ──
     const stillMissing = preShowYears.filter(yr => !yearHasPct(yr));
     if (stillMissing.length > 0) {
       const refYears = years.filter(yr => yearHasPct(yr));
       if (refYears.length > 0) {
-        // 取得済み年から球種プロファイル（平均球速・割合）を算出
+        // デビュー年・キャリア長を算出
+        const debutYear    = Math.min(...years.map(Number));
+        const lastYear     = Math.max(...years.map(Number));
+        const careerLength = lastYear - debutYear + 1;
+        const curve = buildVeloCurve(debutYear, careerLength);
+        onProgress(`[aging curve] ${curve.info}`);
+
+        // 球種ごとに: 全参照年の観測値からピーク球速を逆算して平均する
         const profileByKey = {};
         for (const key of PITCH_KEYS) {
+          const ki = PITCH_KEYS.indexOf(key);
           const valid = refYears
-            .map(yr => rawPitch[yr]?.[key])
-            .filter(d => d && d.velo !== '--' && parseFloat(d.velo) > 0 &&
-                         d.pct !== '--' && parseFloat(String(d.pct).replace('%','')) >= 5);
+            .map(yr => ({ yr, d: rawPitch[yr]?.[key] }))
+            .filter(({ d }) => d && d.velo !== '--' && parseFloat(d.velo) > 0 &&
+                               d.pct !== '--' && parseFloat(String(d.pct).replace('%','')) >= 5);
           if (!valid.length) continue;
-          const avgVelo = valid.reduce((s, d) => s + parseFloat(d.velo), 0) / valid.length;
-          const avgPct  = valid.reduce((s, d) => s + parseFloat(String(d.pct).replace('%','')), 0) / valid.length;
-          profileByKey[key] = { avgVelo, avgPct };
+          // 各参照年の観測球速からピーク球速を逆算して平均
+          const peakEstimates = valid.map(({ yr, d }) =>
+            curve.toPeak(yr, parseFloat(d.velo))
+          );
+          const peakVelo = peakEstimates.reduce((s, v) => s + v, 0) / peakEstimates.length;
+          const avgPct   = valid.reduce((s, { d }) =>
+            s + parseFloat(String(d.pct).replace('%','')), 0) / valid.length;
+          profileByKey[key] = { peakVelo, avgPct };
+          onProgress(`[aging curve] ${key}: peakVelo=${peakVelo.toFixed(1)}mph avgPct=${avgPct.toFixed(1)}%`);
         }
+
         if (Object.keys(profileByKey).length > 0) {
-          const oldestRef = Math.min(...refYears.map(Number));
           for (const yr of stillMissing) {
-            // 最も古い参照年より前の年ほど球速を +0.4mph/yr で加算（若年＝球速高め）
-            const yearDiff = oldestRef - Number(yr);
-            for (const [key, { avgVelo, avgPct }] of Object.entries(profileByKey)) {
-              const estVelo = Math.round(avgVelo + yearDiff * 0.4);
+            for (const [key, { peakVelo, avgPct }] of Object.entries(profileByKey)) {
+              const estVelo = Math.round(curve.fromPeak(yr, peakVelo));
               rawPitch[yr][key] = { velo: String(estVelo), ba: '--', slg: '--', pct: String(Math.round(avgPct)) };
             }
             // 割合を100に正規化してから球威を計算
