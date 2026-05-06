@@ -693,6 +693,12 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}) {
 
     const eraStr = String(eraRaw || '').trim();
 
+    // パフォーマンスデータ (BA/SLGなし年の球威補正用)
+    const perfEra    = parseFloat(eraStr);
+    const _avgStr    = String(avgRaw == null ? '' : avgRaw).trim();
+    const perfBaa1000 = (_avgStr && _avgStr !== '--') ? Number(_avgStr) : NaN;
+    const perfHr9    = ip > 0 ? hr / ip * 9 : NaN;
+
     // 緩急 (①ERA + ②制球 + ③変化球威力MAX) ÷ 2
     // showKyuiMap[yr] を渡すことで BA/SLG なし年（FanGraphs/推定データ）でも計算可能
     const kankyuu = calcKankyuu(eraStr, seikyu, pitchData, showKyuiMap[yr] || {});
@@ -746,13 +752,15 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}) {
         const ak = calcAK_pitch(pg.idx, aj, pctNum);
         kyui = calcKyuI(aj, ak, pctNum);
       } else {
-        // フォールバック①: showKyuiMap（The Show / FanGraphs / 推定データ）
+        // BA/SLG なし年: パフォーマンス補正値を算出
+        const perfBoost = calcPerfBoost(perfEra, perfBaa1000, perfHr9);
+        // フォールバック①: showKyuiMap（The Show / FanGraphs / 推定データ）+ 補正
         const showKyui = showKyuiMap[yr]?.[pg.idx];
         if (showKyui !== undefined) {
-          kyui = showKyui;
+          kyui = Math.max(30, Math.min(110, Number(showKyui) + perfBoost));
         } else if (!isNaN(veloNum) && veloNum > 0) {
-          // フォールバック②: 通算行など showKyuiMap にキーがない場合 → 球速から推定
-          const est = calcKyuiPreStatcast(veloNum, pg.idx, pctNum);
+          // フォールバック②: 通算行など showKyuiMap にキーがない場合 → 球速 + 補正で推定
+          const est = calcKyuiPreStatcast(veloNum, pg.idx, pctNum, perfEra, perfBaa1000, perfHr9);
           if (est !== '') kyui = est;
         }
       }
@@ -927,13 +935,46 @@ const PRE08_PITCH_BASELINES = [
 ];
 
 /**
+ * パフォーマンス補正値を計算 (球威へのボーナス/ペナルティ)
+ * ERA・被打率・HR/9 から投手の実際の支配力を評価する。
+ * 速い球でも成績が良ければ追加補正、悪ければ減点。
+ * @param {number} era      防御率 (例: 2.60)
+ * @param {number} baa1000  被打率×1000の整数 (例: 197 = .197)
+ * @param {number} hr9      9イニング換算被本塁打数
+ * @returns {number} 球威補正値 (整数、-10〜+10)
+ * キャリブレーション例:
+ *   RaジョンソN 2004 (ERA2.60, BAA.197, HR/9 0.49) → +10
+ *   平均的投手   2004 (ERA4.00, BAA.265, HR/9 1.00) → -5
+ *   不振投手         (ERA5.50, BAA.310, HR/9 1.80) → -10 (上限)
+ */
+function calcPerfBoost(era, baa1000, hr9) {
+  let boost = 0;
+  if (!isNaN(era) && era > 0) {
+    // ERA 2.0→+6, 2.5→+4, 3.0→+2, 3.5→0, 4.0→-2, 4.5→-4, 5.5→-8
+    boost += Math.round((3.5 - era) * 4);
+  }
+  if (!isNaN(baa1000) && baa1000 > 0) {
+    // BAA .200→+5, .225→+2, .250→0, .275→-2, .300→-5
+    boost += Math.round((250 - baa1000) / 10);
+  }
+  if (!isNaN(hr9) && hr9 >= 0) {
+    // HR/9 0.3→+2, 0.6→+1, 0.8→0, 1.2→-2, 1.5→-3
+    boost += Math.round((0.8 - hr9) * 4);
+  }
+  return Math.max(-10, Math.min(10, boost));
+}
+
+/**
  * Pre-Statcast 球威推定
- * @param {number} speed  実際の球速 (mph)
- * @param {number} idx    球種インデックス (0=FF,1=SL,2=CH,3=CU,4=FC,5=SI,6=FS)
- * @param {number} pctNum 投球割合 (0〜100の整数)
+ * @param {number} speed    実際の球速 (mph)
+ * @param {number} idx      球種インデックス (0=FF,1=SL,2=CH,3=CU,4=FC,5=SI,6=FS)
+ * @param {number} pctNum   投球割合 (0〜100の整数)
+ * @param {number} [era]    防御率 (省略可)
+ * @param {number} [baa1000] 被打率×1000整数 (省略可)
+ * @param {number} [hr9]    被本塁打/9回 (省略可)
  * @returns {number|string} 球威 (整数) または '' (計算不能)
  */
-function calcKyuiPreStatcast(speed, idx, pctNum) {
+function calcKyuiPreStatcast(speed, idx, pctNum, era = NaN, baa1000 = NaN, hr9 = NaN) {
   if (!speed || isNaN(speed)) return '';
   const bl = PRE08_PITCH_BASELINES[idx] || PRE08_PITCH_BASELINES[0];
   const spd = speed - bl[0];
@@ -942,12 +983,17 @@ function calcKyuiPreStatcast(speed, idx, pctNum) {
   const estSLG = Math.max(120, Math.min(620, Math.round(bl[2] - spd * bl[4])));
   const ah = calcAH_pitch(idx, estBA);
   const ai = calcAI_pitch(idx, estSLG);
-  // フォールバック: calcAH/AI が空の場合は単純線形推定
-  if (ah === '' || ai === '') return Math.max(30, Math.min(110, Math.round(75 + spd * 2)));
-  const aj = (Number(ah) + Number(ai)) / 2;
-  const ak = calcAK_pitch(idx, aj, pctNum || 20);
-  const kyui = calcKyuI(aj, ak, pctNum || 20);
-  return kyui !== '' ? Number(kyui) : Math.max(30, Math.min(110, Math.round(75 + spd * 2)));
+  const base = (ah === '' || ai === '')
+    ? Math.max(30, Math.min(110, Math.round(75 + spd * 2)))
+    : (() => {
+        const aj = (Number(ah) + Number(ai)) / 2;
+        const ak = calcAK_pitch(idx, aj, pctNum || 20);
+        const kyui = calcKyuI(aj, ak, pctNum || 20);
+        return kyui !== '' ? Number(kyui) : Math.max(30, Math.min(110, Math.round(75 + spd * 2)));
+      })();
+  // パフォーマンス補正: ERA/被打率/HR9 が渡された場合に適用
+  const boost = calcPerfBoost(era, baa1000, hr9);
+  return Math.max(30, Math.min(110, base + boost));
 }
 
 // 球種数 → 推定投球割合
