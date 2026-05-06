@@ -166,17 +166,18 @@ async function callClaudeForPitchData(apiKey, playerName, years) {
 /**
  * Claude にウェブ検索させてキャリアピーク球速プロファイルを取得。
  * 戻り値: { pitches: [{name, peakSpeed, avgPct}, ...], note: '' } または null
- * peakSpeed: キャリアピーク期のシーズン平均球速(mph) ※瞬間最速ではない
+ * peakSpeed: キャリア最高球速（瞬間最速・レーダーガン最大値, mph）
+ *            ※ 呼び出し元で -3.7mph（≈-6km/h）してシーズン平均相当に変換する
  */
 async function callClaudeForPeakProfile(apiKey, playerName, debutYear) {
   const prompt =
 `MLBピッチャー「${playerName}」（${debutYear}年デビュー）の球種・球速データをWikipediaやBaseballReference、FanGraphsなどで調べ、以下のJSONフォーマットのみで回答してください。
 
-{"pitches":[{"name":"4-Seam Fastball","peakSpeed":97,"avgPct":55},{"name":"Slider","peakSpeed":91,"avgPct":35}],"note":"データ根拠URL等"}
+{"pitches":[{"name":"4-Seam Fastball","peakSpeed":102,"avgPct":55},{"name":"Slider","peakSpeed":94,"avgPct":35}],"note":"データ根拠URL等"}
 
 ルール:
-・peakSpeed: キャリアのピーク期（最も状態がよかった時期）のシーズン平均球速(mph)を整数で
-  ※ 瞬間最速・最高速度ではなく、ピーク時のシーズン平均推定値
+・peakSpeed: キャリアを通じた最高球速（瞬間最速・レーダーガン計測最大値）(mph)を整数で
+  ※ シーズン平均ではなく、記録・文献・Wikipedia等で確認できる最高球速を記載すること
 ・avgPct: キャリア代表的な投球割合(%, 合計100の整数)
 ・球種名は必ず次のいずれか: 4-Seam Fastball, Two-Seam Fastball, Sinker, Slider, Sweeper, Changeup, Circle Change, Curveball, 12-6 Curve, Cutter, Splitter, Forkball, Split Finger
 ・最大5球種（使用率5%未満は省略）
@@ -1339,8 +1340,7 @@ async function fetchMLBTheShowCard(playerName) {
 //   toPeak(yr, refVelo)  → refVelo が yr 年時点の観測値として、ピーク球速を逆算
 //   fromPeak(yr, peakVelo) → ピーク球速からyr年の推定球速を算出
 function buildVeloCurve(debutYear, careerLength) {
-  const PEAK_CAREER_YEAR = 3;   // デビューから3年後にピーク（デビュー時は~1.7km/h差）
-  const RISE_RATE        = 0.35; // mph/yr（上昇期）
+  const PEAK_CAREER_YEAR = 0;   // デビュー時がピーク（上昇フェーズなし）
   const DECLINE_RATE     = 0.35; // mph/yr（下降期）
   let declineStart;
   if (careerLength >= 20) {
@@ -1354,16 +1354,14 @@ function buildVeloCurve(debutYear, careerLength) {
   // refVelo: yr年での観測球速 → ピーク球速を逆算
   const toPeak = (yr, refVelo) => {
     const cy = careerYearOf(yr);
-    if (cy < PEAK_CAREER_YEAR) return refVelo + (PEAK_CAREER_YEAR - cy) * RISE_RATE;
-    if (cy <= declineStart)    return refVelo;
+    if (cy <= declineStart) return refVelo;
     return refVelo + (cy - declineStart) * DECLINE_RATE;
   };
   // peakVelo: ピーク球速 → yr年の推定球速
   const fromPeak = (yr, peakVelo) => {
     const cy = careerYearOf(yr);
     let v;
-    if (cy < PEAK_CAREER_YEAR) v = peakVelo - (PEAK_CAREER_YEAR - cy) * RISE_RATE;
-    else if (cy <= declineStart) v = peakVelo;
+    if (cy <= declineStart) v = peakVelo;
     else v = peakVelo - (cy - declineStart) * DECLINE_RATE;
     return Math.max(v, peakVelo - 6); // フロア: ピーク -6mph
   };
@@ -1379,7 +1377,7 @@ function buildVeloCurve(debutYear, careerLength) {
 //         → pct列は「同一年の合計≈100」ヒューリスティックで特定
 //  Step2: 2016年以前の未取得年 → MLB The Show API で球種・球速・球威を取得
 //         （Brooksbaseball.net は廃止のため削除）
-async function fetchBrowserData(slug, id, years, onProgress, playerName = '', apiKey = '', englishName = '') {
+async function fetchBrowserData(slug, id, years, onProgress, playerName = '', apiKey = '', englishName = '', basic = {}) {
   const chromePath = findChrome();
   if (!chromePath) throw new Error('Chromeが見つかりません。Google ChromeまたはEdgeをインストールしてください。');
 
@@ -1403,6 +1401,32 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
 
     const rawPitch = {};
     for (const yr of years) rawPitch[yr] = emptyPitchP();
+
+    // ── 球速ブースト計算ヘルパー ─────────────────────────────────────────────
+    // FanGraphs BIS / aging curve 推定値に対して補正を加える。
+    // 速球系(ff/si): ベース+3mph ± 成績補正3mph
+    // 変化球系: ベース+1mph ± 成績補正1.5mph
+    // 成績補正: ERA・被打率・被本塁打率を各-1〜+1スコアに正規化して平均 → ±range をかける
+    const FASTBALL_KEYS_SET = new Set(['ff', 'si']);
+    const calcVeloBoostForYear = (key, basicYr) => {
+      const isFB  = FASTBALL_KEYS_SET.has(key);
+      const base  = isFB ? 3 : 1;
+      const range = isFB ? 3 : 1.5;
+      if (!basicYr) return base;
+      const era = (typeof basicYr.era === 'number') ? basicYr.era : parseFloat(basicYr.era || '');
+      const baa = basicYr.avg ? parseFloat(basicYr.avg) : NaN;
+      const ip  = parseFloat(basicYr.ip || '0');
+      const hr  = (typeof basicYr.hr === 'number') ? basicYr.hr : parseFloat(basicYr.hr || '');
+      const hr9 = (ip > 0 && !isNaN(hr)) ? hr * 9 / ip : NaN;
+      const scores = [];
+      if (!isNaN(era))  scores.push(Math.min(1, Math.max(-1, (4.0 - era)   / 1.5)));
+      if (!isNaN(baa))  scores.push(Math.min(1, Math.max(-1, (0.260 - baa) / 0.040)));
+      if (!isNaN(hr9))  scores.push(Math.min(1, Math.max(-1, (1.0 - hr9)   / 0.5)));
+      const perfAdj = scores.length > 0
+        ? (scores.reduce((s, v) => s + v, 0) / scores.length) * range
+        : 0;
+      return base + perfAdj;
+    };
 
     // ── サブタイプ追跡（表示名決定用）──────────────────────────────────────
     // { [key]: { [engName]: 累積pct } } 各データソースから球種名と割合を記録し
@@ -1579,6 +1603,10 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
     const careerLenNum  = lastYearNum - debutYearNum + 1;
     // Claude キャリアプロファイル（2c で取得 → 2d で活用）
     let claudeProfile = null;
+    // The Show が充填した年（2d で velo を aging curve 補正するために追跡）
+    const showFilledYears = new Set();
+    // The Show カード参照（2d でピーク球速の下限推定に使用）
+    let showCardRef = null;
 
     if (preShowYears.length > 0) {
       // ── 2a: FanGraphs (API key不要、2002年以降) ────────────────────────────
@@ -1601,6 +1629,30 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         } catch (e) {
           onProgress('⚠ FanGraphs 取得失敗: ' + e.message);
         }
+
+        // ── FanGraphs 実測値にも球速ブースト適用（速球+3/変化球+1 ± 成績補正）──
+        // FanGraphs BIS の実測値は実際の球速より低めに記録されているため、
+        // aging curve と同じ補正を直接FanGraphsデータにも適用する。
+        // （Randy Johnson 2002 で急激にスピードが落ちないようにする）
+        for (const yr of fgTargetYears.filter(y => yearHasPct(y))) {
+          for (const key of PITCH_KEYS) {
+            const d = rawPitch[yr]?.[key];
+            if (!d || d.velo === '--') continue;
+            const origVelo = parseFloat(d.velo);
+            if (isNaN(origVelo) || origVelo <= 0) continue;
+            const boost = calcVeloBoostForYear(key, basic[yr]);
+            const newVelo = Math.round(origVelo + boost);
+            rawPitch[yr][key].velo = String(newVelo);
+            const ki = PITCH_KEYS.indexOf(key);
+            const pctNum = parseFloat(String(d.pct).replace('%', ''));
+            const kyui = calcKyuiPreStatcast(newVelo, ki, isNaN(pctNum) ? 20 : pctNum);
+            if (kyui !== '') {
+              if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+              showKyuiMap[yr][ki] = kyui;
+            }
+          }
+          onProgress(`[FanGraphs boost] ${yr}: 速球+3/変化球+1 ± 成績補正適用`);
+        }
       }
 
       // ── 2b: MLB The Show (FanGraphs で未取得の年 + pre-2002) ──────────────
@@ -1610,6 +1662,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         try {
           const showCard = await fetchMLBTheShowCard(englishName || playerName);
           if (showCard) {
+            showCardRef = showCard; // 2d でピーク球速推定に使用
             onProgress(`MLB The Show: "${showCard.name}" (${showCard.rarity}) カード発見`);
             const pcts = estimateShowUsagePct(showCard.pitches.length);
             for (const yr of afterFgMissing) {
@@ -1619,12 +1672,15 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
                 const key = PITCH_KEYS[idx];
                 trackSubtype(key, p.name, pcts[i] || 5); // サブタイプ追跡
                 const kyui = calcKyuiFromShow(p.speed, p.control, p.movement);
-                rawPitch[yr][key] = { velo: String(p.speed), ba: '--', slg: '--', pct: String(pcts[i] || 5) };
+                // The Show の球速属性値（1-99スケール）は mph ではないため velo は設定しない
+                // → aging curve が FanGraphs 実測値から逆算した mph を書き込む
+                rawPitch[yr][key] = { velo: '--', ba: '--', slg: '--', pct: String(pcts[i] || 5) };
                 if (kyui !== '') {
                   if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
                   showKyuiMap[yr][idx] = kyui;
                 }
               });
+              showFilledYears.add(yr); // The Show で充填した年を記録
             }
             onProgress(`MLB The Show: ${afterFgMissing.length}年 × ${showCard.pitches.length}球種 設定完了`);
           } else {
@@ -1659,8 +1715,13 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
     // ── 2d: キャリア軌跡推定 (全データソースで未取得の年を aging curve で推定) ──
     // claudeProfile がある場合: Claude のピーク球速を基準に aging curve を適用
     // ない場合: 取得済み参照年の観測値から逆算してピークを推定
+    // ※ The Show はカード一枚の一律速度を全年に適用するため、claudeProfile がある場合は
+    //   showFilledYears の velocity も aging curve で上書きする（pct/球種は保持）
     const stillMissing = preShowYears.filter(yr => !yearHasPct(yr));
-    if (stillMissing.length > 0) {
+    // The Show 充填年は claudeProfile の有無に関係なく常に aging curve で velo 補正する
+    // （The Show はカード1枚の一律速度を全年に貼り付けるため）
+    const showVeloOverrideYears = Array.from(showFilledYears);
+    if (stillMissing.length > 0 || showVeloOverrideYears.length > 0) {
       const curve = buildVeloCurve(debutYearNum, careerLenNum);
       onProgress(`[aging curve] ${curve.info}`);
 
@@ -1671,37 +1732,69 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         const ki = PITCH_KEYS.indexOf(key);
 
         // ── 優先①: Claude プロファイルにピーク球速がある場合 ──
+        // Claude は最高球速（瞬間最速）を返すため、-3.7mph（≈-6km/h）してシーズン平均相当に変換
+        // claudeBased:true → FanGraphsバイアス補正のベースブーストは不要（成績補正のみ適用）
         if (claudeProfile) {
           const cp = claudeProfile.pitches.find(p => PITCH_MAP_SHOW[p.name] === ki);
           if (cp && cp.peakSpeed > 0) {
             trackSubtype(key, cp.name, cp.avgPct || 20); // サブタイプ追跡
-            profileByKey[key] = { peakVelo: cp.peakSpeed, avgPct: cp.avgPct || 20 };
-            onProgress(`[aging curve] ${key}: Claude peakVelo=${cp.peakSpeed}mph avgPct=${cp.avgPct}%`);
+            const peakVeloAdj = Math.round((cp.peakSpeed - 3.7) * 10) / 10; // 最高球速 → シーズン平均相当
+            profileByKey[key] = { peakVelo: peakVeloAdj, avgPct: cp.avgPct || 20, claudeBased: true };
+            onProgress(`[aging curve] ${key}: Claude maxSpeed=${cp.peakSpeed}mph → peakVelo=${peakVeloAdj}mph (-3.7mph) avgPct=${cp.avgPct}%`);
             continue;
           }
         }
 
         // ── 優先②: 参照年の観測値からピーク球速を逆算 ──
+        // ※ refYears の velo は FanGraphs boost 適用済み（+3/+1 ± 成績補正）のため、
+        //   toPeak する前にブーストを除去して生の FanGraphs 値に戻す。
+        //   profileByKey には生の（プレブースト）ピーク球速を格納し、
+        //   各推定年に apply する際に改めて calcVeloBoostForYear を足す。
         if (refYears.length === 0) continue;
         const valid = refYears
           .map(yr => ({ yr, d: rawPitch[yr]?.[key] }))
           .filter(({ d }) => d && d.velo !== '--' && parseFloat(d.velo) > 0 &&
                              d.pct !== '--' && parseFloat(String(d.pct).replace('%','')) >= 5);
         if (!valid.length) continue;
-        const peakEstimates = valid.map(({ yr, d }) =>
-          curve.toPeak(yr, parseFloat(d.velo))
-        );
+        const peakEstimates = valid.map(({ yr, d }) => {
+          const boostedVelo = parseFloat(d.velo);
+          const boost = calcVeloBoostForYear(key, basic[yr]); // FanGraphs boost を除去
+          return curve.toPeak(yr, boostedVelo - boost);       // 生の FanGraphs 値でピーク逆算
+        });
         const peakVelo = peakEstimates.reduce((s, v) => s + v, 0) / peakEstimates.length;
         const avgPct   = valid.reduce((s, { d }) =>
           s + parseFloat(String(d.pct).replace('%','')), 0) / valid.length;
-        profileByKey[key] = { peakVelo, avgPct };
-        onProgress(`[aging curve] ${key}: 逆算 peakVelo=${peakVelo.toFixed(1)}mph avgPct=${avgPct.toFixed(1)}%`);
+        profileByKey[key] = { peakVelo, avgPct, claudeBased: false };
+        onProgress(`[aging curve] ${key}: 逆算 peakVelo=${peakVelo.toFixed(1)}mph (raw) avgPct=${avgPct.toFixed(1)}%`);
+      }
+
+      // ── 優先②.5: The Show 属性値をプレブーストのピーク下限として使用 ─────────
+      // FanGraphs のデータが選手の晩年しかない場合（例: Randy Johnson 2002-2004 = 38-40歳）、
+      // 逆算ピーク球速は過小評価になる。The Show 属性値(1-99)は FanGraphs と同スケールの
+      // ロー値として扱い、ブーストは推定時に加算する。
+      // 例: Show属性93 → raw peak 93mph → 推定時 93+6=99mph → 99*1.6+4=162km/h
+      if (!claudeProfile && showCardRef && showFilledYears.size > 0) {
+        for (const key of PITCH_KEYS) {
+          const ki = PITCH_KEYS.indexOf(key);
+          const sp = showCardRef.pitches.find(p => PITCH_MAP_SHOW[p.name] === ki);
+          if (!sp || sp.speed <= 0) continue;
+          const showPeakEstimate = sp.speed; // Show属性(1-99) = FanGraphs同スケールのロー値
+          const currentPeak = profileByKey[key]?.peakVelo ?? 0;
+          if (showPeakEstimate > currentPeak) {
+            profileByKey[key] = { peakVelo: showPeakEstimate, avgPct: profileByKey[key]?.avgPct ?? 20, claudeBased: false };
+            onProgress(`[aging curve] ${key}: Show属性${sp.speed}=rawPeak採用 (FanGraphs逆算raw${currentPeak.toFixed(1)}mphより高いため上書き)`);
+          }
+        }
       }
 
       if (Object.keys(profileByKey).length > 0) {
+        // ─ stillMissing 年: 全フィールドを新規設定 ─
         for (const yr of stillMissing) {
-          for (const [key, { peakVelo, avgPct }] of Object.entries(profileByKey)) {
-            const estVelo = Math.round(curve.fromPeak(yr, peakVelo));
+          for (const [key, { peakVelo, avgPct, claudeBased }] of Object.entries(profileByKey)) {
+            // claudeBased: Claude が真の球速を返す → FanGraphs バイアス補正のベースブーストは不要
+            // !claudeBased: FanGraphs/Show 由来のロー値 → ブースト (base+perf) を加算
+            const boost = claudeBased ? 0 : calcVeloBoostForYear(key, basic[yr]);
+            const estVelo = Math.round(curve.fromPeak(yr, peakVelo) + boost);
             rawPitch[yr][key] = { velo: String(estVelo), ba: '--', slg: '--', pct: String(Math.round(avgPct)) };
           }
           // 割合を100に正規化してから球威を計算
@@ -1723,7 +1816,30 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             }
           });
         }
-        onProgress(`キャリア軌跡推定完了: ${stillMissing.join(', ')} (${Object.keys(profileByKey).length}球種)`);
+        if (stillMissing.length > 0) {
+          onProgress(`キャリア軌跡推定完了: ${stillMissing.join(', ')} (${Object.keys(profileByKey).length}球種, 速球+3/変化球+1 ± 成績補正済み)`);
+        }
+
+        // ─ showVeloOverrideYears: velocity のみ aging curve で上書き（pct/球種は The Show 値を保持）─
+        if (showVeloOverrideYears.length > 0) {
+          for (const yr of showVeloOverrideYears) {
+            for (const [key, { peakVelo, claudeBased }] of Object.entries(profileByKey)) {
+              if (!rawPitch[yr]?.[key]) continue; // velo='--' でも aging curve で上書きする
+              const boost = claudeBased ? 0 : calcVeloBoostForYear(key, basic[yr]);
+              const estVelo = Math.round(curve.fromPeak(yr, peakVelo) + boost);
+              rawPitch[yr][key].velo = String(estVelo);
+              // 球威も aging curve 球速で再計算
+              const ki = PITCH_KEYS.indexOf(key);
+              const pctNum = parseFloat(String(rawPitch[yr][key].pct).replace('%', ''));
+              const kyui = calcKyuiPreStatcast(estVelo, ki, isNaN(pctNum) ? 20 : pctNum);
+              if (kyui !== '') {
+                if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+                showKyuiMap[yr][ki] = kyui;
+              }
+            }
+          }
+          onProgress(`The Show 年 velo 補正完了: ${showVeloOverrideYears.join(', ')} → aging curve 速球+3/変化球+1 ± 成績補正適用`);
+        }
       }
     }
 
@@ -1914,7 +2030,7 @@ async function runCreateJob(jobId, params) {
 
     upd('ブラウザを起動して Baseball Savant / MLB The Show から球種データを取得中...');
     const apiKey = params.apiKey || process.env.ANTHROPIC_API_KEY || '';
-    const { rawPitch, showKyuiMap, pitchNameOverrides } = await fetchBrowserData(params.slug, params.id, years, upd, params.name, apiKey, params.fullName || '');
+    const { rawPitch, showKyuiMap, pitchNameOverrides } = await fetchBrowserData(params.slug, params.id, years, upd, params.name, apiKey, params.fullName || '', basic);
 
     upd('Excel ファイルを生成中...');
     const outFile = await buildExcel(params.name, years, basic, vsLeftByYear, rawPitch);
