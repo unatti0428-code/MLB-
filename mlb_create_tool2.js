@@ -163,6 +163,88 @@ async function callClaudeForPitchData(apiKey, playerName, years) {
   return null;
 }
 
+/**
+ * Claude にウェブ検索させてキャリアピーク球速プロファイルを取得。
+ * 戻り値: { pitches: [{name, peakSpeed, avgPct}, ...], note: '' } または null
+ * peakSpeed: キャリアピーク期のシーズン平均球速(mph) ※瞬間最速ではない
+ */
+async function callClaudeForPeakProfile(apiKey, playerName, debutYear) {
+  const prompt =
+`MLBピッチャー「${playerName}」（${debutYear}年デビュー）の球種・球速データをWikipediaやBaseballReference、FanGraphsなどで調べ、以下のJSONフォーマットのみで回答してください。
+
+{"pitches":[{"name":"4-Seam Fastball","peakSpeed":97,"avgPct":55},{"name":"Slider","peakSpeed":91,"avgPct":35}],"note":"データ根拠URL等"}
+
+ルール:
+・peakSpeed: キャリアのピーク期（最も状態がよかった時期）のシーズン平均球速(mph)を整数で
+  ※ 瞬間最速・最高速度ではなく、ピーク時のシーズン平均推定値
+・avgPct: キャリア代表的な投球割合(%, 合計100の整数)
+・球種名は必ず次のいずれか: 4-Seam Fastball, Two-Seam Fastball, Sinker, Slider, Sweeper, Changeup, Circle Change, Curveball, 12-6 Curve, Cutter, Splitter, Forkball, Split Finger
+・最大5球種（使用率5%未満は省略）
+・JSONのみ返答（説明文・コードブロック不要）`;
+
+  const messages = [{ role: 'user', content: prompt }];
+
+  for (let turn = 0; turn < 8; turn++) {
+    const body = JSON.stringify({
+      model: 'claude-opus-4-5',
+      max_tokens: 512,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages,
+    });
+    let parsed;
+    try {
+      const { body: raw } = await httpsPost({
+        hostname: 'api.anthropic.com',
+        port: 443,
+        path: '/v1/messages',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'web-search-2025-03-05',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      }, body);
+      parsed = JSON.parse(raw);
+    } catch { break; }
+
+    if (parsed.error) throw new Error(parsed.error.message || 'Claude API error');
+
+    const content    = parsed.content || [];
+    const stopReason = parsed.stop_reason;
+
+    if (stopReason === 'end_turn') {
+      const textBlock = content.find(b => b.type === 'text');
+      if (!textBlock) break;
+      const m = textBlock.text.trim().match(/\{[\s\S]*\}/);
+      if (!m) break;
+      try { return JSON.parse(m[0]); } catch { break; }
+    }
+
+    if (stopReason === 'tool_use') {
+      messages.push({ role: 'assistant', content });
+      const autoResults = content.filter(b => b.type === 'tool_result');
+      if (autoResults.length > 0) {
+        messages.push({ role: 'user', content: '検索完了。JSONのみ返してください。' });
+        continue;
+      }
+      const toolUseBlocks = content.filter(b => b.type === 'tool_use');
+      if (!toolUseBlocks.length) break;
+      messages.push({ role: 'user', content: toolUseBlocks.map(b => ({ type: 'tool_result', tool_use_id: b.id, content: '' })) });
+      continue;
+    }
+
+    const textBlock = content.find(b => b.type === 'text');
+    if (textBlock) {
+      const m = textBlock.text.match(/\{[\s\S]*\}/);
+      if (m) { try { return JSON.parse(m[0]); } catch {} }
+    }
+    break;
+  }
+  return null;
+}
+
 async function searchPlayers(name) {
   const data = await mlbGet(
     `https://statsapi.mlb.com/api/v1/people/search?names=${encodeURIComponent(name)}&sportId=1`
@@ -926,7 +1008,7 @@ function calcKyuiFromShow(speed, control, movement) {
 // [平均球速(mph), 平均BA(×1000), 平均SLG(×1000), BA変化量/mph, SLG変化量/mph]
 const PRE08_PITCH_BASELINES = [
   [91, 265, 420, 10, 15],  // 0: FF  (4-seam)
-  [82, 255, 415,  8, 12],  // 1: SL  (slider)
+  [84, 220, 350, 10, 15],  // 1: SL  (slider) ※ハードスライダー基準: 低BA/SLGに調整
   [81, 260, 400,  8, 12],  // 2: CH  (changeup)
   [76, 240, 375,  7, 10],  // 3: CU  (curve)
   [86, 265, 415,  8, 12],  // 4: FC  (cutter)
@@ -1196,7 +1278,7 @@ async function fetchMLBTheShowCard(playerName) {
 //   toPeak(yr, refVelo)  → refVelo が yr 年時点の観測値として、ピーク球速を逆算
 //   fromPeak(yr, peakVelo) → ピーク球速からyr年の推定球速を算出
 function buildVeloCurve(debutYear, careerLength) {
-  const PEAK_CAREER_YEAR = 5;   // デビューから5年後にピーク
+  const PEAK_CAREER_YEAR = 3;   // デビューから3年後にピーク（デビュー時は~1.7km/h差）
   const RISE_RATE        = 0.35; // mph/yr（上昇期）
   const DECLINE_RATE     = 0.35; // mph/yr（下降期）
   let declineStart;
@@ -1418,6 +1500,12 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
     // ── Step 2: pre-2017 年 → FanGraphs → MLB The Show → Claude の順でフォールバック ──
     const showKyuiMap = {};
     const preShowYears = years.filter(yr => +yr < 2017 && !yearHasPct(yr));
+    // デビュー年・キャリア長（Step 2c/2d 共通で使用）
+    const debutYearNum  = Math.min(...years.map(Number));
+    const lastYearNum   = Math.max(...years.map(Number));
+    const careerLenNum  = lastYearNum - debutYearNum + 1;
+    // Claude キャリアプロファイル（2c で取得 → 2d で活用）
+    let claudeProfile = null;
 
     if (preShowYears.length > 0) {
       // ── 2a: FanGraphs (API key不要、2002年以降) ────────────────────────────
@@ -1466,36 +1554,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             }
             onProgress(`MLB The Show: ${afterFgMissing.length}年 × ${showCard.pitches.length}球種 設定完了`);
           } else {
-            // ── 2c: Claude ウェブ検索 (APIキーがある場合のみ) ─────────────
-            if (apiKey) {
-              onProgress('MLB The Show: 未収録 → Claude ウェブ検索で球種を推定中...');
-              try {
-                const claudeData = await callClaudeForPitchData(apiKey, englishName || playerName, afterFgMissing);
-                if (claudeData && Array.isArray(claudeData.pitches) && claudeData.pitches.length > 0) {
-                  for (const yr of afterFgMissing) {
-                    claudeData.pitches.forEach(p => {
-                      const idx = PITCH_MAP_SHOW[p.name];
-                      if (idx === undefined) return;
-                      const key = PITCH_KEYS[idx];
-                      rawPitch[yr][key] = { velo: String(p.speed), ba: '--', slg: '--', pct: String(p.pct) };
-                      const kyui = calcKyuiPreStatcast(p.speed, idx, Number(p.pct));
-                      if (kyui !== '') {
-                        if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
-                        showKyuiMap[yr][idx] = kyui;
-                      }
-                    });
-                  }
-                  const noteStr = claudeData.note ? `（${claudeData.note}）` : '';
-                  onProgress(`Claude 推定完了: ${claudeData.pitches.length}球種 × ${afterFgMissing.length}年${noteStr}`);
-                } else {
-                  onProgress('Claude: 球種データを取得できませんでした');
-                }
-              } catch (e) {
-                onProgress('⚠ Claude 球種推定失敗: ' + e.message);
-              }
-            } else {
-              onProgress('MLB The Show: 該当カード未収録（pre-2017 球種データなし）');
-            }
+            onProgress('MLB The Show: 該当カード未収録');
           }
         } catch (e) {
           onProgress('⚠ MLB The Show API 取得失敗: ' + e.message);
@@ -1503,65 +1562,93 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       }
     }
 
+    // ── 2c: Claude ウェブ検索でキャリアピーク球速プロファイルを取得 ─────────
+    // APIキーがある場合は常に実行（FanGraphs/The Show有無に関係なく）。
+    // 年別データは埋めず、ピーク球速・球種プロファイルのみ取得 → Step 2d で aging curve に使用。
+    if (apiKey) {
+      onProgress(`Claude ウェブ検索: ${englishName || playerName} のキャリアピーク球速を調査中...`);
+      try {
+        const profile = await callClaudeForPeakProfile(apiKey, englishName || playerName, debutYearNum);
+        if (profile && Array.isArray(profile.pitches) && profile.pitches.length > 0) {
+          claudeProfile = profile;
+          const noteStr = profile.note ? `（${profile.note}）` : '';
+          onProgress(`Claude プロファイル取得: ${profile.pitches.length}球種${noteStr}`);
+          profile.pitches.forEach(p => onProgress(`  ${p.name}: peakSpeed=${p.peakSpeed}mph, avgPct=${p.avgPct}%`));
+        } else {
+          onProgress('Claude: プロファイルを取得できませんでした（aging curve でフォールバック）');
+        }
+      } catch (e) {
+        onProgress('⚠ Claude プロファイル取得失敗: ' + e.message);
+      }
+    }
+
     // ── 2d: キャリア軌跡推定 (全データソースで未取得の年を aging curve で推定) ──
+    // claudeProfile がある場合: Claude のピーク球速を基準に aging curve を適用
+    // ない場合: 取得済み参照年の観測値から逆算してピークを推定
     const stillMissing = preShowYears.filter(yr => !yearHasPct(yr));
     if (stillMissing.length > 0) {
+      const curve = buildVeloCurve(debutYearNum, careerLenNum);
+      onProgress(`[aging curve] ${curve.info}`);
+
       const refYears = years.filter(yr => yearHasPct(yr));
-      if (refYears.length > 0) {
-        // デビュー年・キャリア長を算出
-        const debutYear    = Math.min(...years.map(Number));
-        const lastYear     = Math.max(...years.map(Number));
-        const careerLength = lastYear - debutYear + 1;
-        const curve = buildVeloCurve(debutYear, careerLength);
-        onProgress(`[aging curve] ${curve.info}`);
+      const profileByKey = {};
 
-        // 球種ごとに: 全参照年の観測値からピーク球速を逆算して平均する
-        const profileByKey = {};
-        for (const key of PITCH_KEYS) {
-          const ki = PITCH_KEYS.indexOf(key);
-          const valid = refYears
-            .map(yr => ({ yr, d: rawPitch[yr]?.[key] }))
-            .filter(({ d }) => d && d.velo !== '--' && parseFloat(d.velo) > 0 &&
-                               d.pct !== '--' && parseFloat(String(d.pct).replace('%','')) >= 5);
-          if (!valid.length) continue;
-          // 各参照年の観測球速からピーク球速を逆算して平均
-          const peakEstimates = valid.map(({ yr, d }) =>
-            curve.toPeak(yr, parseFloat(d.velo))
-          );
-          const peakVelo = peakEstimates.reduce((s, v) => s + v, 0) / peakEstimates.length;
-          const avgPct   = valid.reduce((s, { d }) =>
-            s + parseFloat(String(d.pct).replace('%','')), 0) / valid.length;
-          profileByKey[key] = { peakVelo, avgPct };
-          onProgress(`[aging curve] ${key}: peakVelo=${peakVelo.toFixed(1)}mph avgPct=${avgPct.toFixed(1)}%`);
-        }
+      for (const key of PITCH_KEYS) {
+        const ki = PITCH_KEYS.indexOf(key);
 
-        if (Object.keys(profileByKey).length > 0) {
-          for (const yr of stillMissing) {
-            for (const [key, { peakVelo, avgPct }] of Object.entries(profileByKey)) {
-              const estVelo = Math.round(curve.fromPeak(yr, peakVelo));
-              rawPitch[yr][key] = { velo: String(estVelo), ba: '--', slg: '--', pct: String(Math.round(avgPct)) };
-            }
-            // 割合を100に正規化してから球威を計算
-            const rawPcts = PITCH_KEYS.map(k => rawPitch[yr][k]?.pct ?? '--');
-            const normalized = normalizePctToSum100(rawPcts);
-            PITCH_KEYS.forEach((key, ki) => {
-              if (!profileByKey[key]) return;
-              const normPct = normalized[ki];
-              if (normPct === '--' || Number(normPct) < 5) {
-                rawPitch[yr][key] = { velo: '--', ba: '--', slg: '--', pct: '--' };
-                return;
-              }
-              rawPitch[yr][key].pct = normPct;
-              const veloNum = parseFloat(rawPitch[yr][key].velo);
-              const kyui = calcKyuiPreStatcast(veloNum, ki, Number(normPct));
-              if (kyui !== '') {
-                if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
-                showKyuiMap[yr][ki] = kyui;
-              }
-            });
+        // ── 優先①: Claude プロファイルにピーク球速がある場合 ──
+        if (claudeProfile) {
+          const cp = claudeProfile.pitches.find(p => PITCH_MAP_SHOW[p.name] === ki);
+          if (cp && cp.peakSpeed > 0) {
+            profileByKey[key] = { peakVelo: cp.peakSpeed, avgPct: cp.avgPct || 20 };
+            onProgress(`[aging curve] ${key}: Claude peakVelo=${cp.peakSpeed}mph avgPct=${cp.avgPct}%`);
+            continue;
           }
-          onProgress(`キャリア軌跡推定完了: ${stillMissing.join(', ')} (${Object.keys(profileByKey).length}球種)`);
         }
+
+        // ── 優先②: 参照年の観測値からピーク球速を逆算 ──
+        if (refYears.length === 0) continue;
+        const valid = refYears
+          .map(yr => ({ yr, d: rawPitch[yr]?.[key] }))
+          .filter(({ d }) => d && d.velo !== '--' && parseFloat(d.velo) > 0 &&
+                             d.pct !== '--' && parseFloat(String(d.pct).replace('%','')) >= 5);
+        if (!valid.length) continue;
+        const peakEstimates = valid.map(({ yr, d }) =>
+          curve.toPeak(yr, parseFloat(d.velo))
+        );
+        const peakVelo = peakEstimates.reduce((s, v) => s + v, 0) / peakEstimates.length;
+        const avgPct   = valid.reduce((s, { d }) =>
+          s + parseFloat(String(d.pct).replace('%','')), 0) / valid.length;
+        profileByKey[key] = { peakVelo, avgPct };
+        onProgress(`[aging curve] ${key}: 逆算 peakVelo=${peakVelo.toFixed(1)}mph avgPct=${avgPct.toFixed(1)}%`);
+      }
+
+      if (Object.keys(profileByKey).length > 0) {
+        for (const yr of stillMissing) {
+          for (const [key, { peakVelo, avgPct }] of Object.entries(profileByKey)) {
+            const estVelo = Math.round(curve.fromPeak(yr, peakVelo));
+            rawPitch[yr][key] = { velo: String(estVelo), ba: '--', slg: '--', pct: String(Math.round(avgPct)) };
+          }
+          // 割合を100に正規化してから球威を計算
+          const rawPcts = PITCH_KEYS.map(k => rawPitch[yr][k]?.pct ?? '--');
+          const normalized = normalizePctToSum100(rawPcts);
+          PITCH_KEYS.forEach((key, ki) => {
+            if (!profileByKey[key]) return;
+            const normPct = normalized[ki];
+            if (normPct === '--' || Number(normPct) < 5) {
+              rawPitch[yr][key] = { velo: '--', ba: '--', slg: '--', pct: '--' };
+              return;
+            }
+            rawPitch[yr][key].pct = normPct;
+            const veloNum = parseFloat(rawPitch[yr][key].velo);
+            const kyui = calcKyuiPreStatcast(veloNum, ki, Number(normPct));
+            if (kyui !== '') {
+              if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+              showKyuiMap[yr][ki] = kyui;
+            }
+          });
+        }
+        onProgress(`キャリア軌跡推定完了: ${stillMissing.join(', ')} (${Object.keys(profileByKey).length}球種)`);
       }
     }
 
