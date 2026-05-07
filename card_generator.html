@@ -3196,6 +3196,10 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     if (lines.length < 4) {
       for (const ep of wikiEpisodes) {
         if (lines.length >= 5) break;
+        // 重複チェック：引用符内ニックネームや先頭テキストが既存行と一致する場合はスキップ
+        const epNick = ep.match(/"([^"]{3,30})"/);
+        if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
+        if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
         lines.push(ep);
       }
     }
@@ -3351,6 +3355,9 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
   if (lines.length < 4) {
     for (const ep of wikiEpisodes) {
       if (lines.length >= 4) break;
+      const epNick = ep.match(/"([^"]{3,30})"/);
+      if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
+      if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
       lines.push(ep);
     }
   }
@@ -3497,6 +3504,9 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     if (lines.length < 5) {
       for (const ep of wikiEpisodes) {
         if (lines.length >= 5) break;
+        const epNick = ep.match(/"([^"]{3,30})"/);
+        if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
+        if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
         lines.push(ep);
       }
     }
@@ -3661,6 +3671,9 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   if (lines.length < 4) {
     for (const ep of wikiEpisodes) {
       if (lines.length >= 4) break;
+      const epNick = ep.match(/"([^"]{3,30})"/);
+      if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
+      if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
       lines.push(ep);
     }
   }
@@ -3809,6 +3822,40 @@ function _parseWikiEpisodes(text, isPitcher) {
       continue;
     }
 
+    // 伝説的選手との比較（投手/野手共通）
+    // 例: "compared to Bob Feller and Sandy Koufax"
+    const compareM = s.match(/(?:compare[ds]?\s+to|likened\s+to)\s+(?:(?:Hall\s+of\s+Fam(?:er|e)|former|legendary)\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s+(?:and|or)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+))?/i);
+    if (compareM && !results.some(r => r.includes('比較') || r.includes('例えられ'))) {
+      const l1 = (compareM[1] || '').trim();
+      const l2 = compareM[2] ? compareM[2].trim() : null;
+      if (l1.length >= 5 && l1.length < 35) {
+        const legendStr = l2 ? `${l1}や${l2}` : l1;
+        results.push(`${legendStr}と比較されるほどの卓越した才能を持つと評価され、デビュー当初から球界屈指の逸材として注目を集めた。`);
+        continue;
+      }
+    }
+
+    // 独特な投球フォーム/メカニクス（投手専用）
+    // 例: "unusual pitching mechanics" / "unlike any other pitcher's delivery"
+    if (isPitcher &&
+        /unique|unusual|unorthodox|distinctive|unconventional|unlike\s+(?:any|most|other)/i.test(s) &&
+        /delivery|mechanics|motion|windup|pitching|arm\s+action|release\s+point/i.test(s) &&
+        !results.some(r => r.includes('フォーム') || r.includes('メカニクス') || r.includes('投球動作'))) {
+      if (/full[- ]?body|whole[- ]?body|entire[- ]?body|torqu|torso|dynamic|violent|explosive/i.test(s)) {
+        results.push('全身をダイナミックに使った独特の投球フォームは他の投手の追随を許さない唯一無二のスタイルで、打者のタイミングを完全に狂わせた。');
+      } else {
+        results.push('他の投手とは一線を画す独特の投球フォームが代名詞で、その特異なメカニクスが打者にとって最大の難題となっていた。');
+      }
+      continue;
+    }
+
+    // 逸材・早熟の天才（投手/野手共通）
+    if (/(?:prodigy|phenom(?:enon)?|wunderkind|generational\s+talent|once[- ]in[- ](?:a[- ])?generation|sensation)/i.test(s) &&
+        !results.some(r => r.includes('逸材') || r.includes('天才') || r.includes('一世代'))) {
+      results.push('一世代に一人現れるかどうかという稀代の逸材として高く評価され、球界に与えたインパクトはキャリアを通じて計り知れない存在だった。');
+      continue;
+    }
+
     // オールスター（2回以上）
     const asM = s.match(/(\d+)[- ]?times?\s+All.Star/i);
     if (asM && parseInt(asM[1]) >= 2) {
@@ -3854,11 +3901,14 @@ function _parseWikiEpisodes(text, isPitcher) {
       }
     }
 
-    // 選手の異名（ニックネーム）
+    // 選手の異名（ニックネーム）── 大文字小文字違いの重複を防ぐ
     const nickM = s.match(/nicknamed?\s+"([^"]{5,50})"/i) || s.match(/known as\s+"([^"]{5,50})"/i);
     if (nickM) {
-      results.push(`"${nickM[1]}"の異名を持ち、そのプレースタイルとキャラクターでファンに深く愛され続けた。`);
-      continue;
+      const nn = nickM[1].trim().toLowerCase();
+      if (!results.some(r => r.toLowerCase().includes(nn))) {
+        results.push(`"${nickM[1]}"の異名を持ち、そのプレースタイルとキャラクターでファンに深く愛され続けた。`);
+      }
+      continue; // 重複でも次の文へ
     }
 
     // 移籍・トレード
@@ -3993,14 +4043,22 @@ function _parseWikiEpisodes(text, isPitcher) {
     }
 
     // 出身大学（community college含む）
-    const univM = s.match(/(?:attended|played\s+(?:college\s+)?(?:baseball\s+)?at|graduated?\s+from)\s+([A-Z][A-Za-z &'.\-]{3,50}?)\s+(?:University|College|State|Tech)/i)
-                || s.match(/([A-Z][A-Za-z &'.\-]{3,50}?)\s+(?:University|College|State|Tech)[,\s]/);
-    if (univM && !results.some(r => r.includes('大学') || r.includes('カレッジ'))) {
-      const univ = univM[1].trim();
-      const isCC = /community|junior|JC/i.test(s);
-      const suffix = isCC ? 'コミュニティカレッジ' : '大学';
-      results.push(`${univ}${suffix}出身で、学生時代から将来を嘱望されたエリートプレーヤーとしてプロの世界へと飛び込んだ。`);
-      continue;
+    // ※ [A-Za-z &'.-] はスペースを含み文全体をキャプチャする恐れがあるため
+    //   「University of X」形式 と「X University」形式を別々に処理し、
+    //   タイトルケース（先頭大文字）単語のみ許可することで誤マッチを防ぐ
+    if (/attended|played.{0,40}(?:college|university)|graduated\s+from|studied\s+at/i.test(s)) {
+      const univM =
+        // "University/College of [Name]" 形式（"University of Washington" 等）
+        s.match(/(?:University|College)\s+of\s+([A-Z][a-z]+(?:[\s-][A-Za-z]+){0,2})/i)
+        // "[CapName] University/College/Tech" 形式（頭文字大文字ワードのみ）
+        || s.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\s+(?:University|College|Tech)\b/);
+      if (univM && !results.some(r => r.includes('大学') || r.includes('カレッジ'))) {
+        const univ = univM[1].trim();
+        const isCC = /community|junior|JC/i.test(s);
+        const suffix = isCC ? 'コミュニティカレッジ' : '大学';
+        results.push(`${univ}${suffix}出身で、学生時代から将来を嘱望されたエリートプレーヤーとしてプロの世界へと飛び込んだ。`);
+        continue;
+      }
     }
 
     // ドラフト全体順位
