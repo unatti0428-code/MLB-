@@ -1824,8 +1824,7 @@ function buildStatBox(label, value) {
   const rank = statRank(value);
   const peak = isPeak(value);
   // 3桁以上はフォントを少し小さく
-  const sizeStyle = value >= 100 ? ' style="font-size:16px;"' : '';
-  return `<div class="stat-box${peak ? ' peak' : ''}"><span class="stat-name">${label}</span><span class="stat-val${rank ? ' ' + rank : ''}"${sizeStyle}>${value}</span></div>`;
+  return `<div class="stat-box${peak ? ' peak' : ''}"><span class="stat-name">${label}</span><span class="stat-val${rank ? ' ' + rank : ''}">${value}</span></div>`;
 }
 
 /** 小型スタットボックス（盗塁能・対左・HR能用）
