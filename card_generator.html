@@ -1274,7 +1274,16 @@ function getCardCSS(t) {
   #card-root .rec-val.sm { font-size:16px; }
   #card-root .sec-title { color:${t.sectionText}; font-size:12px; font-weight:900; letter-spacing:3px; border-left:5px solid ${t.sectionBar}; padding-left:8px; text-shadow:1px 1px 0 #000; }
   #card-root .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
-  #card-root .stats-grid-bot { display:grid; grid-template-columns:repeat(5,1fr); gap:4px; margin-top:4px; }
+  /* 2段目: 選球眼・三振耐性(各1fr) + 小3マスグループ(2fr) */
+  #card-root .stats-grid-bot { display:grid; grid-template-columns:1fr 1fr 2fr; gap:4px; margin-top:4px; }
+  #card-root .stats-mini-group { display:grid; grid-template-columns:repeat(3,1fr); gap:2px; }
+  #card-root .stat-box-mini { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:5px; padding:2px 3px; display:flex; flex-direction:column; align-items:center; }
+  #card-root .stat-name-mini { color:${t.statName}; font-size:8px; font-weight:900; letter-spacing:0; text-shadow:1px 1px 0 #000; white-space:nowrap; }
+  #card-root .stat-val-mini { color:#fff; font-size:14px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
+  #card-root .stat-val-mini.s-rank { color:${t.srank}; text-shadow:2px 2px 0 #000,0 0 10px ${t.srankGlow}; }
+  #card-root .stat-val-mini.a-rank { color:${t.arank}; text-shadow:2px 2px 0 #000,0 0 8px ${t.arankGlow}; }
+  #card-root .stat-val-mini.hr-s { color:#ff8844; text-shadow:2px 2px 0 #000,0 0 10px #ff4400; }
+  #card-root .stat-val-mini.hr-a { color:#ffcc44; text-shadow:2px 2px 0 #000,0 0 8px #cc8800; }
   #card-root .stat-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:6px; padding:4px 5px; display:flex; flex-direction:column; align-items:center; }
   #card-root .stat-box.peak { background:${t.peakBg}; border:2px solid ${t.peakBorder}; box-shadow:0 0 10px ${t.peakBorder}66; }
   #card-root .stat-name { color:${t.statName}; font-size:10px; font-weight:900; letter-spacing:0.5px; text-shadow:1px 1px 0 #000; }
@@ -1819,6 +1828,19 @@ function buildStatBox(label, value) {
   return `<div class="stat-box${peak ? ' peak' : ''}"><span class="stat-name">${label}</span><span class="stat-val${rank ? ' ' + rank : ''}"${sizeStyle}>${value}</span></div>`;
 }
 
+/** 小型スタットボックス（盗塁能・対左・HR能用）
+ *  isHR=true のとき 0–6 スケールに合わせた色付けを行う */
+function buildStatBoxMini(label, value, isHR) {
+  let rankCls;
+  if (isHR) {
+    rankCls = value >= 5 ? 'hr-s' : value >= 3 ? 'hr-a' : '';
+  } else {
+    rankCls = statRank(value);
+  }
+  const disp = (value === null || value === undefined) ? '--' : String(value);
+  return `<div class="stat-box-mini"><span class="stat-name-mini">${label}</span><span class="stat-val-mini${rankCls ? ' ' + rankCls : ''}">${disp}</span></div>`;
+}
+
 function buildPitchPointBox(label, value) {
   if (value === null || value === undefined) {
     return `<div class="pitch-box neu-b"><span class="pitch-lbl">${label}</span><span class="pitch-v neu">±0</span></div>`;
@@ -1991,6 +2013,7 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
 
   const meet  = row[44] || 0, power  = row[45] || 0, speed  = row[46] || 0,
         chance = row[47] || 0, eye   = row[48] || 0, kres   = row[49] || 0,
+        hrAbil = (row[50] !== null && row[50] !== undefined && row[50] !== '') ? parseInt(row[50]) || 0 : null,
         steal  = row[51] || 0, vsLeft = row[52] || 0;
   const lead   = row[53], csRate = row[54];
 
@@ -2035,14 +2058,18 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
     buildStatBox('スピード', speed),
     buildStatBox('チャンス', chance),
   ].join('');
-  // 下段（5列1行）: 技術・状況別
-  const statBoxesBot = [
+  // 下段: 選球眼(1fr) + 三振耐性(1fr) + [盗塁能/対左/HR能 ミニ3マス](2fr)
+  const hrVal = hrAbil !== null ? hrAbil : '--';
+  const statBoxesBotMain = [
     buildStatBox('選球眼',   eye),
     buildStatBox('三振耐性', kres),
-    buildStatBox('盗塁能',   steal),
-    buildStatBox('対左投手', vsLeft),
-    buildStatBox('HR能',     power),
   ].join('');
+  const statBoxesMini =
+    `<div class="stats-mini-group">` +
+      buildStatBoxMini('盗塁能',   steal,  false) +
+      buildStatBoxMini('対左投手', vsLeft, false) +
+      buildStatBoxMini('HR能',     hrVal,  true)  +
+    `</div>`;
 
   const pitchBoxes = pitchVals.map(p => buildPitchPointBox(p.lbl, p.val)).join('');
   const eraNote    = allPitchNull ? `<div class="era-note"><span>時代的<br>データなし</span></div>` : '';
@@ -2129,7 +2156,7 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
       </div>
       <div class="sec-title">■ ゲームステータス</div>
       <div class="stats-grid">${statBoxesTop}</div>
-      <div class="stats-grid-bot">${statBoxesBot}</div>
+      <div class="stats-grid-bot">${statBoxesBotMain}${statBoxesMini}</div>
       <div class="sec-title">■ 対球種ポイント</div>
       <div class="pitch-grid">${pitchBoxes}${eraNote}</div>
       ${defSection}
