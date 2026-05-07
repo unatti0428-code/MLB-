@@ -1264,30 +1264,30 @@ function getCardCSS(t) {
   #card-root .position-badge { background:${t.posBadgeBg}; border:2px solid ${t.posBadgeBorder}; border-radius:6px; padding:3px 10px; color:#fff; font-size:13px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; box-shadow:0 2px 6px #000000aa; }
   #card-root .player-full-name { color:#fff; font-size:20px; font-weight:900; text-shadow:2px 2px 0 #000,0 0 16px ${t.nameGlow}; letter-spacing:2px; white-space:nowrap; overflow:visible; }
   #card-root .season-badge { margin-left:auto; background:rgba(0,0,0,0.55); border:2px solid ${t.seasonBorder}; border-radius:6px; padding:2px 10px; color:${t.seasonText}; font-size:12px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; white-space:nowrap; }
-  #card-root .record-bar { background:rgba(0,0,0,0.45); border:2px solid ${t.recBorder}; border-radius:8px; padding:3px 5px; display:flex; align-items:center; justify-content:space-between; }
+  #card-root .record-bar { background:rgba(0,0,0,0.45); border:2px solid ${t.recBorder}; border-radius:8px; padding:4px 5px; display:flex; align-items:center; justify-content:space-between; }
   #card-root .rec-item { display:flex; flex-direction:column; align-items:center; flex:1; min-width:0; border-right:1px solid ${t.recBorder}88; padding:1px 2px; }
   #card-root .rec-item:last-child { border-right:none; }
   #card-root .rec-label { color:${t.recLabel}; font-size:9px; font-weight:900; letter-spacing:0; text-shadow:1px 1px 0 #000; white-space:nowrap; }
-  #card-root .rec-val { color:#fff; font-size:19px; font-weight:900; line-height:1.1; text-shadow:1px 1px 0 #000; white-space:nowrap; }
+  #card-root .rec-val { color:#fff; font-size:21px; font-weight:900; line-height:1.1; text-shadow:1px 1px 0 #000; white-space:nowrap; }
   #card-root .rec-val.hl { color:${t.recHl}; text-shadow:1px 1px 0 #000,0 0 10px ${t.recHlGlow}; }
   #card-root .rec-val.pp { color:${t.recPp}; text-shadow:1px 1px 0 #000,0 0 10px ${t.recPpGlow}; }
-  #card-root .rec-val.sm { font-size:14px; }
+  #card-root .rec-val.sm { font-size:15px; }
   #card-root .sec-title { color:${t.sectionText}; font-size:11px; font-weight:900; letter-spacing:2px; line-height:1.1; border-left:4px solid ${t.sectionBar}; padding-left:6px; text-shadow:1px 1px 0 #000; }
-  #card-root .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:3px; }
+  #card-root .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
   /* 2段目: 選球眼・三振耐性(各1fr) + 小3マスグループ(2fr) */
-  #card-root .stats-grid-bot { display:grid; grid-template-columns:1fr 1fr 2fr; gap:3px; margin-top:2px; }
+  #card-root .stats-grid-bot { display:grid; grid-template-columns:1fr 1fr 2fr; gap:4px; margin-top:3px; }
   #card-root .stats-mini-group { display:grid; grid-template-columns:repeat(3,1fr); gap:2px; }
-  #card-root .stat-box-mini { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:5px; padding:1px 1px; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  #card-root .stat-box-mini { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:5px; padding:2px 1px; display:flex; flex-direction:column; align-items:center; justify-content:center; }
   #card-root .stat-name-mini { color:${t.statName}; font-size:9px; font-weight:900; letter-spacing:0; text-shadow:1px 1px 0 #000; white-space:nowrap; }
-  #card-root .stat-val-mini { color:#fff; font-size:18px; font-weight:900; line-height:1.0; text-shadow:2px 2px 0 #000; }
+  #card-root .stat-val-mini { color:#fff; font-size:20px; font-weight:900; line-height:1.0; text-shadow:2px 2px 0 #000; }
   #card-root .stat-val-mini.s-rank { color:${t.srank}; text-shadow:2px 2px 0 #000,0 0 10px ${t.srankGlow}; }
   #card-root .stat-val-mini.a-rank { color:${t.arank}; text-shadow:2px 2px 0 #000,0 0 8px ${t.arankGlow}; }
   #card-root .stat-val-mini.hr-s { color:#ff8844; text-shadow:2px 2px 0 #000,0 0 10px #ff4400; }
   #card-root .stat-val-mini.hr-a { color:#ffcc44; text-shadow:2px 2px 0 #000,0 0 8px #cc8800; }
-  #card-root .stat-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:6px; padding:3px 4px; display:flex; flex-direction:column; align-items:center; }
+  #card-root .stat-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:6px; padding:5px 4px; display:flex; flex-direction:column; align-items:center; }
   #card-root .stat-box.peak { background:${t.peakBg}; border:2px solid ${t.peakBorder}; box-shadow:0 0 10px ${t.peakBorder}66; }
-  #card-root .stat-name { color:${t.statName}; font-size:9px; font-weight:900; letter-spacing:0.5px; text-shadow:1px 1px 0 #000; }
-  #card-root .stat-val { color:#fff; font-size:19px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
+  #card-root .stat-name { color:${t.statName}; font-size:10px; font-weight:900; letter-spacing:0.5px; text-shadow:1px 1px 0 #000; }
+  #card-root .stat-val { color:#fff; font-size:23px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
   #card-root .stat-val.s-rank { color:${t.srank}; text-shadow:2px 2px 0 #000,0 0 14px ${t.srankGlow}; }
   #card-root .stat-val.a-rank { color:${t.arank}; text-shadow:2px 2px 0 #000,0 0 10px ${t.arankGlow}; }
   #card-root .pitch-table { width:100%; border-collapse:collapse; table-layout:fixed; }
@@ -1312,25 +1312,25 @@ function getCardCSS(t) {
   #card-root .era-note span { color:#aaa888; font-size:8px; font-weight:900; text-align:center; line-height:1.3; text-shadow:1px 1px 0 #000; }
   #card-root .drs-bar { background:rgba(0,0,0,0.45); border:2px solid ${t.drsBorder}; border-radius:7px; padding:3px 16px; display:flex; align-items:center; justify-content:center; gap:20px; flex-wrap:wrap; }
   /* 4ポジション以下: 1行コンパクト */
-  #card-root .drs-bar.drs-single { flex-wrap:nowrap; gap:6px; padding:3px 8px; }
-  #card-root .drs-bar.drs-single .drs-num { font-size:13px; }
-  #card-root .drs-bar.drs-single .drs-pos { font-size:9px; letter-spacing:1px; padding:1px 4px; }
-  #card-root .drs-bar.drs-single .drs-inn { font-size:8px; }
-  #card-root .drs-bar.drs-single .drs-div { height:16px; }
+  #card-root .drs-bar.drs-single { flex-wrap:nowrap; gap:8px; padding:5px 10px; }
+  #card-root .drs-bar.drs-single .drs-num { font-size:20px; }
+  #card-root .drs-bar.drs-single .drs-pos { font-size:11px; letter-spacing:1px; padding:2px 6px; }
+  #card-root .drs-bar.drs-single .drs-inn { font-size:9px; }
+  #card-root .drs-bar.drs-single .drs-div { height:20px; }
   /* 5ポジション以上: 4列グリッド・詰め詰め（最大2行=8ポジション） */
-  #card-root .drs-bar.drs-multi { display:grid; grid-template-columns:repeat(4,1fr); gap:2px 4px; padding:3px 8px; align-items:start; }
-  #card-root .drs-bar.drs-multi .drs-item { gap:3px; }
-  #card-root .drs-bar.drs-multi .drs-num { font-size:12px; }
-  #card-root .drs-bar.drs-multi .drs-pos { font-size:9px; letter-spacing:1px; padding:1px 3px; }
-  #card-root .drs-bar.drs-multi .drs-inn { font-size:7px; }
+  #card-root .drs-bar.drs-multi { display:grid; grid-template-columns:repeat(4,1fr); gap:3px 6px; padding:4px 8px; align-items:start; }
+  #card-root .drs-bar.drs-multi .drs-item { gap:4px; }
+  #card-root .drs-bar.drs-multi .drs-num { font-size:16px; }
+  #card-root .drs-bar.drs-multi .drs-pos { font-size:10px; letter-spacing:1px; padding:1px 4px; }
+  #card-root .drs-bar.drs-multi .drs-inn { font-size:8px; }
   #card-root .drs-item { display:flex; align-items:center; gap:5px; }
-  #card-root .drs-pos { color:#aaddff; font-size:11px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; background:rgba(0,60,120,0.5); border:1px solid #4488ff88; border-radius:4px; padding:1px 5px; }
-  #card-root .drs-num { font-size:17px; font-weight:900; text-shadow:2px 2px 0 #000; }
+  #card-root .drs-pos { color:#aaddff; font-size:12px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; background:rgba(0,60,120,0.5); border:1px solid #4488ff88; border-radius:4px; padding:2px 6px; }
+  #card-root .drs-num { font-size:22px; font-weight:900; text-shadow:2px 2px 0 #000; }
   #card-root .drs-num.pos { color:#66ff88; text-shadow:2px 2px 0 #000,0 0 10px #22cc44; }
   #card-root .drs-num.neg { color:#ff6666; text-shadow:2px 2px 0 #000,0 0 10px #cc2222; }
   #card-root .drs-num.neu { color:#ccccaa; text-shadow:1px 1px 0 #000; }
-  #card-root .drs-div { width:1px; height:20px; background:#44cc6644; }
-  #card-root .drs-inn { color:#a0b8a0; font-size:9px; font-weight:900; text-shadow:1px 1px 0 #000; }
+  #card-root .drs-div { width:1px; height:22px; background:#44cc6644; }
+  #card-root .drs-inn { color:#a0b8a0; font-size:10px; font-weight:900; text-shadow:1px 1px 0 #000; }
   #card-root .combo-row { display:flex; gap:8px; align-items:stretch; }
   #card-root .combo-l { flex:1.3; display:flex; flex-direction:column; gap:4px; }
   #card-root .combo-r { flex:1; display:flex; flex-direction:column; gap:4px; }
