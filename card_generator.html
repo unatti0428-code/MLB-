@@ -4256,12 +4256,11 @@ function updateCardExtras(cardType, pitchNicknames, awardsJa, isCareer) {
       document.querySelectorAll('#card-root td.pn[data-pitch]').forEach(td => {
         if (td.dataset.pitch === pitchName) {
           // 球種名：他球種と同じ15px（.pn と統一）
-          // 異名：次行に小さく表示（display:block で改行し数値列への重複を防止）
+          // 異名：同一行に横並び・小さいフォント。td側でoverflow:hiddenしてセル外にはみ出さない
           td.innerHTML =
-            `<span style="font-size:15px;font-weight:900;white-space:nowrap;display:block;line-height:1.2;">${escapeHtml(pitchName)}</span>` +
-            `<span style="font-size:8px;color:#ffdd33;font-weight:900;` +
-            `letter-spacing:0;white-space:nowrap;display:block;line-height:1.1;">（${escapeHtml(nickname)}）</span>`;
-          td.style.setProperty('white-space',   'normal',  'important');
+            `<span style="font-size:15px;font-weight:900;">${escapeHtml(pitchName)}</span>` +
+            `<span style="font-size:8px;color:#ffdd33;font-weight:900;letter-spacing:0;">（${escapeHtml(nickname)}）</span>`;
+          td.style.setProperty('white-space',   'nowrap',  'important');
           td.style.setProperty('overflow',      'hidden',  'important');
           td.style.setProperty('text-overflow', 'clip',    'important');
           td.style.setProperty('padding',       '1px 4px', 'important');
@@ -4416,11 +4415,11 @@ function _reapplyCardTheme(newScore) {
           document.querySelectorAll('#card-root td.pn[data-pitch]').forEach(td => {
             if (td.dataset.pitch !== pitchName) return;
             // 球種名：他球種と同じ15px（.pn と統一）
-            // 異名：次行に小さく表示（display:block で改行し数値列への重複を防止）
+            // 異名：同一行に横並び・小さいフォント。td側でoverflow:hiddenしてセル外にはみ出さない
             td.innerHTML =
-              `<span style="font-size:15px;font-weight:900;white-space:nowrap;display:block;line-height:1.2;">${escapeHtml(pitchName)}</span>` +
-              `<span style="font-size:8px;color:#ffdd33;font-weight:900;letter-spacing:0;white-space:nowrap;display:block;line-height:1.1;">（${escapeHtml(nickname)}）</span>`;
-            td.style.setProperty('white-space',   'normal',   'important');
+              `<span style="font-size:15px;font-weight:900;">${escapeHtml(pitchName)}</span>` +
+              `<span style="font-size:8px;color:#ffdd33;font-weight:900;letter-spacing:0;">（${escapeHtml(nickname)}）</span>`;
+            td.style.setProperty('white-space',   'nowrap',   'important');
             td.style.setProperty('overflow',      'hidden',   'important');
             td.style.setProperty('text-overflow', 'clip',     'important');
             td.style.setProperty('padding',       '1px 4px',  'important');
