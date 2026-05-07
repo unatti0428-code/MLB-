@@ -5144,6 +5144,38 @@ function _testImageUrl(url, timeoutMs = 4000) {
 }
 
 /**
+ * URLの画像が「証明写真として使用できる比率」か確認する
+ *
+ * 判定基準（高さ÷幅 = H/W比率）:
+ *   0.85 〜 1.65 → 証明写真・ポートレートとして許容 ✅
+ *   > 1.65       → 全身写真・縦長すぎ                ❌
+ *   < 0.85       → 横長のアクション写真              ❌
+ *
+ * ※ このURLは c_fill/h_282 なし（幅のみ制約）で呼ぶこと。
+ *   高さ固定にすると全ての画像が同サイズになり比率判定が無意味になる。
+ *
+ * @param {string} rawUrl  幅のみ制約のURL (例: ...w_213,q_auto:best/v1/people/...)
+ * @param {number} timeoutMs
+ * @returns {Promise<boolean>}
+ */
+function _testHeadshotUrl(rawUrl, timeoutMs = 4000) {
+  return new Promise(resolve => {
+    const img = new Image();
+    const timer = setTimeout(() => { img.src = ''; resolve(false); }, timeoutMs);
+    img.onload = () => {
+      clearTimeout(timer);
+      const w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) { resolve(false); return; }
+      const ratio = h / w;
+      // 0.85〜1.65: 証明写真として許容する比率範囲
+      resolve(ratio >= 0.85 && ratio <= 1.65);
+    };
+    img.onerror = () => { clearTimeout(timer); resolve(false); };
+    img.src = rawUrl;
+  });
+}
+
+/**
  * カード年度に合致する選手写真URLをバックグラウンドで探索し、
  * カードの <img> を差し替える。
  *
@@ -5165,10 +5197,36 @@ function _testImageUrl(url, timeoutMs = 4000) {
  * @param {string|null}   brPhoto   BRef フォールバック写真URL
  * @param {number}        genId     世代ID（旧カードへの誤適用防止）
  */
+/**
+ * カード年度に合致する選手写真URLをバックグラウンドで探索し、
+ * カードの <img> を差し替える。
+ *
+ * ═══ 探索方針 ═══
+ * ① 比率チェック（_testHeadshotUrl）で証明写真かどうか確認
+ *    H/W = 0.85〜1.65 → 合格（全身写真・アクション写真は自動除外）
+ * ② MLB Static CDN をスキャン
+ *    - 判定: makeRawUrl（幅のみ指定 → 自然な比率を計測）
+ *    - 表示: makeDispUrl（c_fill,g_face,h_282 → 顔中心クロップ）
+ * ③ Wikipedia サムネイル（比率チェック付き）
+ * ④ Baseball Reference 写真（比率チェックなし・あればそのまま使用）
+ *
+ * ═══ 探索年度の選定 ═══
+ * 通算カード → g_peakYear の写真（最も活躍したチームの帽子写真）
+ * 単年カード → 指定年度 → 前後交互 ±6年
+ * 通算 or 古い選手 → ±8年 + 2010〜2017 の安全網
+ *
+ * ※ MLBのCDNは概ね2012〜2013年以降のデータを保有
+ *   2011年以前は隣接年度（+1〜+5）でカバーすることが多い
+ *
+ * @param {number|string} mlbId     MLB選手ID
+ * @param {string|number} year      カード年度（4桁数字 or 通算文字列）
+ * @param {string|null}   brPhoto   BRef フォールバック写真URL
+ * @param {number}        genId     世代ID（旧カードへの誤適用防止）
+ */
 async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
   if (!mlbId) return;
 
-  // 通算カードはピーク年度の写真を使用（最も活躍したチームの顔写真）
+  // 通算カードはピーク年度の写真を使用（最も活躍したチームの帽子が映る）
   const isCareer = !/^\d{4}$/.test(String(year));
   const baseYear = isCareer ? (g_peakYear || null) : year;
   if (!baseYear || !/^\d{4}$/.test(String(baseYear))) return;
@@ -5176,21 +5234,22 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
   const yr  = parseInt(baseYear);
   const now = new Date().getFullYear();
 
-  // Cloudinary: 顔検出クロップ付きURL
-  // c_fill,g_face,h_282 → 顔を中心に 213×282 px にクロップ
-  // 全身写真・アクション写真でも証明写真スタイルに自動変換される
-  const makeUrl = (y) =>
+  // 判定用: 幅のみ指定（高さ自然 → H/W 比率で証明写真か判別可能）
+  const makeRawUrl  = (y) =>
+    `https://img.mlbstatic.com/mlb-photos/image/upload/w_213,q_auto:best/v1/people/${mlbId}/headshot/67/${y}`;
+  // 表示用: 顔検出クロップ（全身写真でも顔中心の証明写真スタイルに変換）
+  const makeDispUrl = (y) =>
     `https://img.mlbstatic.com/mlb-photos/image/upload/w_213,h_282,c_fill,g_face,q_auto:best/v1/people/${mlbId}/headshot/67/${y}`;
 
   // ── 探索候補年リスト ──
-  // 1. 指定年度を筆頭に、前後交互で±4年まで探索
+  // 前後交互: 指定年, -1,+1, -2,+2, ... ±6（通算 or 古い選手は ±8）
+  const maxDelta = (isCareer || yr < 2012) ? 8 : 6;
   const candidates = [yr];
-  for (let d = 1; d <= 4; d++) {
+  for (let d = 1; d <= maxDelta; d++) {
     candidates.push(yr - d, yr + d);
   }
-  // 2. 通算かつ古い選手（ピーク年 < 2012）の場合:
-  //    MLBのCDNデータが存在しやすい 2010〜2017 を安全網として追加
-  if (isCareer && yr < 2012) {
+  // 通算かつ古い選手（ピーク年 < 2012）: 2010〜2017 を安全網として追加
+  if (yr < 2012) {
     for (let y = 2017; y >= 2010; y--) {
       if (!candidates.includes(y)) candidates.push(y);
     }
@@ -5198,18 +5257,20 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
 
   let found = null;
 
-  // ── Step 1 & 2: MLB CDN スキャン ──
+  // ── Step 1+2: MLB CDN スキャン（証明写真比率チェック付き） ──
   for (const testYr of candidates) {
     if (testYr < 2006 || testYr > now) continue;
-    if (await _testImageUrl(makeUrl(testYr))) {
-      found = makeUrl(testYr);
-      const label = testYr === yr ? `${testYr}年` : `${testYr}年 (要求:${yr}, Δ${testYr - yr > 0 ? '+' : ''}${testYr - yr})`;
-      console.log(`[Photo] MLB年度別写真 ${label} 取得成功`);
+    if (await _testHeadshotUrl(makeRawUrl(testYr))) {
+      found = makeDispUrl(testYr);
+      const label = testYr === yr
+        ? `${testYr}年`
+        : `${testYr}年 (要求:${yr}, Δ${testYr > yr ? '+' : ''}${testYr - yr})`;
+      console.log(`[Photo] MLB年度別写真 ${label} 取得成功（証明写真比率OK）`);
       break;
     }
   }
 
-  // ── Step 3: Wikipedia サムネイル（別サイト） ──
+  // ── Step 3: Wikipedia サムネイル（比率チェック付き） ──
   if (!found && g_mlbNameEn) {
     try {
       const wResp = await fetch(
@@ -5219,13 +5280,22 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
       if (wResp.ok) {
         const wData = await wResp.json();
         const thumb = wData?.thumbnail?.source;
-        if (thumb && await _testImageUrl(thumb)) {
+        if (thumb && await _testHeadshotUrl(thumb)) {
           found = thumb;
-          console.log('[Photo] Wikipedia写真 取得成功（フォールバック）');
+          console.log('[Photo] Wikipedia写真 取得成功（証明写真比率OK）');
         }
       }
     } catch (e) {
       console.log('[Photo] Wikipedia写真 スキップ:', e.message);
+    }
+  }
+
+  // ── Step 4: Baseball Reference 写真（最終フォールバック・比率チェックなし） ──
+  // BRef写真は選手の代表的な写真を提供するため、比率に関わらず使用する
+  if (!found && brPhoto) {
+    if (await _testImageUrl(brPhoto)) {
+      found = brPhoto;
+      console.log('[Photo] BRef写真 使用（最終フォールバック）:', brPhoto);
     }
   }
 
