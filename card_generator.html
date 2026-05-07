@@ -3347,6 +3347,14 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     }
   }
 
+  // Wikipedia フォールバック（シングルシーズン）：4行未満のとき補完
+  if (lines.length < 4) {
+    for (const ep of wikiEpisodes) {
+      if (lines.length >= 4) break;
+      lines.push(ep);
+    }
+  }
+
   // 行5（最終）：総評
   if (!isSparsePA && (hr >= 70 || opsN >= 1.3)) {
     lines.push(`野球史上最高峰の打者の一人として、その活躍は永く語り継がれている。`);
@@ -3648,6 +3656,14 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     }
   }
 
+  // Wikipedia フォールバック（シングルシーズン）：4行未満のとき補完
+  if (lines.length < 4) {
+    for (const ep of wikiEpisodes) {
+      if (lines.length >= 4) break;
+      lines.push(ep);
+    }
+  }
+
   // 行5（最終）：締め
   if (awardsJa.some(a => a.includes('サイ・ヤング'))) {
     lines.push(`投手の最高栄誉サイ・ヤング賞を手にし、MLB投手史に燦然と名を刻んだ。`);
@@ -3676,7 +3692,7 @@ function buildRetsudenFromMLBData(row, mlbData, rankData = {}, trajectory = {}, 
   return buildHitterRetsuden(row, year, awardsJa, apiSt, rankData, trajectory, wikiEpisodes);
 }
 
-// ── Wikipedia からエピソードを取得（通算カード用フォールバック） ─────
+// ── Wikipedia からエピソードを取得（列伝フォールバック・通算／通常年共通） ─────
 async function fetchWikipediaEpisodes(playerNameEn, isPitcher) {
   if (!playerNameEn) return [];
   try {
@@ -4127,9 +4143,9 @@ async function fetchRetsudenFromAPI(row) {
   else if (trajectory.isImprovement) console.log('[Trajectory] 成長シーズン検出');
   else if (trajectory.isPeakSeason) console.log('[Trajectory] キャリアベスト検出');
 
-  // ④ 通算カードのみ：Wikipedia からエピソードを取得（フォールバック用）
+  // ④ Wikipedia からエピソードを取得（列伝が乏しい場合のフォールバック用・通算／通常年共通）
   let wikiEpisodes = [];
-  if (isCareer && g_mlbNameEn) {
+  if (g_mlbNameEn) {
     wikiEpisodes = await fetchWikipediaEpisodes(g_mlbNameEn, g_isPitcher);
   }
 
