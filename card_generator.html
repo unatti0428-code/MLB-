@@ -5125,6 +5125,98 @@ function fitPlayerNames() {
   }
 }
 
+// ===== 年度別選手写真取得ユーティリティ =====
+
+/**
+ * 画像URLが有効（404でない）か確認する（hidden Imageプローブ）
+ * @param {string} url
+ * @param {number} timeoutMs タイムアウト（ms）
+ * @returns {Promise<boolean>}
+ */
+function _testImageUrl(url, timeoutMs = 4000) {
+  return new Promise(resolve => {
+    const img = new Image();
+    const timer = setTimeout(() => { img.src = ''; resolve(false); }, timeoutMs);
+    img.onload  = () => { clearTimeout(timer); resolve(true); };
+    img.onerror = () => { clearTimeout(timer); resolve(false); };
+    img.src = url;
+  });
+}
+
+/**
+ * カード年度に合致する選手写真URLをバックグラウンドで探索し、
+ * カードの <img> を差し替える。
+ *
+ * 探索順:
+ *  1. MLB Static CDN (指定年度) ← 最優先
+ *  2. Wikipedia サムネイル      ← 別サイト
+ *  3. MLB Static CDN 近傍年度   ← 公式で取得可能な最古に近い画像
+ *     (yr-1, yr-2, yr-3, yr+1 の順)
+ *  4〜5. MLB current / BRef は既にカードに表示済みなのでスキップ
+ *
+ * @param {number|string} mlbId     MLB選手ID
+ * @param {string|number} year      カード年度（4桁数字）
+ * @param {string|null}   brPhoto   BRef フォールバック写真URL
+ * @param {number}        genId     世代ID（旧カードへの誤適用防止）
+ */
+async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
+  if (!mlbId || !/^\d{4}$/.test(String(year))) return;
+
+  const yr      = parseInt(year);
+  const baseUrl = `https://img.mlbstatic.com/mlb-photos/image/upload/w_213,q_auto:best/v1/people/${mlbId}/headshot/67/`;
+  let   found   = null;
+
+  // ── Step 1: MLB CDN 指定年度 ──
+  if (await _testImageUrl(baseUrl + yr)) {
+    found = baseUrl + yr;
+    console.log(`[Photo] MLB年度別写真 ${yr}年 取得成功`);
+  }
+
+  // ── Step 2: Wikipedia サムネイル（別サイト） ──
+  if (!found && g_mlbNameEn) {
+    try {
+      const wResp = await fetch(
+        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(g_mlbNameEn)}`,
+        { signal: AbortSignal.timeout(6000) }
+      );
+      if (wResp.ok) {
+        const wData = await wResp.json();
+        const thumb = wData?.thumbnail?.source;
+        if (thumb && await _testImageUrl(thumb)) {
+          found = thumb;
+          console.log('[Photo] Wikipedia写真 取得成功');
+        }
+      }
+    } catch (e) {
+      console.log('[Photo] Wikipedia写真 スキップ:', e.message);
+    }
+  }
+
+  // ── Step 3: MLB CDN 近傍年度スキャン (-1,-2,-3,+1) ──
+  if (!found) {
+    const now = new Date().getFullYear();
+    for (const delta of [-1, -2, -3, 1]) {
+      const testYr = yr + delta;
+      if (testYr < 2006 || testYr > now) continue;
+      if (await _testImageUrl(baseUrl + testYr)) {
+        found = baseUrl + testYr;
+        console.log(`[Photo] MLB近傍年度写真 ${testYr}年 使用 (要求年:${yr}, Δ${delta > 0 ? '+' : ''}${delta})`);
+        break;
+      }
+    }
+  }
+
+  // ── 更新: genIdが一致する場合のみカードのimgを差し替え ──
+  if (found && g_genId === genId) {
+    const photoImg = document.querySelector('#card-root .photo-frame img');
+    if (photoImg) {
+      photoImg.src     = found;
+      g_resolvedPhotoUrl = found;
+      console.log('[Photo] カード写真更新完了:', found);
+    }
+  }
+}
+
 async function _doGenerate(photoInput) {
   // Baseball-Reference データを事前取得（IDがあれば）
   if (g_brefId && !_brefCache[g_brefId]) {
@@ -5227,21 +5319,22 @@ async function _doGenerate(photoInput) {
       cardContent = buildHitterCard(selectedRow, g_rows, '__PHOTO__', theme, g_isCatcher, isPeakRow, nameEn);
     }
 
-    // 写真の差し込み
-    // 優先順位: ① 手動アップロード → ② MLB.com ヘッドショット（読込成功時）
-    //           → ③ Baseball Reference フォールバック → ④ なし
+    // 写真の即時差し込み（カードを素早く表示するため、まず手元にある写真を使用）
+    // 優先順位（即時）: ① 手動アップロード → ② MLB current（generic fallback付き）→ ③ BRef → ④ なし
+    // ※ 年度別写真への差し替えは DOM注入後に resolveYearPhotoAsync が非同期で行う
     const brPhoto = g_brefId ? _brefCache[g_brefId]?.photoUrl : null;
-    if (photoInput && photoInput.files && photoInput.files[0]) {
+    const _isManualPhoto = !!(photoInput && photoInput.files && photoInput.files[0]);
+    if (_isManualPhoto) {
       const photoURL = URL.createObjectURL(photoInput.files[0]);
       cardContent = cardContent.replace(/__PHOTO__/g, photoURL);
       g_resolvedPhotoUrl = photoURL;
-    } else if (g_mlbHeadshot && g_mlbHeadshotOk !== false) {
-      // MLB ヘッドショット（失敗フラグが立っていなければ使用）
-      cardContent = cardContent.replace(/__PHOTO__/g, g_mlbHeadshot);
-      g_resolvedPhotoUrl = g_mlbHeadshot;
+    } else if (g_mlbId) {
+      // MLB current（d_people:generic fallback付き = 常に何か表示される）
+      const mlbCurrent = `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${g_mlbId}/headshot/67/current`;
+      cardContent = cardContent.replace(/__PHOTO__/g, mlbCurrent);
+      g_resolvedPhotoUrl = mlbCurrent;
     } else if (brPhoto) {
-      // Baseball Reference からフォールバック写真
-      console.log('[Photo] BRef 写真を使用:', brPhoto);
+      console.log('[Photo] BRef 写真を即時表示:', brPhoto);
       cardContent = cardContent.replace(/__PHOTO__/g, brPhoto);
       g_resolvedPhotoUrl = brPhoto;
     } else {
@@ -5268,6 +5361,13 @@ async function _doGenerate(photoInput) {
           `</div>` +
         `</div>` +
       `</div>`;
+
+    // 年度別写真の非同期解決（手動アップロードがない場合のみ）
+    // カードが表示された後、バックグラウンドで年度に合致する写真を探し差し替える
+    if (!_isManualPhoto && g_mlbId) {
+      const _thisGenId = g_genId; // クロージャでキャプチャ（旧世代への誤適用防止）
+      resolveYearPhotoAsync(g_mlbId, selectedRow[1], brPhoto, _thisGenId);
+    }
 
     // 名前はみ出し防止 ＋ 裏面構築（描画後に測定）
     requestAnimationFrame(() => {
