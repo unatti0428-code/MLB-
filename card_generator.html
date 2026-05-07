@@ -1274,8 +1274,7 @@ function getCardCSS(t) {
   #card-root .rec-val.sm { font-size:16px; }
   #card-root .sec-title { color:${t.sectionText}; font-size:12px; font-weight:900; letter-spacing:3px; border-left:5px solid ${t.sectionBar}; padding-left:8px; text-shadow:1px 1px 0 #000; }
   #card-root .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
-  #card-root .stats-grid-3 { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; }
-  #card-root .stats-grid-bot { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; margin-top:4px; }
+  #card-root .stats-grid-bot { display:grid; grid-template-columns:repeat(5,1fr); gap:4px; margin-top:4px; }
   #card-root .stat-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:6px; padding:4px 5px; display:flex; flex-direction:column; align-items:center; }
   #card-root .stat-box.peak { background:${t.peakBg}; border:2px solid ${t.peakBorder}; box-shadow:0 0 10px ${t.peakBorder}66; }
   #card-root .stat-name { color:${t.statName}; font-size:10px; font-weight:900; letter-spacing:0.5px; text-shadow:1px 1px 0 #000; }
@@ -2029,17 +2028,17 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
   const teamStyle    = getTeamStyle(teamCode);
   const teamBadgeHtml = `<div class="team-badge" style="background:${teamStyle.bg};border:2px solid ${teamStyle.border};text-shadow:1px 1px 0 #000,0 0 8px ${teamStyle.glow};">${teamCode === 'NEW' ? 'NYY' : teamCode}</div>`;
 
-  // 上段（4列）: 基本打撃能力
+  // 上段（4列1行）: コアステータス
   const statBoxesTop = [
     buildStatBox('ミート',   meet),
     buildStatBox('パワー',   power),
     buildStatBox('スピード', speed),
     buildStatBox('チャンス', chance),
+  ].join('');
+  // 下段（5列1行）: 技術・状況別
+  const statBoxesBot = [
     buildStatBox('選球眼',   eye),
     buildStatBox('三振耐性', kres),
-  ].join('');
-  // 下段（3列）: 状況別能力
-  const statBoxesBot = [
     buildStatBox('盗塁能',   steal),
     buildStatBox('対左投手', vsLeft),
     buildStatBox('HR能',     power),
@@ -2129,7 +2128,7 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
         <div class="rec-item"><span class="rec-label">WAR</span><span class="rec-val hl">${war}</span></div>
       </div>
       <div class="sec-title">■ ゲームステータス</div>
-      <div class="stats-grid-3">${statBoxesTop}</div>
+      <div class="stats-grid">${statBoxesTop}</div>
       <div class="stats-grid-bot">${statBoxesBot}</div>
       <div class="sec-title">■ 対球種ポイント</div>
       <div class="pitch-grid">${pitchBoxes}${eraNote}</div>
