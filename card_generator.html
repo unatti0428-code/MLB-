@@ -2436,7 +2436,8 @@ function buildCardType(row, awardsJa) {
   const gs  = parseInt(row[7])  || 0;
   const tg  = parseInt(row[6])  || 1;
   const isStarter = g_isPitcher && gs >= tg * 0.5;
-  const hand = String(row[57] || '').toUpperCase().includes('L') ? '左腕' : '右腕';
+  // 投球腕は g_pitchHand（'L'/'R'）を使用。row[57]は数値（対左補正値）のため誤り
+  const hand = (g_pitchHand === 'L') ? '左腕' : '右腕';
   const ops  = parseFloat(fmtOPS(row[17])) || 0;
   const pos  = g_mlbPos || '';
   const posMap = { P:'投手',C:'捕手','1B':'一塁手','2B':'二塁手','3B':'三塁手',
@@ -3394,7 +3395,8 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   const gs   = parseInt(row[7])  || 0;
   const tg   = parseInt(row[6])  || 1;
   const isStarter = gs >= tg * 0.5;
-  const hand  = String(row[57] || '').toUpperCase().includes('L') ? '左腕' : '右腕';
+  // 投球腕は g_pitchHand（'L'/'R'）を使用。row[57]は数値（対左補正値）のため誤り
+  const hand  = (g_pitchHand === 'L') ? '左腕' : '右腕';
   const eraN  = parseFloat(era) || 99;
   const ctrl  = safeNum(row[51]) || 0;
   const strk  = safeNum(row[54]) || 0;
