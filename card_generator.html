@@ -1259,52 +1259,52 @@ function getCardCSS(t) {
   #card-root .power-display { position:absolute; top:46px; right:10px; text-align:center; z-index:5; background:rgba(0,0,0,0.60); border:2px solid ${t.powerBorder}; border-radius:8px; padding:3px 10px; }
   #card-root .power-label { color:${t.powerTextColor}; font-size:11px; font-weight:900; display:block; letter-spacing:1px; text-shadow:1px 1px 0 #000; }
   #card-root .power-value { color:${t.powerTextColor}; font-size:32px; font-weight:900; text-shadow:2px 2px 0 #000,0 0 14px ${t.nameGlow}; line-height:1; }
-  #card-root .right-panel { flex:1; padding:52px 18px 10px 16px; display:flex; flex-direction:column; gap:6px; position:relative; z-index:2; background:${t.overlay}; overflow:hidden; }
-  #card-root .header-row { display:flex; align-items:center; gap:10px; }
-  #card-root .position-badge { background:${t.posBadgeBg}; border:2px solid ${t.posBadgeBorder}; border-radius:6px; padding:4px 12px; color:#fff; font-size:13px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; box-shadow:0 2px 6px #000000aa; }
-  #card-root .player-full-name { color:#fff; font-size:22px; font-weight:900; text-shadow:2px 2px 0 #000,0 0 16px ${t.nameGlow}; letter-spacing:2px; white-space:nowrap; overflow:visible; }
-  #card-root .season-badge { margin-left:auto; background:rgba(0,0,0,0.55); border:2px solid ${t.seasonBorder}; border-radius:6px; padding:3px 12px; color:${t.seasonText}; font-size:13px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; white-space:nowrap; }
-  #card-root .record-bar { background:rgba(0,0,0,0.45); border:2px solid ${t.recBorder}; border-radius:8px; padding:5px 6px; display:flex; align-items:center; justify-content:space-between; }
-  #card-root .rec-item { display:flex; flex-direction:column; align-items:center; flex:1; min-width:0; border-right:1px solid ${t.recBorder}88; padding:2px 3px; }
+  #card-root .right-panel { flex:1; padding:46px 14px 8px 14px; display:flex; flex-direction:column; gap:3px; position:relative; z-index:2; background:${t.overlay}; overflow:hidden; }
+  #card-root .header-row { display:flex; align-items:center; gap:8px; }
+  #card-root .position-badge { background:${t.posBadgeBg}; border:2px solid ${t.posBadgeBorder}; border-radius:6px; padding:3px 10px; color:#fff; font-size:13px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; box-shadow:0 2px 6px #000000aa; }
+  #card-root .player-full-name { color:#fff; font-size:20px; font-weight:900; text-shadow:2px 2px 0 #000,0 0 16px ${t.nameGlow}; letter-spacing:2px; white-space:nowrap; overflow:visible; }
+  #card-root .season-badge { margin-left:auto; background:rgba(0,0,0,0.55); border:2px solid ${t.seasonBorder}; border-radius:6px; padding:2px 10px; color:${t.seasonText}; font-size:12px; font-weight:900; letter-spacing:2px; text-shadow:1px 1px 0 #000; white-space:nowrap; }
+  #card-root .record-bar { background:rgba(0,0,0,0.45); border:2px solid ${t.recBorder}; border-radius:8px; padding:3px 5px; display:flex; align-items:center; justify-content:space-between; }
+  #card-root .rec-item { display:flex; flex-direction:column; align-items:center; flex:1; min-width:0; border-right:1px solid ${t.recBorder}88; padding:1px 2px; }
   #card-root .rec-item:last-child { border-right:none; }
-  #card-root .rec-label { color:${t.recLabel}; font-size:10px; font-weight:900; letter-spacing:0; text-shadow:1px 1px 0 #000; white-space:nowrap; }
-  #card-root .rec-val { color:#fff; font-size:21px; font-weight:900; line-height:1.1; text-shadow:1px 1px 0 #000; white-space:nowrap; }
+  #card-root .rec-label { color:${t.recLabel}; font-size:9px; font-weight:900; letter-spacing:0; text-shadow:1px 1px 0 #000; white-space:nowrap; }
+  #card-root .rec-val { color:#fff; font-size:19px; font-weight:900; line-height:1.1; text-shadow:1px 1px 0 #000; white-space:nowrap; }
   #card-root .rec-val.hl { color:${t.recHl}; text-shadow:1px 1px 0 #000,0 0 10px ${t.recHlGlow}; }
   #card-root .rec-val.pp { color:${t.recPp}; text-shadow:1px 1px 0 #000,0 0 10px ${t.recPpGlow}; }
-  #card-root .rec-val.sm { font-size:16px; }
-  #card-root .sec-title { color:${t.sectionText}; font-size:12px; font-weight:900; letter-spacing:3px; border-left:5px solid ${t.sectionBar}; padding-left:8px; text-shadow:1px 1px 0 #000; }
-  #card-root .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
+  #card-root .rec-val.sm { font-size:14px; }
+  #card-root .sec-title { color:${t.sectionText}; font-size:11px; font-weight:900; letter-spacing:2px; line-height:1.1; border-left:4px solid ${t.sectionBar}; padding-left:6px; text-shadow:1px 1px 0 #000; }
+  #card-root .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:3px; }
   /* 2段目: 選球眼・三振耐性(各1fr) + 小3マスグループ(2fr) */
-  #card-root .stats-grid-bot { display:grid; grid-template-columns:1fr 1fr 2fr; gap:4px; margin-top:4px; }
+  #card-root .stats-grid-bot { display:grid; grid-template-columns:1fr 1fr 2fr; gap:3px; margin-top:2px; }
   #card-root .stats-mini-group { display:grid; grid-template-columns:repeat(3,1fr); gap:2px; }
-  #card-root .stat-box-mini { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:5px; padding:2px 3px; display:flex; flex-direction:column; align-items:center; }
-  #card-root .stat-name-mini { color:${t.statName}; font-size:8px; font-weight:900; letter-spacing:0; text-shadow:1px 1px 0 #000; white-space:nowrap; }
-  #card-root .stat-val-mini { color:#fff; font-size:14px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
+  #card-root .stat-box-mini { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:5px; padding:1px 1px; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  #card-root .stat-name-mini { color:${t.statName}; font-size:9px; font-weight:900; letter-spacing:0; text-shadow:1px 1px 0 #000; white-space:nowrap; }
+  #card-root .stat-val-mini { color:#fff; font-size:18px; font-weight:900; line-height:1.0; text-shadow:2px 2px 0 #000; }
   #card-root .stat-val-mini.s-rank { color:${t.srank}; text-shadow:2px 2px 0 #000,0 0 10px ${t.srankGlow}; }
   #card-root .stat-val-mini.a-rank { color:${t.arank}; text-shadow:2px 2px 0 #000,0 0 8px ${t.arankGlow}; }
   #card-root .stat-val-mini.hr-s { color:#ff8844; text-shadow:2px 2px 0 #000,0 0 10px #ff4400; }
   #card-root .stat-val-mini.hr-a { color:#ffcc44; text-shadow:2px 2px 0 #000,0 0 8px #cc8800; }
-  #card-root .stat-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:6px; padding:4px 5px; display:flex; flex-direction:column; align-items:center; }
+  #card-root .stat-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:6px; padding:3px 4px; display:flex; flex-direction:column; align-items:center; }
   #card-root .stat-box.peak { background:${t.peakBg}; border:2px solid ${t.peakBorder}; box-shadow:0 0 10px ${t.peakBorder}66; }
-  #card-root .stat-name { color:${t.statName}; font-size:10px; font-weight:900; letter-spacing:0.5px; text-shadow:1px 1px 0 #000; }
-  #card-root .stat-val { color:#fff; font-size:20px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
+  #card-root .stat-name { color:${t.statName}; font-size:9px; font-weight:900; letter-spacing:0.5px; text-shadow:1px 1px 0 #000; }
+  #card-root .stat-val { color:#fff; font-size:19px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
   #card-root .stat-val.s-rank { color:${t.srank}; text-shadow:2px 2px 0 #000,0 0 14px ${t.srankGlow}; }
   #card-root .stat-val.a-rank { color:${t.arank}; text-shadow:2px 2px 0 #000,0 0 10px ${t.arankGlow}; }
   #card-root .pitch-table { width:100%; border-collapse:collapse; table-layout:fixed; }
-  #card-root .pitch-table th { color:${t.recLabel}; font-size:10px; font-weight:900; letter-spacing:1px; padding:3px 3px; text-align:right; border-bottom:2px solid ${t.pitchTblBorder}; text-shadow:1px 1px 0 #000; }
-  #card-root .pitch-table th:first-child { text-align:left; padding-left:4px; letter-spacing:2px; }
-  #card-root .pitch-table td { color:#fff; padding:2px 4px; text-align:right; border-bottom:1px solid ${t.pitchTblBorder}55; font-size:11px; font-weight:900; text-shadow:1px 1px 0 #000; }
+  #card-root .pitch-table th { color:${t.recLabel}; font-size:9px; font-weight:900; letter-spacing:1px; padding:2px 3px; text-align:right; border-bottom:2px solid ${t.pitchTblBorder}; text-shadow:1px 1px 0 #000; }
+  #card-root .pitch-table th:first-child { text-align:left; padding-left:4px; letter-spacing:1px; }
+  #card-root .pitch-table td { color:#fff; padding:1px 4px; text-align:right; border-bottom:1px solid ${t.pitchTblBorder}55; font-size:11px; font-weight:900; text-shadow:1px 1px 0 #000; }
   #card-root .pn { color:${t.pitchNameColor}!important; text-align:left!important; font-size:12px!important; font-weight:900!important; text-shadow:1px 1px 0 #000!important; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; padding:2px 2px 2px 4px!important; }
   #card-root .ps { color:#88ddff!important; text-align:right!important; text-shadow:1px 1px 0 #000,0 0 8px #44aaff!important; }
   #card-root .pp2 { color:#ffcc66!important; text-align:right!important; text-shadow:1px 1px 0 #000,0 0 8px #ff8800!important; }
   #card-root .pr { color:#88ff88!important; text-align:right!important; text-shadow:1px 1px 0 #000,0 0 8px #22cc22!important; }
-  #card-root .pitch-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
-  #card-root .pitch-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:5px; padding:3px 4px; display:flex; flex-direction:column; align-items:center; }
+  #card-root .pitch-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:3px; }
+  #card-root .pitch-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:5px; padding:2px 3px; display:flex; flex-direction:column; align-items:center; }
   #card-root .pitch-box.pos-b { border-color:#ff664488; }
   #card-root .pitch-box.neg-b { border-color:#4488ff88; }
   #card-root .pitch-box.neu-b { border-color:#88886688; }
-  #card-root .pitch-lbl { color:${t.recLabel}; font-size:11px; font-weight:900; letter-spacing:1px; text-shadow:1px 1px 0 #000; }
-  #card-root .pitch-v { font-size:16px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
+  #card-root .pitch-lbl { color:${t.recLabel}; font-size:10px; font-weight:900; letter-spacing:1px; text-shadow:1px 1px 0 #000; }
+  #card-root .pitch-v { font-size:14px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
   #card-root .pitch-v.pos { color:#ff8866; text-shadow:2px 2px 0 #000,0 0 8px #ff4422; }
   #card-root .pitch-v.neg { color:#88ccff; text-shadow:2px 2px 0 #000,0 0 8px #4488ff; }
   #card-root .pitch-v.neu { color:#ccccaa; text-shadow:1px 1px 0 #000; }
@@ -1350,7 +1350,7 @@ function getCardCSS(t) {
   #card-root .ca-val.lead { color:#ffdd66; text-shadow:2px 2px 0 #000,0 0 10px #ffaa00; }
   #card-root .ca-val.cs   { color:#66ffaa; text-shadow:2px 2px 0 #000,0 0 10px #22cc66; }
   #card-root .ca-unit { color:#a0b8a0; font-size:10px; font-weight:900; text-shadow:1px 1px 0 #000; align-self:flex-end; margin-bottom:2px; }
-  #card-root .retsuden { font-size:11px; color:${t.retColor}; line-height:1.55; border-top:2px solid ${t.retBorder}; padding-top:4px; font-weight:900; text-shadow:1px 1px 0 #000; flex:1; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:6; }
+  #card-root .retsuden { font-size:11px; color:${t.retColor}; line-height:1.5; border-top:2px solid ${t.retBorder}; padding-top:3px; font-weight:900; text-shadow:1px 1px 0 #000; flex:1; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:6; }
   #card-root .retsuden strong { color:${t.retStrong}; font-size:12px; text-shadow:1px 1px 0 #000; }
   #card-root .retsuden .ai-loading { color:#aaaaaa; font-style:normal; animation:blink 1s infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
