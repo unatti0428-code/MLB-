@@ -3542,9 +3542,10 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   // 球種名に異名があれば「チェンジアップ（エアベンダー）」形式に変換するヘルパー
   const pName = p => nickMap[p.name] ? `${p.name}（${nickMap[p.name]}）` : p.name;
 
-  // 球速テキスト生成ヘルパー（"最速152km/h・"など）
+  // 球速テキスト生成ヘルパー（"152km/h"など）
   // データはkm/h単位で格納。110以上はmphではありえないのでkm/h確定。100未満は表示しない
-  const spdTxt = s => (s !== null && s >= 100) ? `最速${Math.round(s)}km/h・` : '';
+  // ※球速は目安値のため「最速」表現は使用しない
+  const spdTxt = s => (s !== null && s >= 100) ? `${Math.round(s)}km/h` : '';
 
   const lines = [];
 
