@@ -1290,14 +1290,47 @@ function getCardCSS(t) {
   #card-root .stat-val { color:#fff; font-size:23px; font-weight:900; line-height:1.1; text-shadow:2px 2px 0 #000; }
   #card-root .stat-val.s-rank { color:${t.srank}; text-shadow:2px 2px 0 #000,0 0 14px ${t.srankGlow}; }
   #card-root .stat-val.a-rank { color:${t.arank}; text-shadow:2px 2px 0 #000,0 0 10px ${t.arankGlow}; }
+  /* 3桁ステータス: レインボーグラデーション＋キラキラアニメ */
+  #card-root .stat-val.triple {
+    -webkit-text-fill-color:#e8ff00;
+    color:#e8ff00;
+    -webkit-text-stroke:2px #e8ff00;
+    paint-order:stroke fill;
+    font-weight:900;
+    animation:tripleGlow 1.5s ease-in-out infinite;
+  }
+  #card-root .stat-box.triple-box {
+    background:rgba(0,0,0,0.55);
+    border:2px solid #e8ff00cc;
+    box-shadow:0 0 10px #e8ff0044, inset 0 0 6px #e8ff0011;
+  }
+  @keyframes tripleGlow {
+    0%,100% { opacity:1; }
+    50%      { opacity:0.75; }
+  }
   #card-root .pitch-table { width:100%; border-collapse:collapse; table-layout:fixed; }
-  #card-root .pitch-table th { color:${t.recLabel}; font-size:9px; font-weight:900; letter-spacing:1px; padding:2px 3px; text-align:right; border-bottom:2px solid ${t.pitchTblBorder}; text-shadow:1px 1px 0 #000; }
-  #card-root .pitch-table th:first-child { text-align:left; padding-left:4px; letter-spacing:1px; }
-  #card-root .pitch-table td { color:#fff; padding:1px 4px; text-align:right; border-bottom:1px solid ${t.pitchTblBorder}55; font-size:11px; font-weight:900; text-shadow:1px 1px 0 #000; }
-  #card-root .pn { color:${t.pitchNameColor}!important; text-align:left!important; font-size:12px!important; font-weight:900!important; text-shadow:1px 1px 0 #000!important; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; padding:2px 2px 2px 4px!important; }
-  #card-root .ps { color:#88ddff!important; text-align:right!important; text-shadow:1px 1px 0 #000,0 0 8px #44aaff!important; }
-  #card-root .pp2 { color:#ffcc66!important; text-align:right!important; text-shadow:1px 1px 0 #000,0 0 8px #ff8800!important; }
-  #card-root .pr { color:#88ff88!important; text-align:right!important; text-shadow:1px 1px 0 #000,0 0 8px #22cc22!important; }
+  #card-root .pitch-table th { color:${t.recLabel}; font-size:11px; font-weight:900; letter-spacing:1px; padding:2px 3px 6px; text-align:right; border-bottom:2px solid ${t.pitchTblBorder}; text-shadow:1px 1px 0 #000; }
+  #card-root .pitch-sec-th { color:${t.sectionText}!important; text-align:left!important; font-size:11px!important; font-weight:900!important; letter-spacing:1px!important; border-left:4px solid ${t.sectionBar}; padding-left:6px!important; text-shadow:1px 1px 0 #000!important; }
+  #card-root .pitch-col-th { font-size:13px!important; letter-spacing:1px!important; color:${t.recLabel}!important; }
+  #card-root .pitch-table td { color:#fff; padding:2px 3px; text-align:right; border-bottom:1px solid ${t.pitchTblBorder}55; font-size:14px; font-weight:900; text-shadow:1px 1px 0 #000; }
+  #card-root .pn { color:${t.pitchNameColor}!important; text-align:left!important; font-size:15px!important; font-weight:900!important; text-shadow:1px 1px 0 #000!important; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; padding:2px 2px 2px 4px!important; }
+  #card-root .ps  { color:#88ddff!important; text-align:right!important; text-shadow:1px 1px 0 #000!important; }
+  #card-root .pp2 { color:#ffcc66!important; text-align:right!important; text-shadow:1px 1px 0 #000!important; }
+  #card-root .pr  { color:#88ff88!important; text-align:right!important; text-shadow:1px 1px 0 #000!important; }
+  /* 球速155-159 / 球威91-99: 太字黄色（SSR a-rankと同スタイル） */
+  #card-root td.ps-hot, #card-root td.pp2-hot {
+    color:#ffffaa!important;
+    -webkit-text-stroke:0.4px #ffffaa!important; paint-order:stroke fill!important;
+    font-weight:900!important;
+    text-shadow:2px 2px 0 #000, 0 0 10px #ffee00!important;
+  }
+  /* 球速160+ / 球威100+: 太字ピンク（SSR a-rankと同エフェクト・ピンク） */
+  #card-root td.ps-elite, #card-root td.pp2-elite {
+    color:#ff88cc!important;
+    -webkit-text-stroke:0.4px #ff88cc!important; paint-order:stroke fill!important;
+    font-weight:900!important;
+    text-shadow:2px 2px 0 #000, 0 0 10px #ff2288!important;
+  }
   #card-root .pitch-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:3px; }
   #card-root .pitch-box { background:rgba(0,0,0,0.40); border:1px solid ${t.statBorder}; border-radius:5px; padding:2px 3px; display:flex; flex-direction:column; align-items:center; }
   #card-root .pitch-box.pos-b { border-color:#ff664488; }
@@ -1350,7 +1383,7 @@ function getCardCSS(t) {
   #card-root .ca-val.lead { color:#ffdd66; text-shadow:2px 2px 0 #000,0 0 10px #ffaa00; }
   #card-root .ca-val.cs   { color:#66ffaa; text-shadow:2px 2px 0 #000,0 0 10px #22cc66; }
   #card-root .ca-unit { color:#a0b8a0; font-size:10px; font-weight:900; text-shadow:1px 1px 0 #000; align-self:flex-end; margin-bottom:2px; }
-  #card-root .retsuden { font-size:11px; color:${t.retColor}; line-height:1.5; border-top:2px solid ${t.retBorder}; padding-top:3px; font-weight:900; text-shadow:1px 1px 0 #000; flex:1; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:6; }
+  #card-root .retsuden { font-size:11px; color:${t.retColor}; line-height:1.4; border-top:2px solid ${t.retBorder}; padding-top:2px; font-weight:900; text-shadow:1px 1px 0 #000; flex:1; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:6; }
   #card-root .retsuden strong { color:${t.retStrong}; font-size:12px; text-shadow:1px 1px 0 #000; }
   #card-root .retsuden .ai-loading { color:#aaaaaa; font-style:normal; animation:blink 1s infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
@@ -1534,14 +1567,18 @@ function getCardCSS(t) {
   }
   #card-root .card-back-banner {
     height:42px; flex-shrink:0; padding:0 14px;
-    background:${t.bannerBg}; display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:${t.bannerBg}; display:flex; align-items:center; justify-content:flex-end; gap:10px;
     border-bottom:3px solid ${t.bannerBorder}; box-shadow:0 3px 12px #00000066; position:relative; z-index:20;
   }
-  #card-root .card-back-banner-center { display:flex; align-items:center; gap:10px; flex:1; justify-content:center; }
+  #card-root .card-back-banner-center {
+    display:flex; align-items:center; gap:10px;
+    position:absolute; left:50%; transform:translateX(-50%);
+    white-space:nowrap; pointer-events:none;
+  }
   #card-root .card-back-banner-hand {
-    color:${t.seasonText}; font-size:12px; font-weight:900; letter-spacing:1px;
-    background:rgba(0,0,0,0.45); border:1px solid ${t.bannerBorder}88; border-radius:5px; padding:2px 8px;
-    text-shadow:1px 1px 0 #000; white-space:nowrap; flex-shrink:0;
+    color:${t.seasonText}; font-size:15px; font-weight:900; letter-spacing:1px;
+    background:rgba(0,0,0,0.45); border:1px solid ${t.bannerBorder}88; border-radius:5px; padding:3px 10px;
+    text-shadow:1px 1px 0 #000; white-space:nowrap; flex-shrink:0; position:relative; z-index:1;
   }
   #card-root .card-back-banner-name {
     color:#fff; font-size:19px; font-weight:900; letter-spacing:4px;
@@ -1823,8 +1860,10 @@ function calcPitcherOverall(row, fipValue = null, warValue = null) {
 function buildStatBox(label, value) {
   const rank = statRank(value);
   const peak = isPeak(value);
-  // 3桁以上はフォントを少し小さく
-  return `<div class="stat-box${peak ? ' peak' : ''}"><span class="stat-name">${label}</span><span class="stat-val${rank ? ' ' + rank : ''}">${value}</span></div>`;
+  const isTriple = (typeof value === 'number' || (typeof value === 'string' && !isNaN(value))) && Number(value) >= 100;
+  const boxCls = isTriple ? ' triple-box' : (peak ? ' peak' : '');
+  const valCls = isTriple ? ' triple' : (rank ? ' ' + rank : '');
+  return `<div class="stat-box${boxCls}"><span class="stat-name">${label}</span><span class="stat-val${valCls}">${value}</span></div>`;
 }
 
 /** 小型スタットボックス（盗塁能・対左・HR能用）
@@ -1945,9 +1984,17 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
       : `<div class="stat-box"><span class="stat-name">対盗塁</span><span class="stat-val" style="font-size:14px;color:#888">--</span></div>`,
   ].join('');
 
-  const pitchRows = pitches.map(p =>
-    `<tr><td class="pn" data-pitch="${escapeHtml(p.name)}">${p.name}</td><td class="ps">${p.speed}</td><td class="pp2">${p.power}</td><td class="pr">${fmtPct(p.rate)}</td></tr>`
-  ).join('');
+  const pitchRows = pitches.map(p => {
+    const rawSpd = parseFloat(p.speed);
+    const rawPwr = parseFloat(p.power);
+    const spdCls = !isNaN(rawSpd)
+      ? (rawSpd >= 160 ? ' ps-elite' : rawSpd >= 155 ? ' ps-hot' : '')
+      : '';
+    const pwrCls = !isNaN(rawPwr)
+      ? (rawPwr >= 100 ? ' pp2-elite' : rawPwr > 90 ? ' pp2-hot' : '')
+      : '';
+    return `<tr><td class="pn" data-pitch="${escapeHtml(p.name)}">${p.name}</td><td class="ps${spdCls}">${p.speed}</td><td class="pp2${pwrCls}">${p.power}</td><td class="pr">${fmtPct(p.rate)}</td></tr>`;
+  }).join('');
 
   const photoSrc   = photoURL ? `<img src="${photoURL}" alt="${name}" onerror="this.style.display='none'">` : '';
   const seasonLabel = isPeakYear ? `${year} PEAK` : `${year}`;
@@ -1988,9 +2035,8 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
       </div>
       <div class="sec-title">■ ゲームステータス</div>
       <div class="stats-grid">${statBoxes}</div>
-      <div class="sec-title">■ 球種データ</div>
       <table class="pitch-table">
-        <thead><tr><th style="text-align:left;">球種</th><th style="width:18%;">球速</th><th style="width:18%;">球威</th><th style="width:18%;">割合</th></tr></thead>
+        <thead><tr><th class="pitch-sec-th">■ 球種データ</th><th class="pitch-col-th" style="width:18%;">球速</th><th class="pitch-col-th" style="width:18%;">球威</th><th class="pitch-col-th" style="width:18%;">割合</th></tr></thead>
         <tbody>${pitchRows}</tbody>
       </table>
       <div class="retsuden" id="retsuden-area"><strong>【列伝】</strong> <span class="ai-loading">AI生成中...</span></div>
@@ -2748,6 +2794,7 @@ const _PLAYER_NICKNAMES = {
   'sandy koufax':     { nicks:['左腕の神様'],            line:'「左腕の神様」として1963–66年にサイ・ヤング賞3度受賞。防御率1.86・4度のノーヒッターという短い全盛期の数字は永遠の伝説として輝く。' },
   'bob gibson':       { nicks:['ギブスン'],              line:'「ギ��スン」の名前一つで対戦打者を震わせた闘将。1968年の防御率1.12は翌年のマウンド変更規則を招いた衝撃の数字で、歴史を変えたシーズンとなった。' },
   'mariano rivera':   { nicks:['サンドマン','モ'],       line:'「サンドマン」「モ」の愛称で親しまれたカットボール1球種で制した守護神の神様。通算652セーブという不滅の記録はクローザーの頂点として永遠に輝く。' },
+  'devin williams':   { nicks:['エアベンダー'],          line:'「エアベンダー（Airbender）」と称される代名詞のチェンジアップはスクリューボールのように曲がり落ちる独自の軌道を描き、2020年シーズンには球界最高の球種と称された唯一無二の魔球。' },
   'walter johnson':   { nicks:['ビッグ・トレイン'],      line:'「ビッグ・トレイン」の剛速球で対戦打者が「打てない」と証言した20世紀初頭の投球の神様。通算417勝・3508奪三振の偉業は球史の礎となった。' },
   'whitey ford':      { nicks:['チェアマン・オブ・ザ・ボード'], line:'「チェアマン・オブ・ザ・ボード（取締役会長）」の知将左腕。WS最多10勝・継続登板33.2回無失点という今も破られていない記録でヤンキース黄金期を支配した。' },
   'max scherzer':     { nicks:['マッド・マックス'],      line:'「マッド・マックス」の鬼気迫る投球で3度のサイ・ヤング賞を制した。独特の色違いの目と圧倒的な奪三振力は現代最高クラスの先発投手の証。' },
@@ -3065,7 +3112,7 @@ function analyzeCareerTrajectory(currentRow) {
 }
 
 // ── 野手・列伝テキスト生成 ────────────────────────────────────
-function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajectory = {}) {
+function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajectory = {}, wikiEpisodes = []) {
   const hr    = parseInt(apiSt.homeRuns    ?? row[9])  || 0;
   const rbi   = parseInt(apiSt.rbi         ?? row[10]) || 0;
   const avg   = apiSt.avg  || fmtRate(row[15]);
@@ -3143,6 +3190,14 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
       lines.push(loreH.ep);
     } else if (!topText && opsN >= 0.900 && lines.length < 5) {
       lines.push(`通算OPS${ops}はキャリアを通じて一線級打者だった証明で、対戦投手を常に苦しめ続けた。`);
+    }
+
+    // Wikipedia フォールバック：4行未満のとき2個以上のエピソードを補完
+    if (lines.length < 4) {
+      for (const ep of wikiEpisodes) {
+        if (lines.length >= 5) break;
+        lines.push(ep);
+      }
     }
 
     // 最終行: 締め（常に1行）
@@ -3312,7 +3367,7 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
 }
 
 // ── 投手・列伝テキスト生成 ────────────────────────────────────
-function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajectory = {}) {
+function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajectory = {}, wikiEpisodes = []) {
   const wins = parseInt(apiSt.wins           ?? row[3])  || 0;
   const loss = parseInt(apiSt.losses         ?? row[4])  || 0;
   const era  = apiSt.era    || row[5]  || '--';
@@ -3347,6 +3402,7 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     lines.push(`通算${sp.join('・')}・防御率${era}を記録した、${roleStr}の柱として時代を支えた名投手。`);
 
     // 行2: 受賞歴 OR 主要マイルストーン
+    let _eraLineAdded = false;
     if (awardsJa.length > 0) {
       lines.push(`${awardsJa.slice(0, 3).join('・')}など栄誉を手にし、MLB投手史に名を刻んだ。`);
     } else if (k >= 3000) {
@@ -3359,11 +3415,30 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
       lines.push(`通算${wins}勝でローテーションの軸として長年チームを支え、幾多の勝利を手繰り寄せた。`);
     } else if (sv >= 300) {
       lines.push(`通算${sv}セーブはクローザーとして球史に名を刻む偉業であり、守護神の証として輝き続ける。`);
+    } else if (sv >= 150) {
+      lines.push(`通算${sv}セーブは一流クローザーの確固たる証であり、試合終盤に最も信頼されたリリーフエースとして君臨した。`);
+    } else if (sv >= 50) {
+      lines.push(`通算${sv}セーブを積み上げ、チームが勝利に最も近づいた瞬間に常にマウンドを任された信頼の守護神。`);
+    } else if (!isStarter && hld >= 100) {
+      lines.push(`通算${hld}ホールドはセットアッパーの鑑であり、試合の流れを変える要所で圧倒的な投球を披露し続けた。`);
+    } else if (!isStarter && k >= 600) {
+      lines.push(`リリーフながら通算${k}奪三振という驚異的な奪三振力で、打者に対し常に圧倒的な支配力を誇示し続けた。`);
+    } else if (!isStarter && eraN < 2.80) {
+      lines.push(`リリーフとして通算防御率${era}という傑出した数字を残し、どの時代でもリーグ最高クラスのリリーバーとして機能した。`);
+      _eraLineAdded = true;
     }
 
-    // 行3: 防御率安定性（eraN < 3.50 かつ行数に余裕がある場合）
-    if (eraN < 3.50 && lines.length < 3) {
-      lines.push(`通算防御率${era}の安定感は打者にとって常に難攻不落の存在だった証であり、その精度は傑出していた。`);
+    // 行3: 防御率段階別評価（行数に余裕がある場合・既にERA行がなければ）
+    if (!_eraLineAdded && lines.length < 4) {
+      if (eraN < 2.00) {
+        lines.push(`通算防御率${era}は現代野球でも最高水準の驚異的な数字であり、打者にとってほぼ攻略不可能な投手として恐れられた。`);
+      } else if (eraN < 2.50) {
+        lines.push(`通算防御率${era}はリーグでも最高峰の傑出した精度であり、マウンドに立つたびに試合を支配する圧倒的な存在感を放った。`);
+      } else if (eraN < 3.00) {
+        lines.push(`通算防御率${era}という高い安定感は、キャリアを通じて常に一線級投手であり続けた確固たる証明だった。`);
+      } else if (eraN < 3.50) {
+        lines.push(`通算防御率${era}の安定感は打者にとって常に難攻不落の存在だった証であり、その精度は傑出していた。`);
+      }
     }
 
     // 行4: MLB歴代順位（最も上位の記録を1件のみ・具体的な順位を明記）
@@ -3388,6 +3463,36 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
       lines.push(lorePC.ep);
     }
 
+    // 代名詞球種（nickname/loreがない or まだ行数が足りない場合の補完）
+    if (lines.length < 5) {
+      const _pnDefsC = ['フォーシーム','スライダー','チェンジアップ','カーブ','カットボール','ツーシーム','スプリット'];
+      const _hdr0c = (g_headers && g_headers[0]) ? g_headers[0] : [];
+      const _pitchesC = [];
+      for (let _pi = 0; _pi < 7; _pi++) {
+        const _pspd  = parseFloat(row[58 + _pi * 3]);
+        const _ppwr  = safeNum(row[59 + _pi * 3]) ?? 0;
+        const _prate = parseFloat(row[60 + _pi * 3]) || 0;
+        const _ppn   = (_hdr0c[58 + _pi * 3] != null && String(_hdr0c[58 + _pi * 3]).trim())
+                       ? String(_hdr0c[58 + _pi * 3]).trim() : _pnDefsC[_pi];
+        if (_prate > 0) _pitchesC.push({ name: _ppn, speed: _pspd, power: isNaN(_ppwr) ? 0 : _ppwr, rate: _prate });
+      }
+      _pitchesC.sort((a, b) => b.power - a.power || b.rate - a.rate);
+      const _sigPitch = _pitchesC.find(p => p.power >= 80);
+      if (_sigPitch && !lines.some(l => l.includes(_sigPitch.name))) {
+        const _pa = _sigPitch.power >= 100 ? '球界最高水準の' : _sigPitch.power >= 90 ? '圧倒的な威力を誇る' : '強力な';
+        const _spdStr = (!isNaN(_sigPitch.speed) && _sigPitch.speed >= 100) ? `（${Math.round(_sigPitch.speed)}km/h）` : '';
+        lines.push(`${_pa}${_sigPitch.name}${_spdStr}を代名詞とし、その一球で試合の流れを変えるほどの圧倒的な武器として打者を封じ続けた。`);
+      }
+    }
+
+    // Wikipedia フォールバック：5行未満のとき2個以上のエピソードを補完
+    if (lines.length < 5) {
+      for (const ep of wikiEpisodes) {
+        if (lines.length >= 5) break;
+        lines.push(ep);
+      }
+    }
+
     // 最終行: 締め（常に1行）
     const closings = [
       `長年にわたりマウンドに立ち続けた姿は、ファンにとって球団の象徴そのものだった。`,
@@ -3399,7 +3504,7 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   }
 
   // ── シングルシーズン ──
-  // 球種データを読み込む（row[58+i*3]=球速mph, row[59+i*3]=球威, row[60+i*3]=使用率）
+  // 球種データを読み込む（row[58+i*3]=球速km/h, row[59+i*3]=球威, row[60+i*3]=使用率）
   // 球種名はExcelヘッダーを優先（g_headers経由）
   const _pnDefaults = ['フォーシーム','スライダー','チェンジアップ','カーブ','カットボール','ツーシーム','スプリット'];
   const _hdr0 = (g_headers && g_headers[0]) ? g_headers[0] : [];
@@ -3414,7 +3519,7 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     const rate = parseFloat(row[60 + i * 3]) || 0;
     if (rate > 0) pitches.push({
       name:  pitchNames[i],
-      speed: (!isNaN(spd) && spd >= 60 && spd <= 105) ? spd : null,  // mphとして妥当な範囲のみ
+      speed: (!isNaN(spd) && spd >= 100 && spd <= 175) ? spd : null,  // km/hとして妥当な範囲のみ
       power: pwr,
       rate,
     });
@@ -3429,8 +3534,9 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   // 球種名に異名があれば「チェンジアップ（エアベンダー）」形式に変換するヘルパー
   const pName = p => nickMap[p.name] ? `${p.name}（${nickMap[p.name]}）` : p.name;
 
-  // 球速テキスト生成ヘルパー（"最速98mph・"など）
-  const spdTxt = s => (s !== null && s >= 60) ? `最速${Math.round(s)}mph・` : '';
+  // 球速テキスト生成ヘルパー（"最速152km/h・"など）
+  // データはkm/h単位で格納。110以上はmphではありえないのでkm/h確定。100未満は表示しない
+  const spdTxt = s => (s !== null && s >= 100) ? `最速${Math.round(s)}km/h・` : '';
 
   const lines = [];
 
@@ -3560,14 +3666,423 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
 }
 
 // ── MLB データから列伝全体を構築 ────────────────────────────
-function buildRetsudenFromMLBData(row, mlbData, rankData = {}, trajectory = {}) {
+function buildRetsudenFromMLBData(row, mlbData, rankData = {}, trajectory = {}, wikiEpisodes = []) {
   const year     = String(row[1] || '');
   const awards   = mlbData?.awards || [];
   const apiSt    = mlbData?.stats  || {};
   const awardsJa = [...new Set(awards.map(awardToJa).filter(Boolean))];
   console.log('[MLB] 受賞（日本語）:', awardsJa);
-  if (g_isPitcher) return buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData, trajectory);
-  return buildHitterRetsuden(row, year, awardsJa, apiSt, rankData, trajectory);
+  if (g_isPitcher) return buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData, trajectory, wikiEpisodes);
+  return buildHitterRetsuden(row, year, awardsJa, apiSt, rankData, trajectory, wikiEpisodes);
+}
+
+// ── Wikipedia からエピソードを取得（通算カード用フォールバック） ─────
+async function fetchWikipediaEpisodes(playerNameEn, isPitcher) {
+  if (!playerNameEn) return [];
+  try {
+    const title = encodeURIComponent(playerNameEn.trim());
+    // MediaWiki extracts API — イントロ全文を取得（REST summaryより大幅に多い情報量）
+    const url = `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=true&explaintext=true&format=json&origin=*&titles=${title}`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = await res.json();
+    const pages = data?.query?.pages || {};
+    const page  = Object.values(pages)[0];
+    if (!page || page.missing !== undefined || !page.extract) return [];
+    const extract  = page.extract;
+    console.log('[Wikipedia] 取得文字数:', extract.length);
+    const episodes = _parseWikiEpisodes(extract, isPitcher);
+    if (episodes.length) console.log('[Wikipedia] エピソード取得:', episodes.length, '件:', episodes);
+    return episodes;
+  } catch(e) {
+    console.warn('[Wikipedia] 取得失敗:', e.message);
+    return [];
+  }
+}
+
+function _parseWikiEpisodes(text, isPitcher) {
+  if (!text) return [];
+  const results = [];
+  // 文を分割（ピリオド・改行で区切り、空文字除去）
+  const sentences = text.replace(/\n+/g, ' ').split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 10);
+
+  // チーム名→日本語略称マップ
+  const TEAM_JA = {
+    'Yankees':'ヤンキース','Red Sox':'レッドソックス','Dodgers':'ドジャース',
+    'Giants':'ジャイアンツ','Cubs':'カブス','Cardinals':'カージナルス',
+    'Mets':'メッツ','Braves':'ブレーブス','Phillies':'フィリーズ',
+    'Padres':'パドレス','Rockies':'ロッキーズ','Diamondbacks':'ダイヤモンドバックス',
+    'Marlins':'マーリンズ','Nationals':'ナショナルズ','Pirates':'パイレーツ',
+    'Brewers':'ブリュワーズ','Reds':'レッズ','Astros':'アストロズ',
+    'Athletics':'アスレチックス','Mariners':'マリナーズ','Angels':'エンゼルス',
+    'Rangers':'レンジャーズ','Royals':'ロイヤルズ','Twins':'ツインズ',
+    'White Sox':'ホワイトソックス','Tigers':'タイガース','Indians':'インディアンス',
+    'Guardians':'ガーディアンズ','Blue Jays':'ブルージェイズ','Rays':'レイズ',
+    'Orioles':'オリオールズ','Expos':'エクスポズ','Devil Rays':'デビルレイズ',
+  };
+  const teamJa = name => {
+    for (const [en, ja] of Object.entries(TEAM_JA)) {
+      if (name.includes(en)) return ja;
+    }
+    return name;
+  };
+
+  for (const s of sentences) {
+    if (results.length >= 5) break;
+
+    // 殿堂入り
+    if (/Hall of Fame/i.test(s)) {
+      results.push('野球殿堂入りを果たし、その功績は球史に永遠に刻まれた不朽の名選手として讃えられる。');
+      continue;
+    }
+
+    // カムバック賞
+    if (/Comeback Player/i.test(s) && !results.some(r => r.includes('カムバック'))) {
+      const yearM = s.match(/(\d{4})/);
+      if (yearM) {
+        results.push(`${yearM[1]}年のカムバック賞は、逆境を乗り越えて復活を果たした不屈の精神の証として球史に刻まれた。`);
+      } else {
+        results.push('カムバック賞を受賞し、試練を乗り越えて輝きを取り戻した不屈の精神がファンの心に深く刻まれた。');
+      }
+      continue;
+    }
+
+    // リリーバー・オブ・ザ・イヤー / クローザー賞
+    if (/Reliever of the Year|Relief.*Award|Mariano Rivera Award/i.test(s) && !results.some(r => r.includes('リリーバー') || r.includes('クローザー'))) {
+      results.push('リリーバー・オブ・ザ・イヤーに輝き、その年のリーグ最高のリリーフ投手として公式に認められた栄誉。');
+      continue;
+    }
+
+    // 永久欠番
+    const retiredM = s.match(/(?:number|jersey|uniform)\s*#?(\d{1,2})\s+(?:was\s+)?retired/i)
+                  || s.match(/retired\s+his\s+(?:number|jersey|uniform)\s*#?(\d{1,2})/i);
+    if (retiredM) {
+      results.push(`背番号${retiredM[1]}番は球団によって永久欠番に制定され、その功績がいかに偉大であったかを永く物語る。`);
+      continue;
+    }
+
+    // 背番号
+    const jerseyM = s.match(/wore\s+(?:uniform\s+)?(?:number\s+)?#?(\d{1,2})|(?:number|jersey|uniform)\s+#?(\d{1,2})/i);
+    if (jerseyM && !results.some(r => r.includes('背番号'))) {
+      const num = jerseyM[1] || jerseyM[2];
+      results.push(`背番号${num}番を背負い、その番号はファンにとってチームのシンボルとして深く刻まれている。`);
+      continue;
+    }
+
+    // ワールドシリーズ
+    if (/World Series/i.test(s)) {
+      const nM = s.match(/(\d+)[- ]?times?\s+World Series/i);
+      if (nM) {
+        results.push(`ワールドシリーズ${nM[1]}回出場を経験し、大舞台でチームを牽引した真のクラッチプレーヤー。`);
+      } else if (/won|champion|title/i.test(s)) {
+        results.push('ワールドシリーズ制覇を経験し、球団の栄光を手繰り寄せた歴史的な貢献を残した。');
+      } else {
+        results.push('ワールドシリーズの舞台を経験し、球団の黄金時代を支えた重要な存在として語り継がれる。');
+      }
+      continue;
+    }
+
+    // 完全試合・ノーヒットノーラン（投手）
+    if (isPitcher && /perfect game/i.test(s)) {
+      results.push('完全試合を達成した伝説の一夜は、投手として至高の境地に達した証として球史に刻まれる。');
+      continue;
+    }
+    if (isPitcher && /no-hitter|no hitter/i.test(s)) {
+      results.push('ノーヒットノーランを成し遂げた歴史的快投は、投球の完璧さを世界に証明した輝かしい偉業。');
+      continue;
+    }
+
+    // オールスター（2回以上）
+    const asM = s.match(/(\d+)[- ]?times?\s+All.Star/i);
+    if (asM && parseInt(asM[1]) >= 2) {
+      const n = parseInt(asM[1]);
+      results.push(`${n}度のオールスター選出は、その卓越した実力がリーグ全体から認められ続けた確固たる証。`);
+      continue;
+    }
+    if (/All.Star/i.test(s) && /selected|named|chosen|earned/i.test(s) && !results.some(r => r.includes('オールスター'))) {
+      results.push('オールスターに選出された実績は、その年のリーグを代表する投手としての高い評価を示す栄誉。');
+      continue;
+    }
+
+    // ゴールドグラブ（複数回）
+    const ggM = s.match(/(\d+)[- ]?times?\s+Gold Glove/i);
+    if (ggM && parseInt(ggM[1]) >= 2) {
+      results.push(`${ggM[1]}度のゴールドグラブ賞受賞は、守備の名手として球史に輝く栄誉として永く語られる。`);
+      continue;
+    }
+
+    // 連続試合出場
+    if (/consecutive.*game|iron man|games played.*streak/i.test(s)) {
+      const cnM = s.match(/(\d{3,4})\s*consecutive\s*game/i);
+      if (cnM) {
+        results.push(`${cnM[1]}試合連続出場という鉄人伝説は、不屈のプロ意識と卓越した耐久性を証明する偉業。`);
+      } else {
+        results.push('連続試合出場記録を築いた鉄人ぶりは、誰もが認める不屈のプロフェッショナリズムの証。');
+      }
+      continue;
+    }
+
+    // 球種の異名（"Airbender" など ── 投手専用）
+    if (isPitcher && !results.some(r => r.includes('代名詞') || r.includes('魔球'))) {
+      const pitchNickM =
+        s.match(/(?:changeup|curveball|slider|fastball|sinker|cutter|pitch(?:es)?)\s+(?:nickname?d?|called|known\s+as|dubbed?)\s+(?:the\s+)?["']?([A-Za-z][A-Za-z\s]{2,25})["']?/i)
+        || s.match(/["']([A-Za-z][A-Za-z\s]{2,25})["']\s+(?:changeup|curveball|slider|fastball|sinker|cutter|pitch)/i)
+        || s.match(/nickname?d?\s+(?:the\s+)?["']([A-Za-z][A-Za-z\s]{2,25})["']/i);
+      if (pitchNickM) {
+        const pitchNick = (pitchNickM[1] || '').trim();
+        if (pitchNick.length > 2 && pitchNick.length < 30 && !/the|his|her|that|this|which/i.test(pitchNick)) {
+          results.push(`"${pitchNick}"の異名を持つ代名詞球種は球界屈指の魔球として知れ渡り、打者に対して圧倒的な支配力を誇示した。`);
+          continue;
+        }
+      }
+    }
+
+    // 選手の異名（ニックネーム）
+    const nickM = s.match(/nicknamed?\s+"([^"]{5,50})"/i) || s.match(/known as\s+"([^"]{5,50})"/i);
+    if (nickM) {
+      results.push(`"${nickM[1]}"の異名を持ち、そのプレースタイルとキャラクターでファンに深く愛され続けた。`);
+      continue;
+    }
+
+    // 移籍・トレード
+    const tradeM = s.match(/traded?\s+(?:to|by)\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25}?)(?:\s+(?:in|on|for)|\s*[,.])/i);
+    if (tradeM && !results.some(r => r.includes('移籍') || r.includes('トレード'))) {
+      const team = teamJa(tradeM[1].trim());
+      const yearM = s.match(/(\d{4})/);
+      if (yearM) {
+        results.push(`${yearM[1]}年に${team}へ移籍し、新天地でも変わらぬ実力を発揮して活躍を続けた。`);
+      } else {
+        results.push(`${team}へのトレードという転機を経て、新たな環境でも存在感を示し続けた。`);
+      }
+      continue;
+    }
+
+    // フリーエージェント移籍
+    const faM = s.match(/(?:signed?|agreed?)\s+(?:a\s+)?(?:free[\s-]?agent\s+)?(?:contract\s+)?with\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25}?)(?:\s+(?:in|on|as|for)|\s*[,.])/i);
+    if (faM && !results.some(r => r.includes('移籍') || r.includes('FA') || r.includes('契約'))) {
+      const team = teamJa(faM[1].trim());
+      const yearM = s.match(/(\d{4})/);
+      if (yearM) {
+        results.push(`${yearM[1]}年にFA権を行使して${team}と契約し、新天地での活躍に期待が高まった。`);
+      } else {
+        results.push(`フリーエージェントとして${team}に加入し、新たなキャリアの章を切り開いた。`);
+      }
+      continue;
+    }
+
+    // 複数球団在籍（選手紹介文に複数チームが列挙される）
+    const multiTeamM = s.match(/played\s+for\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25}?),\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25}?)/i);
+    if (multiTeamM && !results.some(r => r.includes('在籍'))) {
+      const t1 = teamJa(multiTeamM[1].trim());
+      const t2 = teamJa(multiTeamM[2].trim());
+      results.push(`${t1}・${t2}など複数球団に在籍し、移籍を経るたびに新たな力をチームにもたらし続けた。`);
+      continue;
+    }
+
+    // ドラフト・デビュー
+    const draftM = s.match(/drafted\s+by\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25}?)\s+(?:in\s+)?(?:the\s+)?(\d{4})/i);
+    if (draftM) {
+      const team = teamJa(draftM[1].trim());
+      results.push(`${draftM[2]}年に${team}からドラフト指名されてメジャーへの扉を開き、着実に実力を磨いて一流選手へと成長した。`);
+      continue;
+    }
+    const debutM = s.match(/(?:made his|MLB)\s*debut\s*(?:in\s+)?(\d{4})/i);
+    if (debutM) {
+      results.push(`${debutM[1]}年にMLBデビューを果たし、以来一貫してトップレベルのパフォーマンスを披露し続けた。`);
+      continue;
+    }
+
+    // サイクルヒット（野手）
+    if (!isPitcher && /hit for the cycle/i.test(s)) {
+      results.push('サイクルヒットを達成するなど、打者としての多彩な能力を一試合で余すことなく披露した。');
+      continue;
+    }
+
+    // ポストシーズン活躍
+    if (/postseason|playoff|ALCS|NLCS|ALDS|NLDS/i.test(s) && /record|MVP|hero|clutch/i.test(s)) {
+      results.push('ポストシーズンの大舞台で最高の輝きを放ち、チームを勝利へと導く真のクラッチプレーヤーぶりを示した。');
+      continue;
+    }
+
+    // トミー・ジョン手術 / 重大手術からの復帰
+    if (/Tommy John|UCL|ulnar collateral|reconstructive.*elbow|elbow.*surgery|elbow.*repl/i.test(s)) {
+      if (!results.some(r => r.includes('手術') || r.includes('復帰'))) {
+        results.push('トミー・ジョン手術という試練を乗り越えてマウンドへと帰還し、不屈の精神でキャリアを継続した。');
+        continue;
+      }
+    }
+
+    // 大型長期契約（$50M以上）
+    const bigCM = s.match(/\$(\d+(?:\.\d+)?)\s*(?:million|M)\b/i);
+    if (bigCM && /(?:sign|deal|contract|extension|agreement)/i.test(s) && !results.some(r => r.includes('契約'))) {
+      const amt = parseFloat(bigCM[1]);
+      if (amt >= 50) {
+        const yearM2 = s.match(/(\d+)[- ]?year/i);
+        const yrs = yearM2 ? `${yearM2[1]}年総額` : '総額';
+        results.push(`${yrs}${Math.round(amt)}百万ドルという大型契約は、MLBが認めた実力の証であり選手としての評価の高さを示す。`);
+        continue;
+      }
+    }
+
+    // シルバースラッガー（1回でも）
+    if (/Silver Slugger/i.test(s) && !results.some(r => r.includes('シルバースラッガー'))) {
+      const ssN = s.match(/(\d+)[- ]?times?\s+Silver Slugger/i);
+      if (ssN) {
+        results.push(`${ssN[1]}度のシルバースラッガー賞は、攻撃力の高さをリーグ全体に証明し続けた輝かしい勲章。`);
+      } else {
+        results.push('シルバースラッガー賞を受賞し、その打撃力がリーグ最高水準にあることを公式に認められた。');
+      }
+      continue;
+    }
+
+    // サイ・ヤング賞
+    if (/Cy Young/i.test(s) && !results.some(r => r.includes('サイ・ヤング'))) {
+      const cyN = s.match(/(\d+)[- ]?times?\s+Cy Young/i);
+      if (cyN) {
+        results.push(`${cyN[1]}度のサイ・ヤング賞はリーグ最高投手として時代を席巻した輝かしい勲章。`);
+      } else {
+        results.push('サイ・ヤング賞を受賞し、その年のリーグ最高投手として球史に名を刻んだ。');
+      }
+      continue;
+    }
+
+    // MVP
+    if (/Most Valuable Player|league MVP/i.test(s) && /won|award|named|selected/i.test(s) && !results.some(r => r.includes('MVP'))) {
+      const mvpN = s.match(/(\d+)[- ]?times?\s+(?:MVP|Most Valuable)/i);
+      if (mvpN) {
+        results.push(`${mvpN[1]}度のMVP受賞は、時代を支配したスーパースターとしての地位を確固たるものにした。`);
+      } else {
+        results.push('MVPに輝き、その年のリーグを代表する最高の選手として球史にその名を刻んだ。');
+      }
+      continue;
+    }
+
+    // 出身地（州・都市）
+    const bornM = s.match(/born\s+(?:in|on)?\s+(?:[A-Z][a-z]+\s+\d+,\s+\d{4},?\s+in\s+)?([A-Z][a-zA-Z ]+),\s*([A-Z][a-zA-Z ]+)/i);
+    if (bornM && !results.some(r => r.includes('出身'))) {
+      const city  = bornM[1].trim();
+      const state = bornM[2].trim();
+      // 国名・日本語変換（主要州のみ）
+      const stateJa = { 'California':'カリフォルニア州','Texas':'テキサス州','Florida':'フロリダ州',
+        'New York':'ニューヨーク州','Ohio':'オハイオ州','Georgia':'ジョージア州',
+        'North Carolina':'ノースカロライナ州','South Carolina':'サウスカロライナ州',
+        'Arizona':'アリゾナ州','Pennsylvania':'ペンシルベニア州','Illinois':'イリノイ州',
+        'Michigan':'ミシガン州','Virginia':'バージニア州','Louisiana':'ルイジアナ州',
+        'Dominican Republic':'ドミニカ共和国','Venezuela':'ベネズエラ','Cuba':'キューバ',
+        'Puerto Rico':'プエルトリコ','Panama':'パナマ','Mexico':'メキシコ','Japan':'日本' };
+      const stateStr = stateJa[state] || state;
+      results.push(`${stateStr}${city}出身で、生まれ育った地でプロへの夢を育み、メジャーリーグで頂点へと駆け上がった。`);
+      continue;
+    }
+
+    // 出身大学（community college含む）
+    const univM = s.match(/(?:attended|played\s+(?:college\s+)?(?:baseball\s+)?at|graduated?\s+from)\s+([A-Z][A-Za-z &'.\-]{3,50}?)\s+(?:University|College|State|Tech)/i)
+                || s.match(/([A-Z][A-Za-z &'.\-]{3,50}?)\s+(?:University|College|State|Tech)[,\s]/);
+    if (univM && !results.some(r => r.includes('大学') || r.includes('カレッジ'))) {
+      const univ = univM[1].trim();
+      const isCC = /community|junior|JC/i.test(s);
+      const suffix = isCC ? 'コミュニティカレッジ' : '大学';
+      results.push(`${univ}${suffix}出身で、学生時代から将来を嘱望されたエリートプレーヤーとしてプロの世界へと飛び込んだ。`);
+      continue;
+    }
+
+    // ドラフト全体順位
+    const pickM = s.match(/(\d+)(?:st|nd|rd|th)\s+(?:overall\s+)?pick/i)
+               || s.match(/selected\s+(\d+)(?:st|nd|rd|th)\s+overall/i)
+               || s.match(/(\d+)(?:st|nd|rd|th)\s+pick\s+overall/i);
+    if (pickM && !results.some(r => r.includes('指名'))) {
+      const pick = parseInt(pickM[1]);
+      const teamDM = s.match(/by\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25}?)(?:\s+in|\s*[,.])/i);
+      const teamStr = teamDM ? `${teamJa(teamDM[1].trim())}に` : '';
+      const pickStr = pick <= 5 ? `全体${pick}位` : `全体${pick}位`;
+      results.push(`ドラフト${teamStr}${pickStr}指名という高い評価を受けてプロ入りし、その期待に応えるキャリアを築いた。`);
+      continue;
+    }
+
+    // ドラフトラウンド
+    const roundM = s.match(/(?:drafted?|selected?)\s+(?:in\s+)?(?:the\s+)?(\d+)(?:st|nd|rd|th)\s+round/i);
+    if (roundM && !results.some(r => r.includes('指名'))) {
+      const round = parseInt(roundM[1]);
+      const teamDM2 = s.match(/by\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25}?)(?:\s+in|\s*[,.])/i);
+      const teamStr2 = teamDM2 ? `${teamJa(teamDM2[1].trim())}に` : '';
+      if (round === 1) {
+        results.push(`ドラフト1巡目で${teamStr2}指名される高評価を受けてプロ入りし、その才能をメジャーの舞台で存分に発揮した。`);
+      } else if (round <= 3) {
+        results.push(`ドラフト${round}巡目から這い上がり、努力と才能でメジャーのトッププレーヤーへと成長した。`);
+      } else {
+        results.push('下位指名からメジャーの第一線へと登り詰めた努力の人として、多くの選手たちの手本となった。');
+      }
+      continue;
+    }
+
+    // 投球スタイル（投手）
+    if (isPitcher) {
+      // 球速
+      const velM = s.match(/(?:fastball|heater)\s+(?:that\s+)?(?:reaches?|tops?|hits?|clocks?)\s+(\d{2,3})\s*mph/i)
+                || s.match(/(\d{2,3})\s*mph\s+fastball/i);
+      if (velM && !results.some(r => r.includes('投球') || r.includes('速球'))) {
+        const mph = parseInt(velM[1]);
+        if (mph >= 100) {
+          results.push(`${mph}mphを超える圧倒的な速球を武器に、打者を力でねじ伏せるパワーピッチャーとして君臨した。`);
+        } else if (mph >= 95) {
+          results.push(`常時${mph}mph前後の速球を軸に、精度の高い変化球を組み合わせた投球スタイルで打者を翻弄した。`);
+        }
+        continue;
+      }
+      // 変化球主体・技巧派
+      if (/curveball|slider|changeup|knuckleball|sinker|cutter/i.test(s) && /known|signature|devastating|wipeout|elite/i.test(s)) {
+        const pitchJa = { curveball:'カーブ', slider:'スライダー', changeup:'チェンジアップ',
+                          knuckleball:'ナックルボール', sinker:'シンカー', cutter:'カットボール' };
+        const pitchM = s.match(/curveball|slider|changeup|knuckleball|sinker|cutter/i);
+        const pitchName = pitchM ? (pitchJa[pitchM[0].toLowerCase()] || pitchM[0]) : '変化球';
+        if (!results.some(r => r.includes('投球') || r.includes(pitchName))) {
+          results.push(`得意の${pitchName}を代名詞とする技巧派投手として、独自の投球スタイルで長年打者たちを苦しめた。`);
+          continue;
+        }
+      }
+      // 奪三振スタイル
+      if (/strikeout|swing and miss|whiff/i.test(s) && /known|dominant|elite|high/i.test(s)) {
+        if (!results.some(r => r.includes('奪三振') || r.includes('三振'))) {
+          results.push('圧倒的な奪三振能力を誇る本格派として、打者にとって最も対戦したくない投手の一人に挙げられた。');
+          continue;
+        }
+      }
+    }
+
+    // 打撃スタイル（野手）
+    if (!isPitcher) {
+      // パワーヒッター
+      if (/power hitter|slugger|home run hitter|long ball/i.test(s) && /known|regarded|considered/i.test(s)) {
+        if (!results.some(r => r.includes('打撃') || r.includes('スラッガー'))) {
+          results.push('卓越した長打力を誇るスラッガーとして、対戦投手にとって最も警戒を要する打者であり続けた。');
+          continue;
+        }
+      }
+      // コンタクトヒッター・アベレージヒッター
+      if (/contact hitter|pure hitter|high average|bat control/i.test(s) && /known|regarded|considered/i.test(s)) {
+        if (!results.some(r => r.includes('打撃') || r.includes('打率'))) {
+          results.push('優れたバットコントロールと確実性を誇る巧打者として、どの球種にも対応できる技術の持ち主だった。');
+          continue;
+        }
+      }
+      // スイッチヒッター
+      if (/switch.hitter|switch hit/i.test(s)) {
+        if (!results.some(r => r.includes('両打'))) {
+          results.push('両打ちの器用さを活かして左右どちらの投手にも対応し、打線において得難い存在感を放ち続けた。');
+          continue;
+        }
+      }
+      // 選球眼
+      if (/walk|on-base|plate discipline|patient/i.test(s) && /known|regarded|excellent|elite/i.test(s)) {
+        if (!results.some(r => r.includes('選球') || r.includes('出塁'))) {
+          results.push('卓越した選球眼と忍耐強いアプローチで出塁率を高め、打線の起点として機能し続けた。');
+          continue;
+        }
+      }
+    }
+  }
+
+  return [...new Set(results)];
 }
 
 // ── 列伝を生成してカードに反映（APIキー不要） ─────────────────
@@ -3612,7 +4127,13 @@ async function fetchRetsudenFromAPI(row) {
   else if (trajectory.isImprovement) console.log('[Trajectory] 成長シーズン検出');
   else if (trajectory.isPeakSeason) console.log('[Trajectory] キャリアベスト検出');
 
-  const retsuden = buildRetsudenFromMLBData(row, mlbData, rankData, trajectory);
+  // ④ 通算カードのみ：Wikipedia からエピソードを取得（フォールバック用）
+  let wikiEpisodes = [];
+  if (isCareer && g_mlbNameEn) {
+    wikiEpisodes = await fetchWikipediaEpisodes(g_mlbNameEn, g_isPitcher);
+  }
+
+  const retsuden = buildRetsudenFromMLBData(row, mlbData, rankData, trajectory, wikiEpisodes);
   // MLB公式アワード + リーグリーダー1位タイトルをマージ（重複除去）
   const apiAwards   = (mlbData.awards || []).map(awardToJa).filter(Boolean);
   const rankAwards  = rankDataToAwards(rankData);
