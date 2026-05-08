@@ -441,7 +441,8 @@ const _BREF_HASHES = {
   'hallaro01': 'bc92edb8',  // Roy Halladay
   'linceti01': '7aa1ec7f',  // Tim Lincecum
   'riverma01': 'c0fce0c9',  // Mariano Rivera
-  'sabatc.01': '47f5b9a0',  // CC Sabathia
+  'sabatc.01': '47f5b9a0',  // CC Sabathia (BRef実URL)
+  'sabatcc01': '47f5b9a0',  // CC Sabathia (自動生成候補形式)
   'glasnty01': '6fa86f5b',  // Tyler Glasnow
   // ── 野手 ──
   'bondsba01': 'e79d202f',  // Barry Bonds
@@ -5281,8 +5282,8 @@ async function _directBRefPhoto(brefId) {
   if (!version) return null;
   const folder = hash[0];
   const base = `https://www.baseball-reference.com/req/${version}/images/headshots/${folder}/${hash}`;
-  // sabr (カラー証明写真) → br (標準) → mlbam の順で試す
-  for (const type of ['sabr', 'br', 'mlbam']) {
+  // sabr (カラー証明写真) → br (標準) → mlbam → davis の順で試す
+  for (const type of ['sabr', 'br', 'mlbam', 'davis']) {
     const url = `${base}_${type}.jpg`;
     if (await _testImageUrl(url, 4000)) {
       console.log('[BRef] 直接写真URL取得:', url);
