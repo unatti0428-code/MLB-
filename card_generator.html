@@ -815,10 +815,30 @@ async function fetchBRefData(brefId, isPitcher) {
   _brefCache[brefId] = {};  // 空でもセットしてリトライを防ぐ
   try {
     const pageUrl = `https://www.baseball-reference.com/players/${brefId[0]}/${brefId}.shtml`;
-    const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(pageUrl)}`;
-    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) { console.warn('[BRef] HTTP', res.status); return; }
-    const text = await res.text();
+
+    // 複数のCORSプロキシを順番に試す
+    // allorigins は { contents: "HTML文字列" } 形式で返すため専用パース
+    const proxyList = [
+      { url: `https://corsproxy.io/?url=${encodeURIComponent(pageUrl)}`,          wrap: false },
+      { url: `https://api.allorigins.win/get?url=${encodeURIComponent(pageUrl)}`, wrap: true  },
+      { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(pageUrl)}`, wrap: false },
+    ];
+
+    let text = null;
+    for (const proxy of proxyList) {
+      try {
+        const res = await fetch(proxy.url, { signal: AbortSignal.timeout(10000) });
+        if (!res.ok) { console.warn(`[BRef] プロキシ ${proxy.url} → HTTP ${res.status}`); continue; }
+        if (proxy.wrap) {
+          const json = await res.json();
+          text = json?.contents || null;
+        } else {
+          text = await res.text();
+        }
+        if (text) { console.log(`[BRef] プロキシ成功: ${proxy.url}`); break; }
+      } catch (e) { console.warn(`[BRef] プロキシ失敗: ${proxy.url}`, e.message); }
+    }
+    if (!text) { console.warn('[BRef] 全プロキシ失敗 → スキップ'); return; }
     const doc = new DOMParser().parseFromString(text, 'text/html');
 
     // コメントアウトされた hidden テーブルを取り出す（BRefの一部テーブルは<!-- -->で隠れている）
@@ -826,17 +846,26 @@ async function fetchBRefData(brefId, isPitcher) {
     const doc2 = new DOMParser().parseFromString(allHtml, 'text/html');
 
     // ── 選手写真URLを抽出してキャッシュ ──
+    // BRef は #meta 内に複数の写真を持つ場合がある（サイズ違い・チーム別など）
+    // 最も大きいもの（naturalWidth が最大）を優先して使用する
     const metaDiv = doc.getElementById('meta') || doc2.getElementById('meta');
     if (metaDiv) {
-      const imgEl = metaDiv.querySelector('img[src]');
-      if (imgEl) {
+      const imgEls = Array.from(metaDiv.querySelectorAll('img[src]'));
+      let bestPhoto = null, bestArea = 0;
+      for (const imgEl of imgEls) {
         const rawSrc = imgEl.getAttribute('src') || '';
         const photoUrl = rawSrc.startsWith('http') ? rawSrc
           : rawSrc.startsWith('/') ? 'https://www.baseball-reference.com' + rawSrc : null;
-        if (photoUrl && !photoUrl.includes('generic')) {
-          _brefCache[brefId].photoUrl = photoUrl;
-          console.log('[BRef] 写真URL取得:', photoUrl);
-        }
+        if (!photoUrl || photoUrl.includes('generic')) continue;
+        // width/height 属性またはナチュラルサイズで面積を計算
+        const w = parseInt(imgEl.getAttribute('width')  || imgEl.naturalWidth  || 0);
+        const h = parseInt(imgEl.getAttribute('height') || imgEl.naturalHeight || 0);
+        const area = w * h;
+        if (area > bestArea) { bestArea = area; bestPhoto = photoUrl; }
+      }
+      if (bestPhoto) {
+        _brefCache[brefId].photoUrl = bestPhoto;
+        console.log('[BRef] 写真URL取得（最大サイズ）:', bestPhoto);
       }
     }
 
