@@ -421,6 +421,43 @@ let g_batSide     = null;   // 打席: 'R'=右, 'L'=左, 'S'=両
 let g_brefId     = null;    // BR選手ID (例: "willide03" / "suzukic01")
 const _brefCache = {};      // { brefId: { "2023": { war:"3.2", fip:"2.84" }, ... } }
 
+// ── BRef 写真 直接アクセス用データ ──
+// BRef写真URL: /req/{VERSION}/images/headshots/{hash[0]}/{hash}_{type}.jpg
+// ハッシュはBRefの内部IDから算出（アルゴリズム非公開のため手動収集）
+// バージョン番号はBRefのデプロイ時に変更される（localStorage でキャッシュ）
+const _BREF_PHOTO_VERSIONS = [
+  '2025011210',   // 2025-01-12 (現在確認済み)
+];
+const _BREF_HASHES = {
+  // ── 投手 ──
+  'johnsra05': 'e905e1ef',  // Randy Johnson
+  'clemero02': 'b5a2be2f',  // Roger Clemens
+  'martipe02': 'a9ba2c91',  // Pedro Martinez
+  'schilcu01': '44885ff3',  // Curt Schilling
+  'maddugr01': 'd13d4022',  // Greg Maddux
+  'glavito02': 'c8c1de61',  // Tom Glavine
+  'smoltjo01': 'bf321b07',  // John Smoltz
+  'mussimi01': 'd79f7a98',  // Mike Mussina
+  'hallaro01': 'bc92edb8',  // Roy Halladay
+  'linceti01': '7aa1ec7f',  // Tim Lincecum
+  'riverma01': 'c0fce0c9',  // Mariano Rivera
+  'sabatc.01': '47f5b9a0',  // CC Sabathia
+  'glasnty01': '6fa86f5b',  // Tyler Glasnow
+  // ── 野手 ──
+  'bondsba01': 'e79d202f',  // Barry Bonds
+  'rodrial01': 'c18ad6d1',  // Alex Rodriguez
+  'jeterde01': 'c43ad285',  // Derek Jeter
+  'griffke02': '3e8e7034',  // Ken Griffey Jr
+  'pujolal01': 'e14fcab4',  // Albert Pujols
+  'suzukic01': 'ecfc6093',  // Ichiro Suzuki
+  'ortizda01': '35b5cb46',  // David Ortiz
+  'ramirma02': '8d70b524',  // Manny Ramirez
+  'thomafr04': 'e31675e7',  // Frank Thomas
+  'biggicr01': 'f4d29cc8',  // Craig Biggio
+  'bagweje01': 'c8e9ec56',  // Jeff Bagwell
+  'piazzmi01': 'c035234d',  // Mike Piazza
+};
+
 // リーグ順位キャッシュ（年度別）: { "2023": { era:{rank:1,value:"2.50"}, ... } }
 const _rankDataByYear = {};
 // 年度別アワードキャッシュ: { "2023": ["サイ・ヤング賞", "最優秀防御率", ...] }
@@ -5204,6 +5241,57 @@ function _testHeadshotUrl(rawUrl, timeoutMs = 4000) {
   });
 }
 
+// ── BRef 写真 バージョン自動検出 ──
+let _brefVersionCache = null;
+async function _getActiveBRefVersion() {
+  if (_brefVersionCache) return _brefVersionCache;
+  try {
+    const cached = localStorage.getItem('brefPhotoVersion');
+    if (cached) {
+      // キャッシュされたバージョンが有効か検証（既知ハッシュで確認）
+      const testUrl = `https://www.baseball-reference.com/req/${cached}/images/headshots/e/e905e1ef_br.jpg`;
+      if (await _testImageUrl(testUrl, 4000)) {
+        _brefVersionCache = cached;
+        return cached;
+      }
+    }
+  } catch(e) {}
+  for (const v of _BREF_PHOTO_VERSIONS) {
+    const testUrl = `https://www.baseball-reference.com/req/${v}/images/headshots/e/e905e1ef_br.jpg`;
+    if (await _testImageUrl(testUrl, 4000)) {
+      _brefVersionCache = v;
+      try { localStorage.setItem('brefPhotoVersion', v); } catch(e) {}
+      console.log('[BRef] バージョン確認済:', v);
+      return v;
+    }
+  }
+  console.warn('[BRef] 有効なバージョン番号なし（_BREF_PHOTO_VERSIONSの更新が必要かもしれません）');
+  return null;
+}
+
+// ── BRef 写真 直接URL取得（CORSプロキシ不要・画像タグ直読み） ──
+async function _directBRefPhoto(brefId) {
+  if (!brefId) return null;
+  const hash = _BREF_HASHES[brefId];
+  if (!hash) {
+    console.log('[BRef] ハッシュ未登録:', brefId);
+    return null;
+  }
+  const version = await _getActiveBRefVersion();
+  if (!version) return null;
+  const folder = hash[0];
+  const base = `https://www.baseball-reference.com/req/${version}/images/headshots/${folder}/${hash}`;
+  // sabr (カラー証明写真) → br (標準) → mlbam の順で試す
+  for (const type of ['sabr', 'br', 'mlbam']) {
+    const url = `${base}_${type}.jpg`;
+    if (await _testImageUrl(url, 4000)) {
+      console.log('[BRef] 直接写真URL取得:', url);
+      return url;
+    }
+  }
+  return null;
+}
+
 /**
  * カード年度に合致する選手写真URLをバックグラウンドで探索し、
  * カードの <img> を差し替える。
@@ -5271,24 +5359,42 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
     `https://img.mlbstatic.com/mlb-photos/image/upload/w_213,h_282,c_fill,g_face,q_auto:best/v1/people/${mlbId}/headshot/67/${y}`;
 
   // ── 探索候補年リスト ──
-  // 前後交互: 指定年, -1,+1, -2,+2, ... ±6（通算 or 古い選手は ±8）
   const maxDelta = (isCareer || yr < 2012) ? 8 : 6;
   const candidates = [yr];
   for (let d = 1; d <= maxDelta; d++) {
     candidates.push(yr - d, yr + d);
   }
-  // 通算かつ古い選手（ピーク年 < 2012）: 2010〜2017 を安全網として追加
-  if (yr < 2012) {
+
+  // 古い選手（ピーク年 < 2010）の場合:
+  //   安全網（2010〜2017）は「BRefが失敗した後の最終手段」として分離
+  //   → 現役時代の証明写真がある BRef を先に試す
+  // 現役・近年の選手はこれまで通り安全網も含めてスキャン
+  const isOldPlayer = yr < 2010;
+  let eraCandidates, safetyNetCandidates;
+
+  if (isOldPlayer) {
+    // 現役時代 (≤ 2012) のみスキャン。2010以降は BRef失敗後の安全網
+    eraCandidates    = candidates.filter(y => y >= 2006 && y <= 2012);
+    safetyNetCandidates = [];
     for (let y = 2017; y >= 2010; y--) {
-      if (!candidates.includes(y)) candidates.push(y);
+      if (!eraCandidates.includes(y) && y <= now) safetyNetCandidates.push(y);
     }
+  } else {
+    // 2010年以降の選手: 安全網も最初のスキャンに含める（従来通り）
+    if (yr < 2012) {
+      for (let y = 2017; y >= 2010; y--) {
+        if (!candidates.includes(y)) candidates.push(y);
+      }
+    }
+    eraCandidates    = candidates.filter(y => y >= 2006 && y <= now);
+    safetyNetCandidates = [];
   }
 
   let found = null;
 
-  // ── Step 1+2: MLB CDN スキャン（証明写真比率チェック付き） ──
-  for (const testYr of candidates) {
-    if (testYr < 2006 || testYr > now) continue;
+  // ── Step 1: MLB CDN 時代適合スキャン（証明写真比率チェック付き） ──
+  for (const testYr of eraCandidates) {
+    if (testYr > now) continue;
     if (await _testHeadshotUrl(makeRawUrl(testYr))) {
       found = makeDispUrl(testYr);
       const label = testYr === yr
@@ -5296,6 +5402,16 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
         : `${testYr}年 (要求:${yr}, Δ${testYr > yr ? '+' : ''}${testYr - yr})`;
       console.log(`[Photo] MLB年度別写真 ${label} 取得成功（証明写真比率OK）`);
       break;
+    }
+  }
+
+  // ── Step 2: BRef 直接写真（古い選手優先・CORSプロキシ不要） ──
+  // ハッシュテーブル登録済みの選手は直接URLを生成してテスト
+  if (!found && g_brefId) {
+    const directPhoto = await _directBRefPhoto(g_brefId);
+    if (directPhoto) {
+      found = directPhoto;
+      console.log('[Photo] BRef直接写真 使用:', directPhoto);
     }
   }
 
@@ -5319,12 +5435,22 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
     }
   }
 
-  // ── Step 4: Baseball Reference 写真（最終フォールバック・比率チェックなし） ──
-  // BRef写真は選手の代表的な写真を提供するため、比率に関わらず使用する
+  // ── Step 4: BRef プロキシ経由写真（プロキシ成功時のみ有効） ──
   if (!found && brPhoto) {
     if (await _testImageUrl(brPhoto)) {
       found = brPhoto;
-      console.log('[Photo] BRef写真 使用（最終フォールバック）:', brPhoto);
+      console.log('[Photo] BRefプロキシ写真 使用:', brPhoto);
+    }
+  }
+
+  // ── Step 5: 安全網スキャン（古い選手の最終手段: 引退後写真も含む） ──
+  if (!found && safetyNetCandidates.length > 0) {
+    for (const testYr of safetyNetCandidates) {
+      if (await _testHeadshotUrl(makeRawUrl(testYr))) {
+        found = makeDispUrl(testYr);
+        console.log(`[Photo] MLB安全網写真 ${testYr}年 取得（引退後の可能性あり）`);
+        break;
+      }
     }
   }
 
