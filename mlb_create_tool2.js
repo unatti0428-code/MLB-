@@ -1283,10 +1283,13 @@ function applyFgRow(row, yr, rawPitch, showKyuiMap) {
     if (pctVal < 5) continue;
     const veloVal = veloDen > 0 ? Math.round(veloNum / veloDen) : null;
     const key     = PITCH_KEYS[idx];
+    // Savant 実測値（ba/slg/velo）があれば保持し、FanGraphs は pct（と velo 未取得時）のみ補完
+    const existing = rawPitch[yr]?.[key] || {};
     rawPitch[yr][key] = {
-      velo: veloVal ? String(veloVal) : '--',
-      ba: '--', slg: '--',
-      pct: String(pctVal),
+      velo: (existing.velo && existing.velo !== '--') ? existing.velo : (veloVal ? String(veloVal) : '--'),
+      ba:   (existing.ba   && existing.ba   !== '--') ? existing.ba   : '--',
+      slg:  (existing.slg  && existing.slg  !== '--') ? existing.slg  : '--',
+      pct:  String(pctVal),
     };
     if (veloVal) {
       const kyui = calcKyuiPreStatcast(veloVal, idx, pctVal);
@@ -1529,7 +1532,27 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
           if (!isNaN(slg)) { slgN += p * slg; slgD += p; }
         }
 
-        if (pctTotal <= 0) continue;
+        if (pctTotal <= 0) {
+          // pct は取得できなかったが velo/ba/slg がある場合は保存
+          // （FanGraphs が後で pct を補完する; applyFgRow が ba/slg を保持する）
+          let fbVelo = '--', fbBa = '--', fbSlg = '--';
+          let vCnt = 0, vSum = 0, bCnt = 0, bSum = 0, sCnt = 0, sSum = 0;
+          for (const v of list) {
+            const vl = parseFloat(String(v.velo || ''));
+            if (!isNaN(vl) && vl > 0) { vSum += vl; vCnt++; }
+            const ba = parseFloat(String(v.ba || ''));
+            if (!isNaN(ba)) { bSum += ba; bCnt++; }
+            const slg = parseFloat(String(v.slg || ''));
+            if (!isNaN(slg)) { sSum += slg; sCnt++; }
+          }
+          if (vCnt > 0) fbVelo = String(+(vSum / vCnt).toFixed(1));
+          if (bCnt > 0) fbBa   = String(+(bSum / bCnt).toFixed(3));
+          if (sCnt > 0) fbSlg  = String(+(sSum / sCnt).toFixed(3));
+          if (fbVelo !== '--' || fbBa !== '--' || fbSlg !== '--') {
+            rawPitch[yr][key] = { velo: fbVelo, ba: fbBa, slg: fbSlg, pct: '--' };
+          }
+          continue;
+        }
 
         rawPitch[yr][key] = {
           velo: veloD > 0 ? String(+(veloN / veloD).toFixed(1)) : '--',
@@ -1677,7 +1700,9 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
 
     // ── Step 2: pre-2017 年 → FanGraphs → MLB The Show → Claude の順でフォールバック ──
     const showKyuiMap = {};
-    const preShowYears = years.filter(yr => +yr < 2017 && !yearHasPct(yr));
+    // pct が取得できなかった年は年代を問わず FanGraphs で補完する
+    // （2017+ で Savant の % 列が欠落した場合も FanGraphs が pct を提供する）
+    const preShowYears = years.filter(yr => !yearHasPct(yr));
     // デビュー年・キャリア長（Step 2c/2d 共通で使用）
     const debutYearNum  = Math.min(...years.map(Number));
     const lastYearNum   = Math.max(...years.map(Number));
@@ -1714,8 +1739,9 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         // ── FanGraphs 実測値にも球速ブースト適用（速球+3/変化球+1 ± 成績補正）──
         // FanGraphs BIS の実測値は実際の球速より低めに記録されているため、
         // aging curve と同じ補正を直接FanGraphsデータにも適用する。
+        // ※ Statcast 導入（2015+）以降の年は Savant の実測値を使うためブーストしない
         // （Randy Johnson 2002 で急激にスピードが落ちないようにする）
-        for (const yr of fgTargetYears.filter(y => yearHasPct(y))) {
+        for (const yr of fgTargetYears.filter(y => yearHasPct(y) && +y < 2015)) {
           for (const key of PITCH_KEYS) {
             const d = rawPitch[yr]?.[key];
             if (!d || d.velo === '--') continue;
