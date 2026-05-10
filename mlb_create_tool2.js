@@ -1579,21 +1579,41 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
     try {
       onProgress('Baseball Savant を読み込み中...');
       const savantUrl = `https://baseballsavant.mlb.com/savant-player/${slug}-${id}?stats=statcast-r-pitching-mlb`;
-      // networkidle2: XHR 完了を待つ（load だとXHR取得前に評価が走り被打率/SLG欠落の原因になる）
-      await page.goto(savantUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+      // 'load' を使用: networkidle2 は Analytics 等の永続コネクションで60s タイムアウトするため
+      // XHR データの完了は waitForFunction で BA/SLG の出現を監視して保証する
+      await page.goto(savantUrl, { waitUntil: 'load', timeout: 60000 });
 
-      // テーブル描画を待機（最大25秒）
-      // ナックルボーラー対応: 'Knuckleball'/'Knuckler' もキーワードに含める
+      // ── テーブル描画待機（2フェーズ）──────────────────────────────────────
+      // フェーズ①: BA/SLG を含む Run Values テーブルが出るまで待つ（最大45秒）
+      //   → XHR で後から読み込まれるデータ（被打率・SLG）の出現を確認するため
+      //      /.³/（小数点3桁）が現れた時点で XHR 完了と判断する
+      // フェーズ②: タイムアウト時は球種名テーブルのみで続行（velo/pct だけでも取得）
+      const PITCH_KW = ['4-Seam','Fastball','Sinker','Slider','Riding','Knuckleball','Knuckler'];
       try {
         await page.waitForFunction(
-          () => [...document.querySelectorAll('table')].some(t =>
-            /\d{4}/.test(t.innerText || '') &&
-            ['4-Seam','Fastball','Sinker','Slider','Riding','Knuckleball','Knuckler'].some(k => (t.innerText||'').includes(k))
-          ),
-          { timeout: 25000 }
+          (kw) => {
+            for (const t of document.querySelectorAll('table')) {
+              const txt = t.innerText || '';
+              if (/\d{4}/.test(txt) && kw.some(k => txt.includes(k)) && /\.\d{3}/.test(txt))
+                return true;
+            }
+            return false;
+          },
+          { timeout: 45000 },
+          PITCH_KW
         );
-      } catch { /* テーブルが見つからなくても続行 */ }
-      // sleep 不要: waitForFunction がテーブル出現を確認済み
+      } catch {
+        // BA/SLG なしでも球種テーブルがあれば続行（velo/pct のみ取得）
+        try {
+          await page.waitForFunction(
+            (kw) => [...document.querySelectorAll('table')].some(t =>
+              /\d{4}/.test(t.innerText || '') && kw.some(k => (t.innerText||'').includes(k))
+            ),
+            { timeout: 10000 },
+            PITCH_KW
+          );
+        } catch { /* テーブルが見つからなくても続行 */ }
+      }
 
       // キャリアページの多年度 Pitch Tracking テーブルを一括パース
       // ── 設計方針 ────────────────────────────────────────────────────────────
