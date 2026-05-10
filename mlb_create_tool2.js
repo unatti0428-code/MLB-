@@ -1524,6 +1524,37 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       const _pctMax   = _allRawPcts.length > 0 ? Math.max(..._allRawPcts) : 0;
       const pctScale  = (_allRawPcts.length >= 2 && _pctMax < 1.0) ? 100 : 1;
 
+      // ── 重複排除 ────────────────────────────────────────────────────────────
+      // Baseball Savant は複数テーブルで同じデータを "Split Finger"/"Split-Finger"、
+      // "Four Seamer"/"4-Seam Fastball" のように表記違いで保持する。
+      // 同一キーに同じ pct 値（小数第1位まで一致）のエントリが複数ある場合は重複とみなし、
+      // データが最も充実しているエントリ1つに統合する（pct 二重加算を防ぐ）。
+      for (const [key, list] of Object.entries(byKey)) {
+        if (list.length <= 1) continue;
+        const deduped = [];
+        const seenPct = new Map(); // pctKey → deduped 配列のインデックス
+        for (const v of list) {
+          const p = parseFloat(String(v.pct || '')) * pctScale;
+          if (!isNaN(p) && p > 1.0) {
+            const pKey = p.toFixed(1);
+            if (seenPct.has(pKey)) {
+              // 既存エントリに不足データをマージ（velo/ba/slg/pa を補完）
+              const ex = deduped[seenPct.get(pKey)];
+              if (ex.velo === '--' && v.velo !== '--') ex.velo = v.velo;
+              if (ex.ba   === '--' && v.ba   !== '--') ex.ba   = v.ba;
+              if (ex.slg  === '--' && v.slg  !== '--') ex.slg  = v.slg;
+              if (ex.pa   === '--' && v.pa   !== '--') ex.pa   = v.pa;
+            } else {
+              seenPct.set(pKey, deduped.length);
+              deduped.push({ ...v });
+            }
+          } else {
+            deduped.push(v); // pct なし / 1%以下はそのまま保持
+          }
+        }
+        byKey[key] = deduped;
+      }
+
       // 2. キー別に pct 合算 / velo は pct 加重平均 / ba・slg は PA（打席）加重平均
       for (const [key, list] of Object.entries(byKey)) {
         let pctTotal = 0;
