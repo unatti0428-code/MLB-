@@ -850,6 +850,17 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
           if (est !== '') kyui = est;
         }
       }
+      // ── ナックルボール球威 +5 補正 ───────────────────────────────────────────
+      // ナックルボールは速度と球質が無相関（遅くても打ちにくい）ため、算出値に+5する。
+      // 判定: fs バケット(idx=6) かつ
+      //   ① pitchNameOverrides に 'ナックル' 登録あり、または
+      //   ② 球速 ≤ 83mph（ナックル域; スプリット/フォークは通常 84mph以上）
+      if (kyui !== '' && pg.idx === 6) {
+        const ovName = pitchNameOverrides[pg.idx] ?? '';
+        const isKnuckleball = ovName === 'ナックル' ||
+                              (!isNaN(veloNum) && veloNum > 0 && veloNum <= 83);
+        if (isKnuckleball) kyui = Math.max(30, Math.min(110, Number(kyui) + 5));
+      }
       if (kyui !== '') redPurpleCell(ws.getCell(rn, base + 1), kyui, fontSize);
 
       redPurpleCell(ws.getCell(rn, base + 2), pctNum, fontSize);
