@@ -1486,10 +1486,15 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
     };
 
     // ── ヘルパー ─────────────────────────────────────────────────────────────
-    const yearHasPct = (yr) => PITCH_KEYS.some(k => {
-      const p = rawPitch[yr]?.[k]?.pct;
-      return p && p !== '--' && !isNaN(parseFloat(String(p)));
-    });
+    // yearHasPct: 合計投球割合が85%以上あれば「Savant pct 取得済み」とみなす
+    // （少数球種しか取れていない年は FanGraphs で補完させる）
+    const yearHasPct = (yr) => {
+      const total = PITCH_KEYS.reduce((s, k) => {
+        const p = parseFloat(String(rawPitch[yr]?.[k]?.pct ?? ''));
+        return s + (isNaN(p) ? 0 : p);
+      }, 0);
+      return total >= 85;
+    };
 
     // rawPitch[yr] に Baseball Savant パース結果をマージ。
     // ── 設計方針 ────────────────────────────────────────────────────────────────
@@ -1510,7 +1515,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         byKey[key].push(vals);
       }
 
-      // 2. キー別に pct 合算 / velo・ba・slg は pct 加重平均
+      // 2. キー別に pct 合算 / velo は pct 加重平均 / ba・slg は PA（打席）加重平均
       for (const [key, list] of Object.entries(byKey)) {
         let pctTotal = 0;
         let veloN = 0, veloD = 0;
@@ -1518,36 +1523,40 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         let slgN  = 0, slgD  = 0;
 
         for (const v of list) {
-          const p = parseFloat(String(v.pct || ''));
-          if (isNaN(p) || p <= 0) continue;
-          pctTotal += p;
+          const p  = parseFloat(String(v.pct || ''));
+          const pa = parseFloat(String(v.pa  || ''));
+          // pct が有効なエントリのみ pctTotal に加算
+          if (!isNaN(p) && p > 0) pctTotal += p;
 
+          // 球速: pct 加重平均（Sweeper の様に pct='--' でも velo がある場合は別途 fallback）
           const vl = parseFloat(String(v.velo || ''));
-          if (!isNaN(vl) && vl > 0) { veloN += p * vl; veloD += p; }
+          if (!isNaN(p) && p > 0 && !isNaN(vl) && vl > 0) { veloN += p * vl; veloD += p; }
 
-          const ba = parseFloat(String(v.ba || ''));
-          if (!isNaN(ba)) { baN += p * ba; baD += p; }
-
+          // BA/SLG: PA 加重平均（PA が取れない場合は pct を代用）
+          const w = (!isNaN(pa) && pa > 0) ? pa : (!isNaN(p) && p > 0 ? p : 0);
+          const ba  = parseFloat(String(v.ba  || ''));
           const slg = parseFloat(String(v.slg || ''));
-          if (!isNaN(slg)) { slgN += p * slg; slgD += p; }
+          if (w > 0 && !isNaN(ba))  { baN  += w * ba;  baD  += w; }
+          if (w > 0 && !isNaN(slg)) { slgN += w * slg; slgD += w; }
+        }
+
+        // velo fallback: pct='--' のサブタイプ（Sweeper 等）の velo を単純平均で補完
+        // pct 加重平均で velo が取れなかった場合のみ使用
+        if (veloD <= 0) {
+          let fbVN = 0, fbVC = 0;
+          for (const v of list) {
+            const vl = parseFloat(String(v.velo || ''));
+            if (!isNaN(vl) && vl > 0) { fbVN += vl; fbVC++; }
+          }
+          if (fbVC > 0) { veloN = fbVN / fbVC; veloD = 1; }  // 平均値を veloN/1 として設定
         }
 
         if (pctTotal <= 0) {
           // pct は取得できなかったが velo/ba/slg がある場合は保存
           // （FanGraphs が後で pct を補完する; applyFgRow が ba/slg を保持する）
-          let fbVelo = '--', fbBa = '--', fbSlg = '--';
-          let vCnt = 0, vSum = 0, bCnt = 0, bSum = 0, sCnt = 0, sSum = 0;
-          for (const v of list) {
-            const vl = parseFloat(String(v.velo || ''));
-            if (!isNaN(vl) && vl > 0) { vSum += vl; vCnt++; }
-            const ba = parseFloat(String(v.ba || ''));
-            if (!isNaN(ba)) { bSum += ba; bCnt++; }
-            const slg = parseFloat(String(v.slg || ''));
-            if (!isNaN(slg)) { sSum += slg; sCnt++; }
-          }
-          if (vCnt > 0) fbVelo = String(+(vSum / vCnt).toFixed(1));
-          if (bCnt > 0) fbBa   = String(+(bSum / bCnt).toFixed(3));
-          if (sCnt > 0) fbSlg  = String(+(sSum / sCnt).toFixed(3));
+          const fbVelo = veloD > 0 ? String(+(veloN / veloD).toFixed(1)) : '--';
+          const fbBa   = baD  > 0 ? String(+(baN  / baD ).toFixed(3)) : '--';
+          const fbSlg  = slgD > 0 ? String(+(slgN / slgD).toFixed(3)) : '--';
           if (fbVelo !== '--' || fbBa !== '--' || fbSlg !== '--') {
             rawPitch[yr][key] = { velo: fbVelo, ba: fbBa, slg: fbSlg, pct: '--' };
           }
@@ -1652,6 +1661,9 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             h === 'ba' || h === 'avg' || h === 'batting avg' || h === 'batting average');
           const slgIdx  = hdr.findIndex(h =>
             h === 'slg' || h === 'slg%' || h === 'slugging' || h.startsWith('slg'));
+          // PA（打席数）: BA/SLG の加重平均で使用
+          const paIdx   = hdr.findIndex(h =>
+            h === 'pa' || h === 'abs' || h === 'ab' || h === 'plate appearances' || h === 'at bats');
 
           // 投球割合: ヘッダーが正確に "%" の列のみ使用
           // ※ Baseball Savant の Pitch Movement テーブル (Table 6) には % 列がなく、
@@ -1669,13 +1681,14 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             const g = (idx) => (idx >= 0 && idx < cells.length)
               ? (cells[idx]?.innerText.trim() || '--') : '--';
 
-            // velo / ba / slg はヘッダーマッチした列から（既存値があれば上書きしない）
+            // velo / ba / slg / pa はヘッダーマッチした列から（既存値があれば上書きしない）
             if (!result[yr]) result[yr] = {};
-            const cur = result[yr][pt] || { velo: '--', ba: '--', slg: '--', pct: '--' };
+            const cur = result[yr][pt] || { velo: '--', ba: '--', slg: '--', pct: '--', pa: '--' };
             result[yr][pt] = {
               velo: (cur.velo && cur.velo !== '--') ? cur.velo : g(veloIdx),
               ba:   (cur.ba   && cur.ba   !== '--') ? cur.ba   : g(baIdx),
               slg:  (cur.slg  && cur.slg  !== '--') ? cur.slg  : g(slgIdx),
+              pa:   (cur.pa   && cur.pa   !== '--') ? cur.pa   : (paIdx >= 0 ? g(paIdx) : '--'),
               // pct: "%" ヘッダーがある列から直接読む（Run Values テーブルの "%" 列）
               // 既に他のテーブルで取得済みの場合は上書きしない
               pct:  (cur.pct  && cur.pct  !== '--') ? cur.pct  : (pctIdx >= 0 ? g(pctIdx) : '--'),
