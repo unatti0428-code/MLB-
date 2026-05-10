@@ -1515,6 +1515,15 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         byKey[key].push(vals);
       }
 
+      // pct フォーマット検出（安全策）: evaluate() 側で変換されるべきだが
+      // 万一 0-1 の小数形式で来た場合は ×100 してパーセントに揃える
+      // ※ 有効な pct の最大値が 1.0 未満かつ 2件以上 → 小数形式と判断
+      const _allRawPcts = Object.values(htmlData)
+        .map(v => parseFloat(String(v.pct || '')))
+        .filter(n => !isNaN(n) && n > 0);
+      const _pctMax   = _allRawPcts.length > 0 ? Math.max(..._allRawPcts) : 0;
+      const pctScale  = (_allRawPcts.length >= 2 && _pctMax < 1.0) ? 100 : 1;
+
       // 2. キー別に pct 合算 / velo は pct 加重平均 / ba・slg は PA（打席）加重平均
       for (const [key, list] of Object.entries(byKey)) {
         let pctTotal = 0;
@@ -1523,8 +1532,9 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         let slgN  = 0, slgD  = 0;
 
         for (const v of list) {
-          const p  = parseFloat(String(v.pct || ''));
-          const pa = parseFloat(String(v.pa  || ''));
+          const pRaw = parseFloat(String(v.pct || ''));
+          const p    = !isNaN(pRaw) && pRaw > 0 ? pRaw * pctScale : NaN;  // 小数→% 変換適用
+          const pa   = parseFloat(String(v.pa  || ''));
           // pct が有効なエントリのみ pctTotal に加算
           if (!isNaN(p) && p > 0) pctTotal += p;
 
@@ -1685,11 +1695,26 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
           const paIdx   = hdr.findIndex(h =>
             h === 'pa' || h === 'abs' || h === 'ab' || h === 'plate appearances' || h === 'at bats');
 
-          // 投球割合: ヘッダーが正確に "%" の列のみ使用
-          // ※ Baseball Savant の Pitch Movement テーブル (Table 6) には % 列がなく、
-          //    MPH の左列は "#"（投球数）。veloIdx-1 フォールバックは廃止。
-          // ※ Run Values テーブル (Table 7) に明示的な "%" ヘッダーがある。
-          const pctIdx = hdr.findIndex(h => h === '%');
+          // 投球割合: "%" 列を複数パターンで検索
+          // （Baseball Savant は "%" / "Pitch%" / "Pitches%" 等いくつかの表記を使う）
+          // whiff%・k%・put away% 等の "%" 含む別列と区別するため
+          // 厳格な短パターン優先 → より長いパターンに広げる
+          const pctIdx = (() => {
+            const exact = hdr.findIndex(h => h === '%');
+            if (exact >= 0) return exact;
+            // 短い "%" 系ヘッダーを探す（whiff%, k%, put away% などは除外）
+            return hdr.findIndex(h =>
+              (h === 'pitch%' || h === 'pitches%' || h === 'usage%' ||
+               h === 'pitch %' || h === 'pitches %' || h === '% pitches' ||
+               h === 'pitch pct' || h === 'pct') &&
+              !h.includes('whiff') && !h.includes('k%') && !h.includes('put')
+            );
+          })();
+
+          // 投球数列: "%" が取れない場合に合計から割合を計算するフォールバック用
+          const countIdx = hdr.findIndex(h =>
+            h === '#' || h === 'pitch count' || h === 'total pitches' ||
+            (h === 'pitches' && pctIdx < 0));  // "pitches" は "%" 列があれば重複するため除外
 
           // ── 行データを年別に抽出（複数テーブルのフィールドをマージ）──
           for (const cells of allRows) {
@@ -1701,20 +1726,35 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             const g = (idx) => (idx >= 0 && idx < cells.length)
               ? (cells[idx]?.innerText.trim() || '--') : '--';
 
-            // velo / ba / slg / pa はヘッダーマッチした列から（既存値があれば上書きしない）
+            // velo / ba / slg / pa / count はヘッダーマッチした列から（既存値があれば上書きしない）
             if (!result[yr]) result[yr] = {};
-            const cur = result[yr][pt] || { velo: '--', ba: '--', slg: '--', pct: '--', pa: '--' };
+            const cur = result[yr][pt] || { velo: '--', ba: '--', slg: '--', pct: '--', pa: '--', count: '--' };
             result[yr][pt] = {
-              velo: (cur.velo && cur.velo !== '--') ? cur.velo : g(veloIdx),
-              ba:   (cur.ba   && cur.ba   !== '--') ? cur.ba   : g(baIdx),
-              slg:  (cur.slg  && cur.slg  !== '--') ? cur.slg  : g(slgIdx),
-              pa:   (cur.pa   && cur.pa   !== '--') ? cur.pa   : (paIdx >= 0 ? g(paIdx) : '--'),
-              // pct: "%" ヘッダーがある列から直接読む（Run Values テーブルの "%" 列）
-              // 既に他のテーブルで取得済みの場合は上書きしない
-              pct:  (cur.pct  && cur.pct  !== '--') ? cur.pct  : (pctIdx >= 0 ? g(pctIdx) : '--'),
+              velo:  (cur.velo  && cur.velo  !== '--') ? cur.velo  : g(veloIdx),
+              ba:    (cur.ba    && cur.ba    !== '--') ? cur.ba    : g(baIdx),
+              slg:   (cur.slg   && cur.slg   !== '--') ? cur.slg   : g(slgIdx),
+              pa:    (cur.pa    && cur.pa    !== '--') ? cur.pa    : (paIdx    >= 0 ? g(paIdx)    : '--'),
+              count: (cur.count && cur.count !== '--') ? cur.count : (countIdx >= 0 ? g(countIdx) : '--'),
+              // pct: 上記の複数パターンで検索したインデックスから読む
+              pct:   (cur.pct   && cur.pct   !== '--') ? cur.pct   : (pctIdx   >= 0 ? g(pctIdx)   : '--'),
             };
           }
           // break しない: 複数テーブルから全フィールドを収集する（Pitch Movement で velo、Run Values で ba/slg/pct）
+        }
+
+        // ── 後処理: pct が取れなかった球種は投球数（count）から割合を計算 ──
+        // Run Values テーブルに "%" 列が見つからない場合のフォールバック
+        for (const pitches of Object.values(result)) {
+          const totalCount = Object.values(pitches).reduce((s, v) => {
+            const n = parseFloat(v.count || '');
+            return s + (isNaN(n) ? 0 : n);
+          }, 0);
+          if (totalCount <= 0) continue;
+          for (const v of Object.values(pitches)) {
+            if (v.pct && v.pct !== '--') continue;  // pct 取得済みはスキップ
+            const n = parseFloat(v.count || '');
+            if (!isNaN(n) && n > 0) v.pct = String(+(n / totalCount * 100).toFixed(1));
+          }
         }
 
         return result;
