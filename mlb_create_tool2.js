@@ -1432,9 +1432,11 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       window.chrome = { runtime: {} };
     });
 
-    // 画像・フォント・メディア・スタイルシートをブロックして読み込みを高速化
+    // 画像・フォント・メディアをブロックして読み込みを高速化
+    // ※ stylesheet はブロックしない: Baseball Savant はCSS依存でデータテーブルをレンダリングするため
+    //   ブロックするとXHR取得後のテーブル描画が失敗し被打率/SLGが欠落する
     await page.setRequestInterception(true);
-    const BLOCK_TYPES = new Set(['image', 'media', 'font', 'stylesheet']);
+    const BLOCK_TYPES = new Set(['image', 'media', 'font']);
     page.on('request', req => {
       if (BLOCK_TYPES.has(req.resourceType())) req.abort();
       else req.continue();
@@ -1509,8 +1511,8 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
     try {
       onProgress('Baseball Savant を読み込み中...');
       const savantUrl = `https://baseballsavant.mlb.com/savant-player/${slug}-${id}?stats=statcast-r-pitching-mlb`;
-      // load イベント（DOMContentLoaded より少し後）で進む。networkidle2 は遅すぎるため使わない。
-      await page.goto(savantUrl, { waitUntil: 'load', timeout: 45000 });
+      // networkidle2: XHR 完了を待つ（load だとXHR取得前に評価が走り被打率/SLG欠落の原因になる）
+      await page.goto(savantUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
       // テーブル描画を待機（最大25秒）
       // ナックルボーラー対応: 'Knuckleball'/'Knuckler' もキーワードに含める
