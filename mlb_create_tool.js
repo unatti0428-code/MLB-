@@ -1201,8 +1201,10 @@ function calcHRTier(hr, ab) {
   return 0;
 }
 function calcMeet(avg, tier) {
-  const thresholds = [[329,142],[339,152],[349,162],[359,172],[369,182],[379,192]];
-  const [hi, lo] = thresholds[tier] || thresholds[0];
+  // HR能(tier)が上がるほど閾値を+10ずつ引き上げ、高HR選手のミートが過大評価されないよう補正
+  // tier: 0=[329,142], 1=[339,152], 2=[349,162], 3=[359,172], 4=[369,182], 5=[379,192], 6=[389,202]
+  const thresholds = [[329,142],[339,152],[349,162],[359,172],[369,182],[379,192],[389,202]];
+  const [hi, lo] = thresholds[tier] ?? thresholds[0];
   return avg >= hi ? Math.round(85 + (avg - hi) / 4.17) : Math.round(40 + (avg - lo) / 4.2);
 }
 function calcPower(hr, ab) {
