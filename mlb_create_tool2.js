@@ -1488,18 +1488,54 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       return p && p !== '--' && !isNaN(parseFloat(String(p)));
     });
 
-    // rawPitch[yr] に HTML パース結果をマージ（上書きしない）
+    // rawPitch[yr] に Baseball Savant パース結果をマージ。
+    // ── 設計方針 ────────────────────────────────────────────────────────────────
+    // Sweeper + Slider → 'sl'、Knuckle Curve + Curveball → 'cu' のように
+    // 同一キーにマッピングされる複数サブタイプを正しく合算する。
+    // ・pct : 合算（15% + 22% = 37%）
+    // ・velo / ba / slg : pct 加重平均
+    // ※ 旧実装は「先着優先」だったため Sweeper/Knuckle Curve の pct が無視されて
+    //   他球種が正規化で水増しされていた（ダルビッシュ FF 過多バグ）。
     const mergeHtmlData = (htmlData, yr) => {
+      // 1. キー別にサブタイプをグループ化
+      const byKey = {};
       for (const [ptName, vals] of Object.entries(htmlData)) {
         const key = PITCH_MAP_P[ptName];
         if (!key) continue;
-        trackSubtype(key, ptName, vals.pct); // サブタイプ追跡
-        const cur = rawPitch[yr][key];
+        trackSubtype(key, ptName, vals.pct);
+        if (!byKey[key]) byKey[key] = [];
+        byKey[key].push(vals);
+      }
+
+      // 2. キー別に pct 合算 / velo・ba・slg は pct 加重平均
+      for (const [key, list] of Object.entries(byKey)) {
+        let pctTotal = 0;
+        let veloN = 0, veloD = 0;
+        let baN   = 0, baD   = 0;
+        let slgN  = 0, slgD  = 0;
+
+        for (const v of list) {
+          const p = parseFloat(String(v.pct || ''));
+          if (isNaN(p) || p <= 0) continue;
+          pctTotal += p;
+
+          const vl = parseFloat(String(v.velo || ''));
+          if (!isNaN(vl) && vl > 0) { veloN += p * vl; veloD += p; }
+
+          const ba = parseFloat(String(v.ba || ''));
+          if (!isNaN(ba)) { baN += p * ba; baD += p; }
+
+          const slg = parseFloat(String(v.slg || ''));
+          if (!isNaN(slg)) { slgN += p * slg; slgD += p; }
+        }
+
+        if (pctTotal <= 0) continue;
+
         rawPitch[yr][key] = {
-          velo: (cur.velo && cur.velo !== '--') ? cur.velo : (vals.velo || '--'),
-          ba:   (cur.ba   && cur.ba   !== '--') ? cur.ba   : (vals.ba   || '--'),
-          slg:  (cur.slg  && cur.slg  !== '--') ? cur.slg  : (vals.slg  || '--'),
-          pct:  (cur.pct  && cur.pct  !== '--') ? cur.pct  : (vals.pct  || '--'),
+          velo: veloD > 0 ? String(+(veloN / veloD).toFixed(1)) : '--',
+          ba:   baD   > 0 ? String(+(baN   / baD  ).toFixed(3)) : '--',
+          slg:  slgD  > 0 ? String(+(slgN  / slgD ).toFixed(3)) : '--',
+          pct:  String(Math.round(pctTotal)),
         };
       }
     };
