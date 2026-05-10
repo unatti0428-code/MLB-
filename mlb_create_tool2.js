@@ -1124,6 +1124,16 @@ function calcPerfBoost(era, baa1000, hr9) {
  */
 function calcKyuiPreStatcast(speed, idx, pctNum, era = NaN, baa1000 = NaN, hr9 = NaN) {
   if (!speed || isNaN(speed)) return '';
+
+  // ── ナックルボール特別処理 ──────────────────────────────────────────────────
+  // ナックルボール(idx=6 かつ speed≤83mph) は球速と球質が無相関。
+  // 速度依存の BA/SLG 推計を使わず、ERA/BAA/HR9 の成績ベースで球威を決定する。
+  // ベース70 = 平均的ナックルボーラー、最良で+10→80、最悪で-10→60
+  if (idx === 6 && speed > 0 && speed <= 83) {
+    const boost = calcPerfBoost(era, baa1000, hr9);
+    return Math.max(40, Math.min(110, 70 + boost));
+  }
+
   const bl = PRE08_PITCH_BASELINES[idx] || PRE08_PITCH_BASELINES[0];
   const spd = speed - bl[0];
   // 球速偏差から BA/SLG を推計（速いほど低 BA/SLG → 高球威）
@@ -1151,16 +1161,17 @@ function estimateShowUsagePct(n) {
 }
 
 // ── FanGraphs pitch data (2002+、API key不要) ────────────────────────────────
-// BIS era (pre-2008): FB%1/FBv, SL%/SLv, CH%/CHv, CB%/CBv, CT%/CTv, SF%/SFv
-// PITCHf/x era (2008+): pfxFA%/pfxvFA, pfxSL%/pfxvSL, ...
+// BIS era (pre-2008): FB%1/FBv, SL%/SLv, CH%/CHv, CB%/CBv, CT%/CTv, SF%/SFv, KN%/KNv
+// PITCHf/x era (2008+): pfxFA%/pfxvFA, pfxSL%/pfxvSL, ..., pfxKN%/pfxvKN
 // pct は 0〜1 の小数（0.51 = 51%）
 const FG_BIS_PITCH_MAP = [
-  { pct: 'FB%1', velo: 'FBv', idx: 0 },
-  { pct: 'SL%',  velo: 'SLv', idx: 1 },
-  { pct: 'CH%',  velo: 'CHv', idx: 2 },
-  { pct: 'CB%',  velo: 'CBv', idx: 3 },
-  { pct: 'CT%',  velo: 'CTv', idx: 4 },
-  { pct: 'SF%',  velo: 'SFv', idx: 6 },
+  { pct: 'FB%1', velo: 'FBv',  idx: 0 },
+  { pct: 'SL%',  velo: 'SLv',  idx: 1 },
+  { pct: 'CH%',  velo: 'CHv',  idx: 2 },
+  { pct: 'CB%',  velo: 'CBv',  idx: 3 },
+  { pct: 'CT%',  velo: 'CTv',  idx: 4 },
+  { pct: 'SF%',  velo: 'SFv',  idx: 6 },
+  { pct: 'KN%',  velo: 'KNv',  idx: 6 },  // Knuckleball (BIS era)
 ];
 const FG_PFX_PITCH_MAP = [
   { pct: 'pfxFA%', velo: 'pfxvFA', idx: 0 },
@@ -1174,6 +1185,7 @@ const FG_PFX_PITCH_MAP = [
   { pct: 'pfxFT%', velo: 'pfxvFT', idx: 5 },  // 2-seam → SI
   { pct: 'pfxFS%', velo: 'pfxvFS', idx: 6 },
   { pct: 'pfxFO%', velo: 'pfxvFO', idx: 6 },  // Forkball → FS
+  { pct: 'pfxKN%', velo: 'pfxvKN', idx: 6 },  // Knuckleball (PITCHf/x era, 2008+)
 ];
 
 function fgGet(url) {
@@ -1490,11 +1502,12 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       await page.goto(savantUrl, { waitUntil: 'load', timeout: 45000 });
 
       // テーブル描画を待機（最大25秒）
+      // ナックルボーラー対応: 'Knuckleball'/'Knuckler' もキーワードに含める
       try {
         await page.waitForFunction(
           () => [...document.querySelectorAll('table')].some(t =>
             /\d{4}/.test(t.innerText || '') &&
-            ['4-Seam','Fastball','Sinker','Slider','Riding'].some(k => (t.innerText||'').includes(k))
+            ['4-Seam','Fastball','Sinker','Slider','Riding','Knuckleball','Knuckler'].some(k => (t.innerText||'').includes(k))
           ),
           { timeout: 25000 }
         );
@@ -1664,13 +1677,31 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             rawPitch[yr][key].velo = String(newVelo);
             const ki = PITCH_KEYS.indexOf(key);
             const pctNum = parseFloat(String(d.pct).replace('%', ''));
-            const kyui = calcKyuiPreStatcast(newVelo, ki, isNaN(pctNum) ? 20 : pctNum);
+            const byr = basic[yr];
+            const bEraFg  = byr ? parseFloat(String(byr.era)) : NaN;
+            const bBaaFg  = byr ? (byr.avg ? Number(byr.avg) * 1000 : NaN) : NaN;
+            const bIpFg   = byr ? parseFloat(String(byr.ip).replace(/\.(\d)$/, '.$10')) : 0;
+            const bHr9Fg  = (byr && bIpFg > 0) ? (byr.hr * 9 / bIpFg) : NaN;
+            const kyui = calcKyuiPreStatcast(newVelo, ki, isNaN(pctNum) ? 20 : pctNum, bEraFg, bBaaFg, bHr9Fg);
             if (kyui !== '') {
               if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
               showKyuiMap[yr][ki] = kyui;
             }
           }
           onProgress(`[FanGraphs boost] ${yr}: 速球+3/変化球+1 ± 成績補正適用`);
+        }
+
+        // ── サブタイプ追跡: FanGraphs KN% で 'fs' が埋まった年を Knuckleball として登録 ──
+        // FanGraphs は球種名を返さないため速度でナックル(≤83mph)かスプリット系かを判定する。
+        // これにより pitchNameOverrides[6] = 'ナックル' となり、表示列名が正しく設定される。
+        for (const yr of fgTargetYears.filter(y => yearHasPct(y))) {
+          const fsD = rawPitch[yr]?.['fs'];
+          if (!fsD || fsD.pct === '--' || fsD.velo === '--') continue;
+          const veloNum = parseFloat(fsD.velo);
+          // ナックル判定: ブースト後でも ≤83mph → Knuckleball、それ以上 → Splitter 系
+          if (!isNaN(veloNum) && veloNum > 0 && veloNum <= 83) {
+            trackSubtype('fs', 'Knuckleball', parseFloat(fsD.pct) || 10);
+          }
         }
       }
 
@@ -1815,10 +1846,19 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             const boost = claudeBased ? 0 : calcVeloBoostForYear(key, basic[yr]);
             const estVelo = Math.round(curve.fromPeak(yr, peakVelo) + boost);
             rawPitch[yr][key] = { velo: String(estVelo), ba: '--', slg: '--', pct: String(Math.round(avgPct)) };
+            // ナックルボール推定年のサブタイプ追跡（fs + 速度≤83 → 'Knuckleball'として表示）
+            if (key === 'fs' && estVelo > 0 && estVelo <= 83) {
+              trackSubtype('fs', 'Knuckleball', Math.round(avgPct));
+            }
           }
-          // 割合を100に正規化してから球威を計算
+          // 割合を100に正規化してから球威を計算（成績データも渡す）
           const rawPcts = PITCH_KEYS.map(k => rawPitch[yr][k]?.pct ?? '--');
           const normalized = normalizePctToSum100(rawPcts);
+          const byr = basic[yr];
+          const bEra  = byr ? parseFloat(String(byr.era))  : NaN;
+          const bBaa  = byr ? (byr.avg ? Number(byr.avg) * 1000 : NaN) : NaN;
+          const bIp   = byr ? parseFloat(String(byr.ip).replace(/\.(\d)$/, '.$10'))  : 0;
+          const bHr9  = (byr && bIp > 0) ? (byr.hr * 9 / bIp) : NaN;
           PITCH_KEYS.forEach((key, ki) => {
             if (!profileByKey[key]) return;
             const normPct = normalized[ki];
@@ -1828,7 +1868,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             }
             rawPitch[yr][key].pct = normPct;
             const veloNum = parseFloat(rawPitch[yr][key].velo);
-            const kyui = calcKyuiPreStatcast(veloNum, ki, Number(normPct));
+            const kyui = calcKyuiPreStatcast(veloNum, ki, Number(normPct), bEra, bBaa, bHr9);
             if (kyui !== '') {
               if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
               showKyuiMap[yr][ki] = kyui;
@@ -1842,15 +1882,20 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         // ─ showVeloOverrideYears: velocity のみ aging curve で上書き（pct/球種は The Show 値を保持）─
         if (showVeloOverrideYears.length > 0) {
           for (const yr of showVeloOverrideYears) {
+            const syrB   = basic[yr];
+            const sEra   = syrB ? parseFloat(String(syrB.era))  : NaN;
+            const sBaa   = syrB ? (syrB.avg ? Number(syrB.avg) * 1000 : NaN) : NaN;
+            const sIp    = syrB ? parseFloat(String(syrB.ip).replace(/\.(\d)$/, '.$10')) : 0;
+            const sHr9   = (syrB && sIp > 0) ? (syrB.hr * 9 / sIp) : NaN;
             for (const [key, { peakVelo, claudeBased }] of Object.entries(profileByKey)) {
               if (!rawPitch[yr]?.[key]) continue; // velo='--' でも aging curve で上書きする
               const boost = claudeBased ? 0 : calcVeloBoostForYear(key, basic[yr]);
               const estVelo = Math.round(curve.fromPeak(yr, peakVelo) + boost);
               rawPitch[yr][key].velo = String(estVelo);
-              // 球威も aging curve 球速で再計算
+              // 球威も aging curve 球速で再計算（成績データ付き）
               const ki = PITCH_KEYS.indexOf(key);
               const pctNum = parseFloat(String(rawPitch[yr][key].pct).replace('%', ''));
-              const kyui = calcKyuiPreStatcast(estVelo, ki, isNaN(pctNum) ? 20 : pctNum);
+              const kyui = calcKyuiPreStatcast(estVelo, ki, isNaN(pctNum) ? 20 : pctNum, sEra, sBaa, sHr9);
               if (kyui !== '') {
                 if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
                 showKyuiMap[yr][ki] = kyui;
