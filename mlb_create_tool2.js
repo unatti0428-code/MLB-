@@ -98,7 +98,8 @@ async function callClaudeForPitchData(apiKey, playerName, years) {
 ・球種名は必ず次のいずれか: 4-Seam Fastball, Two-Seam Fastball, Sinker, Slider, Sweeper, Changeup, Circle Change, Curveball, 12-6 Curve, Cutter, Splitter, Forkball, Split Finger
 ・speed は実際の球速(mph)を整数で記載
 ・pct は投球割合(合計100になるよう整数で調整)
-・球種は最大5種類、使用率5%未満は省略`;
+・球種は最大5種類、使用率5%未満は省略
+・Sinker と Two-Seam Fastball の区別: 縦方向に大きく沈む球（日本のシンカー含む）→ Sinker。横変化中心の速球（カット系・右打者への食い込み重視）→ Two-Seam Fastball`;
 
   const messages = [{ role: 'user', content: prompt }];
 
@@ -181,6 +182,7 @@ async function callClaudeForPeakProfile(apiKey, playerName, debutYear) {
 ・avgPct: キャリア代表的な投球割合(%, 合計100の整数)
 ・球種名は必ず次のいずれか: 4-Seam Fastball, Two-Seam Fastball, Sinker, Slider, Sweeper, Changeup, Circle Change, Curveball, 12-6 Curve, Cutter, Splitter, Forkball, Split Finger
 ・最大5球種（使用率5%未満は省略）
+・Sinker と Two-Seam Fastball の区別: 縦方向に大きく沈む球（日本のシンカー含む）→ Sinker。横変化中心の速球 → Two-Seam Fastball
 ・JSONのみ返答（説明文・コードブロック不要）`;
 
   const messages = [{ role: 'user', content: prompt }];
@@ -448,13 +450,18 @@ function redPurpleCell(cell, value, fs) {
 }
 
 // ── 球種グループ (守備.ods 行14〜20 対応) ────────────────────────────────────
+// ★ name はデータセクションの PITCH_NAMES_JA と完全に一致させること。
+//   pitchNameOverrides がない場合（Savant以前の選手等）に this.name がフォールバックとして使われる。
+//   ・idx=5 は 'シンカー' が正: PITCH_NAMES_JA[5]='シンカー' と一致。
+//     現代のツーシーマー（Savant上 'Two Seamer'/'Two-Seam Fastball'）は
+//     trackSubtype → SUBTYPE_DISPLAY_JA → pitchNameOverrides[5]='ツーシーム' で上書きされる。
 const PITCH_GROUPS = [
   { idx: 0, name: 'フォーシーム',   startCol: 23 },
   { idx: 1, name: 'スライダー',     startCol: 27 },
   { idx: 2, name: 'チェンジアップ', startCol: 31 },
   { idx: 3, name: 'カーブ',         startCol: 35 },
   { idx: 4, name: 'カットボール',   startCol: 39 },
-  { idx: 5, name: 'ツーシーム',     startCol: 43 },
+  { idx: 5, name: 'シンカー',       startCol: 43 },  // ← 'ツーシーム' から修正（PITCH_NAMES_JA[5] と統一）
   { idx: 6, name: 'スプリット',     startCol: 47 },
 ];
 const PITCH_ABILITY_START_COL = 59;
