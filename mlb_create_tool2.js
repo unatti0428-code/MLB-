@@ -852,13 +852,14 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
       }
       // ── ナックルボール球威 +5 補正 ───────────────────────────────────────────
       // ナックルボールは速度と球質が無相関（遅くても打ちにくい）ため、算出値に+5する。
-      // 判定: fs バケット(idx=6) かつ
-      //   ① pitchNameOverrides に 'ナックル' 登録あり、または
-      //   ② 球速 ≤ 83mph（ナックル域; スプリット/フォークは通常 84mph以上）
+      // 判定: fs バケット(idx=6) かつ pitchNameOverrides に 'ナックル' 登録あり
+      // ★ 旧判定②「球速 ≤ 83mph」は廃止: スプリット/フォークも 83mph 以下になりうるため
+      //   長谷川滋利など 'スプリット' 投手への誤適用が発生した。
+      //   真のナックルボーラー（ディッキー 72-77mph / ウェイクフィールド 65-70mph）は
+      //   pitchNameOverrides で 'ナックル' が正しく設定されるため①のみで十分。
       if (kyui !== '' && pg.idx === 6) {
         const ovName = pitchNameOverrides[pg.idx] ?? '';
-        const isKnuckleball = ovName === 'ナックル' ||
-                              (!isNaN(veloNum) && veloNum > 0 && veloNum <= 83);
+        const isKnuckleball = ovName === 'ナックル';
         if (isKnuckleball) kyui = Math.max(30, Math.min(110, Number(kyui) + 5));
       }
       if (kyui !== '') redPurpleCell(ws.getCell(rn, base + 1), kyui, fontSize);
@@ -1243,12 +1244,20 @@ async function fetchFanGraphsId(playerName) {
 }
 
 // FanGraphs の1年分データを rawPitch / showKyuiMap に反映
-function applyFgRow(row, yr, rawPitch, showKyuiMap) {
+function applyFgRow(row, yr, rawPitch, showKyuiMap, knuckleFsYears) {
   const usePfx = FG_PFX_PITCH_MAP.some(m => {
     const v = parseFloat(row[m.pct]);
     return !isNaN(v) && v > 0;
   });
   const map = usePfx ? FG_PFX_PITCH_MAP : FG_BIS_PITCH_MAP;
+
+  // ── ナックルボール検出（FanGraphs KN% 列が実際に使われた年のみ） ──────────
+  // 球速ではなく列名で判定する。KN%/pfxKN% が > 0 の場合のみ knuckleFsYears に追加。
+  // ※ SF%（スプリット）が偶然 83mph 以下でも絶対にナックルとは判定しない。
+  if (knuckleFsYears) {
+    const knPct = usePfx ? parseFloat(row['pfxKN%']) : parseFloat(row['KN%']);
+    if (!isNaN(knPct) && knPct > 0) knuckleFsYears.add(yr);
+  }
 
   // idx ごとに集計（pct 加算、velo は加重平均）
   const agg = {};
@@ -1304,7 +1313,7 @@ function applyFgRow(row, yr, rawPitch, showKyuiMap) {
 }
 
 // FanGraphs から複数年分の球種データを一括取得
-async function fetchFanGraphsPitchData(fgId, targetYears, rawPitch, showKyuiMap) {
+async function fetchFanGraphsPitchData(fgId, targetYears, rawPitch, showKyuiMap, knuckleFsYears) {
   // 年別リクエストを並列取得（最大4並列でFanGraphsのレート制限を回避）
   const CONCURRENCY = 4;
   let count = 0;
@@ -1316,7 +1325,7 @@ async function fetchFanGraphsPitchData(fgId, targetYears, rawPitch, showKyuiMap)
     }));
     for (const r of results) {
       if (r.status === 'fulfilled' && r.value.rows.length) {
-        if (applyFgRow(r.value.rows[0], r.value.yr, rawPitch, showKyuiMap)) count++;
+        if (applyFgRow(r.value.rows[0], r.value.yr, rawPitch, showKyuiMap, knuckleFsYears)) count++;
       }
     }
   }
@@ -1821,13 +1830,16 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
     if (preShowYears.length > 0) {
       // ── 2a: FanGraphs (API key不要、2002年以降) ────────────────────────────
       const fgTargetYears = preShowYears.filter(yr => +yr >= 2002);
+      // knuckleFsYears: FanGraphs で KN%（ナックルボール列）が実際に取得された年を記録。
+      // ★ 球速でのナックル判定は廃止。SF%（スプリット）が偶然低速でも誤判定しない。
+      const knuckleFsYears = new Set();
       if (fgTargetYears.length > 0) {
         onProgress(`FanGraphs 選手検索中... (${fgTargetYears.length}年分を取得予定)`);
         try {
           const fgId = await fetchFanGraphsId(englishName || playerName);
           if (fgId) {
             onProgress(`FanGraphs ID: ${fgId} → 球種データ取得中...`);
-            const fgCount = await fetchFanGraphsPitchData(fgId, fgTargetYears, rawPitch, showKyuiMap);
+            const fgCount = await fetchFanGraphsPitchData(fgId, fgTargetYears, rawPitch, showKyuiMap, knuckleFsYears);
             if (fgCount > 0) {
               onProgress(`FanGraphs: ${fgCount}/${fgTargetYears.length}年分 取得完了`);
             } else {
@@ -1871,16 +1883,15 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         }
 
         // ── サブタイプ追跡: FanGraphs KN% で 'fs' が埋まった年を Knuckleball として登録 ──
-        // FanGraphs は球種名を返さないため速度でナックル(≤83mph)かスプリット系かを判定する。
-        // これにより pitchNameOverrides[6] = 'ナックル' となり、表示列名が正しく設定される。
-        for (const yr of fgTargetYears.filter(y => yearHasPct(y))) {
+        // FanGraphs KN% 列が実際に取得された年のみ Knuckleball としてサブタイプ登録する。
+        // ★ 旧ロジック（球速 ≤83mph → Knuckleball 判定）は廃止:
+        //    スプリット/フォークが高齢化等で 83mph 以下になることがあり誤判定を招く。
+        //    真のナックルボーラー（ディッキー 72-77mph / ウェイクフィールド 65-70mph）は
+        //    そもそも KN% 列にデータが入るため、列名での判定が唯一正確。
+        for (const yr of fgTargetYears.filter(y => knuckleFsYears.has(y))) {
           const fsD = rawPitch[yr]?.['fs'];
-          if (!fsD || fsD.pct === '--' || fsD.velo === '--') continue;
-          const veloNum = parseFloat(fsD.velo);
-          // ナックル判定: ブースト後でも ≤83mph → Knuckleball、それ以上 → Splitter 系
-          if (!isNaN(veloNum) && veloNum > 0 && veloNum <= 83) {
-            trackSubtype('fs', 'Knuckleball', parseFloat(fsD.pct) || 10);
-          }
+          if (!fsD || fsD.pct === '--') continue;
+          trackSubtype('fs', 'Knuckleball', parseFloat(fsD.pct) || 10);
         }
       }
 
@@ -2025,10 +2036,8 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             const boost = claudeBased ? 0 : calcVeloBoostForYear(key, basic[yr]);
             const estVelo = Math.round(curve.fromPeak(yr, peakVelo) + boost);
             rawPitch[yr][key] = { velo: String(estVelo), ba: '--', slg: '--', pct: String(Math.round(avgPct)) };
-            // ナックルボール推定年のサブタイプ追跡（fs + 速度≤83 → 'Knuckleball'として表示）
-            if (key === 'fs' && estVelo > 0 && estVelo <= 83) {
-              trackSubtype('fs', 'Knuckleball', Math.round(avgPct));
-            }
+            // ★ 推定球速でのナックルボール判定は廃止（スプリット/フォークが 83mph 以下になりうるため誤判定の原因）。
+            // 推定年のナックルボール表示は FanGraphs KN% 実績・Savant・The Show・Claude 検索で担保する。
           }
           // 割合を100に正規化してから球威を計算（成績データも渡す）
           const rawPcts = PITCH_KEYS.map(k => rawPitch[yr][k]?.pct ?? '--');
