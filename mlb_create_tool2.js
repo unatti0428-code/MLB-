@@ -1284,6 +1284,12 @@ const _TAKATSU_PROFILE = {
   // ODT §1: サイドスロー。日本式「シンカー」はMLB分類でChangeup(ch)。
   // ffは130-138km/h(81-86mph)と遅く、FGブースト後に143-151km/hへ膨張するため要キャップ。
   // si/fc/fsはODT明記で投球なし。ch上限110km/h(100km/h未満の超スローボールも混在)。
+  //
+  // overrideFgPitch: FanGraphs実測年でもODTの球種分類を優先する。
+  // 理由: FanGraphs BIS の「FB→SI再分類ロジック(≦90.5mph かつ >40%)」が高津の
+  //   遅いサイドスローffをsiに誤再分類し、その後 pitchMaxKmh.si=0 で削除 → ff消失する。
+  //   PITCHf/x以前(2004-2005)のBISデータは球種分類精度が低いため、ODT優先が適切。
+  overrideFgPitch: true,
   pitchMaxKmh: {
     ff: 138, // ファストボール(サイドスロー)最大138km/h（ODT: 130-138、"140km/h未満"）
     si: 0,   // MLB式シンカーなし（日本式シンカー=Changeupに分類済み）
@@ -2041,11 +2047,14 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       // FanGraphs(④)で pitch mix が取れなかった年(例: Shields 2001-2006)に
       // ODT分析ドキュメントの年度別球種・球速・割合を設定する。
       // yearHasPct=true(Savant/FanGraphs実測済み)の年はスキップ。
+      // ただし overrideFgPitch=true の場合は FanGraphs実測年も ODT yearPcts で上書きする。
+      // (例: 高津臣吾 — FanGraphs BIS の FB→SI 誤再分類を回避するため)
       {
         const docxP = DOCX_PLAYER_PROFILES[englishName] || DOCX_PLAYER_PROFILES[playerName] || null;
         if (docxP?.yearPcts) {
-          for (const yr of years.filter(y => y !== '通算' && !yearHasPct(y))) {
+          for (const yr of years.filter(y => y !== '通算' && (!yearHasPct(y) || docxP.overrideFgPitch === true))) {
             const yPct = docxP.yearPcts[yr];
+            // overrideFgPitch=true でも yearPcts に定義のない年は FanGraphs実測を保持
             if (!yPct) continue;
             const phase = docxP.phases?.find(p => +yr >= p.from && +yr <= p.to);
             let filledCount = 0;
