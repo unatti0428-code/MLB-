@@ -1233,6 +1233,148 @@ const PITCH_MAP_SHOW = {
   'Splitter': 6, 'Forkball': 6, 'Split-Finger': 6, 'Split Finger': 6, 'Knuckleball': 6,
 };
 
+// ── Wikipedia 球種テキスト解析パターン ──────────────────────────────────────────
+// 英語テキストから球種を識別するためのキーワードマップ。
+// 登場順 → primaryPitch 判定に使用（最初に言及される球種がその投手のメイン球種）。
+const WIKI_PITCH_PATTERNS = [
+  { key: 'ff', words: ['four-seam fastball','four seam fastball','4-seam fastball','4-seamer','four-seamer','straight fastball','rising fastball'] },
+  { key: 'si', words: ['sinker','sinking fastball','two-seam fastball','two seam fastball','2-seam fastball','2-seamer','two-seamer','tailing fastball','sinkball','sinking two-seamer'] },
+  { key: 'sl', words: ['slider','sweeper','hard slider','sharp slider'] },
+  { key: 'ch', words: ['changeup','change-up','change up','circle changeup','circle change','palmball','screwball','fading changeup'] },
+  { key: 'cu', words: ['curveball','curve ball','12-6 curveball','12-6 curve','overhand curve','knuckle curve','biting curveball','power curve','big curve','downer'] },
+  { key: 'fc', words: ['cutter','cut fastball','cutting fastball','cut-fastball'] },
+  { key: 'fs', words: ['splitter','split-finger fastball','split finger fastball','split-fingered fastball','forkball','fork ball','knuckleball','knuckle ball','knuckler'] },
+];
+
+/**
+ * 英語テキストから球種・球速情報を抽出する。
+ * @param {string} text  Wikipedia などから取得した英語テキスト（8000文字以内推奨）
+ * @returns {{ pitchKeys:string[], primaryKey:string|null, pitchCounts:{[key]:number}, veloMentions:number[] } | null}
+ */
+function parsePitchProfile(text) {
+  if (!text || typeof text !== 'string') return null;
+  const lower = text.toLowerCase();
+
+  // 球種の初出位置と出現回数を記録
+  const pitchOrder  = []; // { key, firstPos } 初出位置順
+  const pitchCounts = {}; // key → 出現回数
+
+  for (const { key, words } of WIKI_PITCH_PATTERNS) {
+    let firstPos = Infinity;
+    let count = 0;
+    for (const word of words) {
+      let pos = 0;
+      while ((pos = lower.indexOf(word, pos)) !== -1) {
+        count++;
+        if (pos < firstPos) firstPos = pos;
+        pos += word.length;
+      }
+    }
+    if (count > 0) {
+      pitchCounts[key] = (pitchCounts[key] || 0) + count;
+      if (!pitchOrder.find(p => p.key === key)) pitchOrder.push({ key, firstPos });
+    }
+  }
+
+  pitchOrder.sort((a, b) => a.firstPos - b.firstPos);
+  const pitchKeys  = pitchOrder.map(p => p.key);
+  const primaryKey = pitchKeys[0] ?? null;
+
+  // 球速の抽出: 80-106mph の数値（投手の実用球速範囲）
+  const veloMentions = [];
+  for (const m of text.matchAll(/(\d{2,3})\s*(?:[-–to]+\s*(\d{2,3}))?\s*mph/gi)) {
+    const v1 = parseInt(m[1]), v2 = m[2] ? parseInt(m[2]) : null;
+    if (v1 >= 80 && v1 <= 106) veloMentions.push(v1);
+    if (v2 && v2 >= 80 && v2 <= 106) veloMentions.push(v2);
+  }
+
+  if (pitchKeys.length === 0 && veloMentions.length === 0) return null;
+  return { pitchKeys, primaryKey, pitchCounts, veloMentions };
+}
+
+/**
+ * Wikipedia API を使って投手の球種・球速プロファイルを無料で取得する。
+ * Anthropic API 不要。英語選手名から Wikipedia 記事を検索・解析する。
+ * @param {string} searchName  英語選手名 (例: "Randy Johnson", "Scot Shields")
+ * @returns {{ pitchKeys, primaryKey, pitchCounts, veloMentions, pageTitle } | null}
+ */
+async function fetchWikipediaPitchProfile(searchName) {
+  if (!searchName || !searchName.trim()) return null;
+
+  const wikiGet = url => new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? require('https') : require('http');
+    mod.get(url, {
+      headers: {
+        'User-Agent': 'MLB-PitchTool/1.0 (Node.js; baseball stats research)',
+        'Accept': 'application/json',
+      },
+    }, res => {
+      // Wikipedia は 301 リダイレクトする場合がある
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        const loc = res.headers.location;
+        if (loc) return wikiGet(loc).then(resolve).catch(reject);
+        return reject(new Error('redirect without location'));
+      }
+      let buf = '';
+      res.on('data', c => buf += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(buf)); } catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+
+  try {
+    // ── Step 1: opensearch で記事タイトル候補を検索 ──
+    const q1 = encodeURIComponent(searchName + ' baseball pitcher');
+    const searchRes = await wikiGet(
+      `https://en.wikipedia.org/w/api.php?action=opensearch&search=${q1}&limit=5&namespace=0&format=json&origin=*`
+    ).catch(() => null);
+
+    let titles = searchRes?.[1] ?? [];
+    let descs  = searchRes?.[2] ?? [];
+
+    // ヒットなし → " baseball pitcher" なしで再検索
+    if (!titles.length) {
+      const q2 = encodeURIComponent(searchName);
+      const fb = await wikiGet(
+        `https://en.wikipedia.org/w/api.php?action=opensearch&search=${q2}&limit=5&namespace=0&format=json&origin=*`
+      ).catch(() => null);
+      titles = fb?.[1] ?? [];
+      descs  = fb?.[2] ?? [];
+    }
+    if (!titles.length) return null;
+
+    // baseball / pitcher に関連するタイトルを優先
+    let bestTitle = titles[0];
+    for (let i = 0; i < titles.length; i++) {
+      const d = (descs[i] || '').toLowerCase();
+      if (d.includes('pitcher') || d.includes('baseball') || d.includes('mlb')) {
+        bestTitle = titles[i]; break;
+      }
+    }
+
+    // ── Step 2: 記事テキストを取得（最大 8000 文字に制限）──
+    const qt = encodeURIComponent(bestTitle);
+    const extractRes = await wikiGet(
+      `https://en.wikipedia.org/w/api.php?action=query&titles=${qt}&prop=extracts&explaintext=true&format=json&origin=*`
+    ).catch(() => null);
+
+    const pages = extractRes?.query?.pages;
+    if (!pages) return null;
+    const page = Object.values(pages)[0];
+    if (!page || page.missing !== undefined) return null;
+
+    const fullText = (page.extract || '').slice(0, 8000);
+    if (!fullText) return null;
+
+    const profile = parsePitchProfile(fullText);
+    if (!profile) return null;
+    return { ...profile, pageTitle: page.title };
+  } catch {
+    return null;
+  }
+}
+
 // 球威計算 (MLB The Show ゲームデータ基準)
 // speed: 実際mph(100mph=100%), control/movement: 0〜99スケール
 // 平均>=90%: 90+(avg-90)*2 → 90%=球威90, 95%=球威100, 100%=球威110
@@ -2211,11 +2353,83 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
           onProgress(`[FanGraphs boost] ${yr}: 速球+3/変化球+1 ± 成績補正適用`);
         }
 
+        // ── 2a.2: Wikipedia 球種プロファイル取得（無料・APIキー不要）──────────────
+        // Wikipedia 公開 API から投手の球種・球速情報を取得して FanGraphs データを検証する。
+        // Anthropic API 不要のため常に実行する。結果は 2a.3 の Claude 補正がない場合の
+        // フォールバックとして、または 2a.3 の補強として活用する。
+        let wikiProfile = null;
+        {
+          // 日本語名は除去して英語名で検索（Wikipedia は英語版を優先）
+          const wikiSearchName = (englishName || playerName).replace(/[　-鿿゠-ヿ぀-ゟ]/g, '').trim();
+          if (wikiSearchName) {
+            onProgress(`Wikipedia 球種プロファイル検索中: "${wikiSearchName}"...`);
+            try {
+              wikiProfile = await fetchWikipediaPitchProfile(wikiSearchName);
+              if (wikiProfile) {
+                const typeStr  = wikiProfile.pitchKeys.length
+                  ? wikiProfile.pitchKeys.map(k => {
+                      const idx = PITCH_KEYS.indexOf(k);
+                      return idx >= 0 ? PITCH_NAMES_JA[idx] : k;
+                    }).join(' / ')
+                  : '（球種情報なし）';
+                const veloStr = wikiProfile.veloMentions.length
+                  ? ` 球速言及: ${Math.min(...wikiProfile.veloMentions)}-${Math.max(...wikiProfile.veloMentions)}mph`
+                  : '';
+                onProgress(`[2a.2 Wikipedia] "${wikiProfile.pageTitle}": ${typeStr}${veloStr}`);
+
+                // ── FG データとの球種整合性チェック ──
+                // FanGraphs が実際にデータを取得した年の球種セットを確認
+                const fgActiveKeys = PITCH_KEYS.filter(k =>
+                  fgTargetYears.some(yr => {
+                    const d = rawPitch[yr]?.[k];
+                    return d && d.pct !== '--' && parseFloat(String(d.pct)) > 5;
+                  })
+                );
+                // Wikipedia にあって FG にない球種（FG の取りこぼし可能性）
+                for (const key of wikiProfile.pitchKeys) {
+                  if (!fgActiveKeys.includes(key)) {
+                    const jn = PITCH_NAMES_JA[PITCH_KEYS.indexOf(key)] || key;
+                    onProgress(`[2a.2 ⚠] ${jn}(${key}) が Wikipedia で言及されているが FanGraphs データに見当たりません`);
+                  }
+                }
+                // FG にあって Wikipedia で言及のない球種（FF↔SI の混同確認）
+                for (const key of fgActiveKeys) {
+                  if (wikiProfile.pitchKeys.length > 0 && !wikiProfile.pitchKeys.includes(key)) {
+                    // ff と si は混同しやすいため相互は警告しない（FG の FB→SI 再分類で同族扱い）
+                    const sibling = key === 'ff' ? 'si' : key === 'si' ? 'ff' : null;
+                    if (sibling && wikiProfile.pitchKeys.includes(sibling)) continue;
+                    const jn = PITCH_NAMES_JA[PITCH_KEYS.indexOf(key)] || key;
+                    onProgress(`[2a.2 ℹ] FanGraphsの ${jn}(${key}) は Wikipedia で言及なし（分類誤り・少用球種の可能性）`);
+                  }
+                }
+
+                // ── Wikipedia 最高球速 → 主速球の速度キャップに活用 ──
+                // Wikipedia で言及される最大球速は「キャリア最高」に相当することが多い。
+                // FanGraphs+ブースト後に Wikipedia peak を超えている年は過剰ブーストの可能性あり。
+                // Claude 2a.3 が careerPeakSpeeds を返した場合はそちらが優先される。
+                if (wikiProfile.veloMentions.length > 0) {
+                  const wikiPeak = Math.max(...wikiProfile.veloMentions);
+                  const primaryFfKey = wikiProfile.primaryKey === 'si' ? 'si' : 'ff';
+                  // フォールバック用として wikiProfile に格納（2a.3 非実行時に使用）
+                  wikiProfile._capKey  = primaryFfKey;
+                  wikiProfile._capPeak = wikiPeak; // 瞬間最大球速 (mph)
+                  onProgress(`[2a.2 Wikipedia] 最高球速参考値: ${primaryFfKey}=${wikiPeak}mph（2a.3 未実行時のキャップに使用）`);
+                }
+              } else {
+                onProgress('[2a.2 Wikipedia] 球種情報が見つかりませんでした（記事なし、または球種の記述なし）');
+              }
+            } catch (e) {
+              onProgress('⚠ Wikipedia 取得エラー: ' + e.message);
+            }
+          }
+        }
+
         // ── 2a.3: 複数ソース補正 (THT/MLB.com/BR/Wikipedia/BA) ─────────────────
         // FanGraphs BIS の球種分類・球速誤りを一次資料で検証して補正する。
         // ①Baseball Savant(Statcast) 実測年(2015+)はスキップ。
         // ②ODT プロファイルで overrideFgPitch=true の年は ODT が既に正しいためスキップ。
         // ③確実な資料根拠がある場合のみ上書き（推測補正はしない）。
+        // ④ 2a.3 非実行時は wikiProfile._capPeak を主速球の速度キャップとして代用。
         if (apiKey) {
           // 補正対象: FanGraphs が実際に球種データを埋めた年 (yearHasPct=true) かつ pre-2015
           const docxP = DOCX_PLAYER_PROFILES[englishName] || DOCX_PLAYER_PROFILES[playerName] || null;
@@ -2343,6 +2557,40 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             } catch (e) {
               onProgress('⚠ 複数ソース補正 取得失敗: ' + e.message);
             }
+          }
+        }
+
+        // ── 2a.3 非実行時のフォールバック: Wikipedia 最高球速キャップを適用 ──────────
+        // Claude API なし（apiKey 未設定）かつ wikiProfile に球速情報がある場合に限り適用。
+        // 2a.3 が実行された場合は careerPeakSpeeds が同様のキャップを担うためスキップ。
+        if (!apiKey && wikiProfile?._capPeak && wikiProfile?._capKey) {
+          const capKey  = wikiProfile._capKey;
+          const capPeak = wikiProfile._capPeak;        // Wikipedia 最高球速 (mph)
+          const seasonAvgCap = capPeak - 3.7;          // 瞬間最大 → シーズン平均上限
+          const ki = PITCH_KEYS.indexOf(capKey);
+          let wikiCapCount = 0;
+          const fgFilledYearsForWiki = fgTargetYears.filter(yr => yearHasPct(yr) && +yr < 2015);
+          for (const yr of fgFilledYearsForWiki) {
+            const d = rawPitch[yr]?.[capKey];
+            if (!d || d.velo === '--') continue;
+            const v = parseFloat(d.velo);
+            if (isNaN(v) || v <= seasonAvgCap) continue;
+            rawPitch[yr][capKey].velo = String(+seasonAvgCap.toFixed(1));
+            const byr = basic[yr];
+            const bEra = byr ? parseFloat(String(byr.era)) : NaN;
+            const bBaa = byr ? (byr.avg ? Number(byr.avg) * 1000 : NaN) : NaN;
+            const bIp  = byr ? parseFloat(String(byr.ip).replace(/\.(\d)$/, '.$10')) : 0;
+            const bHr9 = (byr && bIp > 0) ? (byr.hr * 9 / bIp) : NaN;
+            const pctNum = parseFloat(String(d.pct).replace('%', ''));
+            const kyui = calcKyuiPreStatcast(seasonAvgCap, ki, isNaN(pctNum) ? 20 : pctNum, bEra, bBaa, bHr9);
+            if (kyui !== '') {
+              if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+              showKyuiMap[yr][ki] = kyui;
+            }
+            wikiCapCount++;
+          }
+          if (wikiCapCount > 0) {
+            onProgress(`[2a.2 Wikipedia キャップ] ${capKey} 最高球速 ${capPeak}mph → シーズン平均上限 ${seasonAvgCap.toFixed(1)}mph 適用 (${wikiCapCount}年)`);
           }
         }
 
