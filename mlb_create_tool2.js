@@ -248,6 +248,118 @@ async function callClaudeForPeakProfile(apiKey, playerName, debutYear) {
   return null;
 }
 
+/**
+ * THT・MLB.com・Baseball Reference・Wikipedia・Baseball America 等の複数ソースで
+ * FanGraphs BIS データの球種・球速・投球割合の誤りを検証・補正する情報を取得する。
+ * 主に BIS 時代 (2002〜2014) に適用し、Statcast 実測がない年の品質を向上させる。
+ *
+ * @param {string}   apiKey      Anthropic API キー
+ * @param {string}   playerName  選手名 (英語)
+ * @param {string[]} targetYears 検証対象年 (e.g. ['2007','2008'])
+ * @param {Object}   fgSummary   現在の FanGraphs 概要 {yr: {key: {speedMph, pct}}}
+ * @returns {{ yearCorrections, careerPeakSpeeds, pitcherCharacteristics, note } | null}
+ *   yearCorrections: [{ years:[], pitches:[{key, avgSpeedMph, pct, note}] }]
+ *     avgSpeedMph = PITCHf/x 実測値または公式記録（BIS バイアスなし・ブースト不要）
+ *   careerPeakSpeeds: { key: peakMph } キャリア最高球速（瞬間最速）→ 全年への速度キャップに使用
+ */
+async function callClaudeForFgCorrection(apiKey, playerName, targetYears, fgSummary) {
+  const yearRange = targetYears.length > 0
+    ? `${Math.min(...targetYears.map(Number))}〜${Math.max(...targetYears.map(Number))}年`
+    : '不明';
+  const fgJson = JSON.stringify(fgSummary, null, 2);
+
+  const prompt =
+`MLB投手「${playerName}」（${yearRange}活躍）の球種データについて、複数の一次資料で検証・補正してください。
+
+【FanGraphs BIS から取得している現在のデータ（キー: ff=4シーム/sl=スライダー/ch=チェンジアップ/cu=カーブ/fc=カッター/si=シンカー/fs=スプリット）】
+${fgJson}
+
+【検索する資料（優先度順）】
+1. The Hardball Times (tht.fangraphs.com) — 2007-2009年の PITCHf/x 分析記事（最優先）
+2. MLB.com 公式選手ページ — 投球レパートリー・球速記録
+3. Baseball Reference (baseball-reference.com) — 公式成績・投球スタイル記述
+4. Wikipedia・Baseball Hall of Fame 公式 (baseballhall.org) — 文献・証言記録
+5. Baseball America スカウトレポート — 球種・球速・特徴
+
+【FanGraphs BIS の典型的な誤り（検証ポイント）】
+・FB% に 4 シーム(ff)と 2 シーム/シンカー(si) が混在 → PITCHf/x や文献で実際の球種を確認
+・BIS 時代（〜2007）の球速は実際より 2〜4mph 低く記録される場合がある
+・投球割合が実際のレパートリーと大きく乖離するケースがある
+
+以下のJSONフォーマットのみで返答してください（説明文・コードブロック・その他テキスト一切不要）:
+{"yearCorrections":[{"years":["2007","2008"],"pitches":[{"key":"ff","avgSpeedMph":93,"pct":55,"note":"THT PITCHf/x 2008"},{"key":"sl","avgSpeedMph":83,"pct":35,"note":"THT"},{"key":"ch","avgSpeedMph":81,"pct":10,"note":"BR"}]}],"careerPeakSpeeds":{"ff":97,"sl":87},"pitcherCharacteristics":"速球/スライダー型右腕、2007年以前は主にシンカー系","note":"THT 2008, Baseball Reference"}
+
+ルール:
+・key は必ず ff/sl/ch/cu/fc/si/fs のいずれか
+・avgSpeedMph は PITCHf/x 実測値またはスカウト記録の平均球速（mph 整数）。FanGraphs BIS より正確な値のみ記載
+・pct は整数（年ごとに合計 100 になるよう調整）
+・careerPeakSpeeds はキャリア通じた瞬間最大球速（レーダーガン計測最大値, mph 整数）
+・yearCorrections は確実な資料根拠がある年・球種のみ記載（推測で補正しない）
+・訂正なし・確認不能な場合は yearCorrections:[]、careerPeakSpeeds:{} を返す`;
+
+  const messages = [{ role: 'user', content: prompt }];
+
+  for (let turn = 0; turn < 10; turn++) {
+    const body = JSON.stringify({
+      model: 'claude-opus-4-5',
+      max_tokens: 1024,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages,
+    });
+    let parsed;
+    try {
+      const { body: raw } = await httpsPost({
+        hostname: 'api.anthropic.com',
+        port: 443,
+        path: '/v1/messages',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'web-search-2025-03-05',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      }, body);
+      parsed = JSON.parse(raw);
+    } catch { break; }
+
+    if (parsed.error) throw new Error(parsed.error.message || 'Claude API error');
+
+    const content    = parsed.content || [];
+    const stopReason = parsed.stop_reason;
+
+    if (stopReason === 'end_turn') {
+      const textBlock = content.find(b => b.type === 'text');
+      if (!textBlock) break;
+      const m = textBlock.text.trim().match(/\{[\s\S]*\}/);
+      if (!m) break;
+      try { return JSON.parse(m[0]); } catch { break; }
+    }
+
+    if (stopReason === 'tool_use') {
+      messages.push({ role: 'assistant', content });
+      const autoResults = content.filter(b => b.type === 'tool_result');
+      if (autoResults.length > 0) {
+        messages.push({ role: 'user', content: '検索完了。JSONのみ返してください。' });
+        continue;
+      }
+      const toolUseBlocks = content.filter(b => b.type === 'tool_use');
+      if (!toolUseBlocks.length) break;
+      messages.push({ role: 'user', content: toolUseBlocks.map(b => ({ type: 'tool_result', tool_use_id: b.id, content: '' })) });
+      continue;
+    }
+
+    const textBlock = content.find(b => b.type === 'text');
+    if (textBlock) {
+      const m = textBlock.text.match(/\{[\s\S]*\}/);
+      if (m) { try { return JSON.parse(m[0]); } catch {} }
+    }
+    break;
+  }
+  return null;
+}
+
 async function searchPlayers(name) {
   const data = await mlbGet(
     `https://statsapi.mlb.com/api/v1/people/search?names=${encodeURIComponent(name)}&sportId=1`
@@ -2097,6 +2209,141 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             }
           }
           onProgress(`[FanGraphs boost] ${yr}: 速球+3/変化球+1 ± 成績補正適用`);
+        }
+
+        // ── 2a.3: 複数ソース補正 (THT/MLB.com/BR/Wikipedia/BA) ─────────────────
+        // FanGraphs BIS の球種分類・球速誤りを一次資料で検証して補正する。
+        // ①Baseball Savant(Statcast) 実測年(2015+)はスキップ。
+        // ②ODT プロファイルで overrideFgPitch=true の年は ODT が既に正しいためスキップ。
+        // ③確実な資料根拠がある場合のみ上書き（推測補正はしない）。
+        if (apiKey) {
+          // 補正対象: FanGraphs が実際に球種データを埋めた年 (yearHasPct=true) かつ pre-2015
+          const docxP = DOCX_PLAYER_PROFILES[englishName] || DOCX_PLAYER_PROFILES[playerName] || null;
+          const fgFilledYears = fgTargetYears.filter(yr =>
+            yearHasPct(yr) && +yr < 2015 &&
+            // overrideFgPitch=true の年は ODT がすでに上書きするためスキップ
+            !(docxP?.overrideFgPitch && docxP.yearPcts?.[yr])
+          );
+          if (fgFilledYears.length > 0) {
+            onProgress(`複数ソース補正: THT/MLB.com/BR/Wikipedia/BA で ${fgFilledYears.length}年分を検証中...`);
+            try {
+              // 現在の FanGraphs データ概要を構築（Claude への参考情報）
+              const fgSummary = {};
+              for (const yr of fgFilledYears) {
+                fgSummary[yr] = {};
+                for (const key of PITCH_KEYS) {
+                  const d = rawPitch[yr]?.[key];
+                  if (!d || d.pct === '--') continue;
+                  const pct = parseFloat(String(d.pct).replace('%', ''));
+                  if (isNaN(pct) || pct <= 0) continue;
+                  const velo = parseFloat(d.velo);
+                  fgSummary[yr][key] = {
+                    speedMph: isNaN(velo) ? null : Math.round(velo),
+                    pct: Math.round(pct),
+                  };
+                }
+              }
+              const fgCorr = await callClaudeForFgCorrection(
+                apiKey, englishName || playerName, fgFilledYears, fgSummary
+              );
+              if (fgCorr) {
+                if (fgCorr.pitcherCharacteristics) {
+                  onProgress(`[2a.3] 投手特徴: ${fgCorr.pitcherCharacteristics}`);
+                }
+                const noteStr = fgCorr.note ? `（${fgCorr.note}）` : '';
+
+                // ── ① yearCorrections: 特定年の球種・球速・割合を上書き ──
+                if (Array.isArray(fgCorr.yearCorrections)) {
+                  for (const corr of fgCorr.yearCorrections) {
+                    const corrYears = (corr.years || []).filter(y => fgFilledYears.includes(y));
+                    if (!corrYears.length || !Array.isArray(corr.pitches)) continue;
+                    for (const yr of corrYears) {
+                      // 補正対象球種キーセットを取得（補正後にpctを正規化するため）
+                      const corrKeys = new Set((corr.pitches || []).map(p => p.key).filter(k => PITCH_KEYS.includes(k)));
+                      const untouchedKeys = PITCH_KEYS.filter(k => !corrKeys.has(k));
+                      // 補正対象外の球種が大きな割合を持っている場合は pct を再調整
+                      for (const p of corr.pitches) {
+                        const key = p.key;
+                        if (!PITCH_KEYS.includes(key)) continue;
+                        const corrSpeedMph = typeof p.avgSpeedMph === 'number' && p.avgSpeedMph > 0
+                          ? p.avgSpeedMph : null;
+                        const corrPct     = typeof p.pct === 'number' && p.pct > 0 ? p.pct : null;
+                        if (!corrSpeedMph && !corrPct) continue;
+                        if (!rawPitch[yr]) rawPitch[yr] = {};
+                        // 既存エントリの ba/slg は保持（Savant 実測値を守るため）
+                        const existing = rawPitch[yr][key] || { velo: '--', ba: '--', slg: '--', pct: '--' };
+                        const newVelo = corrSpeedMph ? String(corrSpeedMph) : existing.velo;
+                        const newPct  = corrPct      ? String(corrPct)      : existing.pct;
+                        rawPitch[yr][key] = { velo: newVelo, ba: existing.ba, slg: existing.slg, pct: newPct };
+                        // showKyuiMap を再計算
+                        const ki = PITCH_KEYS.indexOf(key);
+                        const byr = basic[yr];
+                        const bEraC  = byr ? parseFloat(String(byr.era)) : NaN;
+                        const bBaaC  = byr ? (byr.avg ? Number(byr.avg) * 1000 : NaN) : NaN;
+                        const bIpC   = byr ? parseFloat(String(byr.ip).replace(/\.(\d)$/, '.$10')) : 0;
+                        const bHr9C  = (byr && bIpC > 0) ? (byr.hr * 9 / bIpC) : NaN;
+                        const pctNum = corrPct ?? parseFloat(String(existing.pct).replace('%', ''));
+                        const kyui = calcKyuiPreStatcast(corrSpeedMph || parseFloat(existing.velo), ki, isNaN(pctNum) ? 20 : pctNum, bEraC, bBaaC, bHr9C);
+                        if (kyui !== '') {
+                          if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+                          showKyuiMap[yr][ki] = kyui;
+                        }
+                        const noteKind = p.note ? ` (${p.note})` : '';
+                        onProgress(`[2a.3 補正] ${yr} ${key}: speed=${newVelo}mph pct=${newPct}%${noteKind}`);
+                      }
+                      // 補正で追加された球種がなければ不要な球種を削除しない（既存を保持）
+                    }
+                  }
+                }
+
+                // ── ② careerPeakSpeeds: 全年への最高球速キャップ ──
+                // 瞬間最大球速 → シーズン平均キャップ(-3.7mph) で rawPitch を上限制御
+                if (fgCorr.careerPeakSpeeds && typeof fgCorr.careerPeakSpeeds === 'object') {
+                  let capCount = 0;
+                  for (const [key, peakMph] of Object.entries(fgCorr.careerPeakSpeeds)) {
+                    if (!PITCH_KEYS.includes(key)) continue;
+                    if (typeof peakMph !== 'number' || peakMph <= 0) continue;
+                    // 瞬間最大 → シーズン平均上限（callClaudeForPeakProfile と同じ -3.7mph 変換）
+                    const seasonAvgCap = peakMph - 3.7;
+                    const ki = PITCH_KEYS.indexOf(key);
+                    for (const yr of fgFilledYears) {
+                      const d = rawPitch[yr]?.[key];
+                      if (!d || d.velo === '--') continue;
+                      const v = parseFloat(d.velo);
+                      if (isNaN(v) || v <= seasonAvgCap) continue;
+                      rawPitch[yr][key].velo = String(+seasonAvgCap.toFixed(1));
+                      // showKyuiMap 再計算
+                      const byr = basic[yr];
+                      const bEraC  = byr ? parseFloat(String(byr.era)) : NaN;
+                      const bBaaC  = byr ? (byr.avg ? Number(byr.avg) * 1000 : NaN) : NaN;
+                      const bIpC   = byr ? parseFloat(String(byr.ip).replace(/\.(\d)$/, '.$10')) : 0;
+                      const bHr9C  = (byr && bIpC > 0) ? (byr.hr * 9 / bIpC) : NaN;
+                      const pctNum = parseFloat(String(d.pct).replace('%', ''));
+                      const kyui = calcKyuiPreStatcast(seasonAvgCap, ki, isNaN(pctNum) ? 20 : pctNum, bEraC, bBaaC, bHr9C);
+                      if (kyui !== '') {
+                        if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+                        showKyuiMap[yr][ki] = kyui;
+                      }
+                      capCount++;
+                    }
+                  }
+                  if (capCount > 0) {
+                    const peakSummary = Object.entries(fgCorr.careerPeakSpeeds)
+                      .map(([k, v]) => `${k}:${v}mph`).join(' / ');
+                    onProgress(`[2a.3 球速キャップ] 最高球速(${peakSummary}) からシーズン平均上限を適用 (${capCount}件)${noteStr}`);
+                  }
+                }
+
+                if (!Array.isArray(fgCorr.yearCorrections) || fgCorr.yearCorrections.length === 0) {
+                  onProgress(`[2a.3] 補正不要 — FanGraphsデータは資料と一致${noteStr}`);
+                }
+              } else {
+                onProgress('[2a.3] 複数ソース: データ取得できませんでした');
+              }
+            } catch (e) {
+              onProgress('⚠ 複数ソース補正 取得失敗: ' + e.message);
+            }
+          }
         }
 
         // ── サブタイプ追跡: FanGraphs KN% で 'fs' が埋まった年を Knuckleball として登録 ──
