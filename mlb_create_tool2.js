@@ -1202,6 +1202,18 @@ function calcKyuiPreStatcast(speed, idx, pctNum, era = NaN, baa1000 = NaN, hr9 =
     return Math.max(40, Math.min(110, 70 + boost));
   }
 
+  // ── 超低速チェンジアップ特別処理（高津臣吾型・日本式シンカー/スクリューボール）──
+  // CH(idx=2) で球速 ≤ 70mph(≈112km/h) の場合、通常の速度→BA/SLG推計は機能しない。
+  // PRE08_PITCH_BASELINESのベースラインは81mphのため、63mphでは
+  //   spd=-18 → estBA=380(上限), estSLG=615 → 「極めて打ちやすい球」と誤判定する。
+  // このタイプは「速球との緩急差」が武器であり、球速と被打率は無相関。
+  // ナックルボールと同様に ERA/BAA/HR9 の成績ベースで球威を決定する。
+  // ベース73 = 「緩急差で機能する変化球」水準、最良で+10→83、最悪で-10→63
+  if (idx === 2 && speed > 0 && speed <= 70) {
+    const boost = calcPerfBoost(era, baa1000, hr9);
+    return Math.max(40, Math.min(110, 73 + boost));
+  }
+
   const bl = PRE08_PITCH_BASELINES[idx] || PRE08_PITCH_BASELINES[0];
   const spd = speed - bl[0];
   // 球速偏差から BA/SLG を推計（速いほど低 BA/SLG → 高球威）
