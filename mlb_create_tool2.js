@@ -1236,37 +1236,70 @@ function estimateShowUsagePct(n) {
 // pitchMaxKmh[key] = N  : 最大球速キャップ (FGブーストで超過した場合に上限適用)
 // phases              : 年度区間別の平均球速 (km/h) ※ km/h → mph 変換: (kmh-4)/1.6
 // yearPcts            : FanGraphs未取得年の年度別投球割合 (合計≈100%)
-const DOCX_PLAYER_PROFILES = {
-  'Scot Shields': {
-    // ODT §2: シンカー/2シームが最大の武器。フォーシームは投げない。
-    // PITCHf/x実測(2007-2010)は si≈92mph(148km/h) が正確値。
-    // FanGraphsブースト(+3~+6mph)を適用すると 157-161km/h になるバグを pitchMaxKmh でキャップ。
-    pitchMaxKmh: {
-      ff: 0,   // フォーシームなし（ODT明記）
-      si: 153, // シンカー最大153km/h (≈95mph)
-      ch: 138, // チェンジアップ最大138km/h
-      cu: 140, // カーブ/スラーブ最大140km/h
-      fc: 0,   // カットボールなし
-      sl: 143, // スライダー最大143km/h
-      fs: 0,   // スプリットなし
-    },
-    // 年度区間別の平均球速 (km/h) ― FanGraphs未取得年(2001-2006)に使用
-    phases: [
-      { from: 2001, to: 2006, si: 150, cu: 137, sl: 140, ch: 136 },
-      { from: 2007, to: 2008, si: 148, cu: 135, sl: 140, ch: 136 },
-      { from: 2009, to: 2010, si: 148, cu: 130, sl: 141, ch: 138 },
-    ],
-    // FanGraphs未取得年の年度別投球割合
-    yearPcts: {
-      '2001': { si: 65, cu: 20, sl: 10, ch: 5 },
-      '2002': { si: 63, cu: 21, sl: 11, ch: 5 },
-      '2003': { si: 62, cu: 22, sl: 11, ch: 5 },
-      '2004': { si: 60, cu: 23, sl: 12, ch: 5 },
-      '2005': { si: 58, cu: 25, sl: 12, ch: 5 },
-      '2006': { si: 57, cu: 26, sl: 12, ch: 5 },
-      // 2007-2010: FanGraphs/Savant実測あり → yearPcts に含めない (velocity capのみ適用)
-    },
+// 各プロファイルは複数名義で参照できるよう定数として外出し
+const _SHIELDS_PROFILE = {
+  // ODT §2: シンカー/2シームが最大の武器。フォーシームは投げない。
+  // PITCHf/x実測(2007-2010)は si≈92mph(148km/h) が正確値。
+  // FanGraphsブースト(+3~+6mph)を適用すると 157-161km/h になるバグを pitchMaxKmh でキャップ。
+  pitchMaxKmh: {
+    ff: 0,   // フォーシームなし（ODT明記）
+    si: 153, // シンカー最大153km/h (≈95mph)
+    ch: 138, // チェンジアップ最大138km/h
+    cu: 140, // カーブ/スラーブ最大140km/h
+    fc: 0,   // カットボールなし
+    sl: 143, // スライダー最大143km/h
+    fs: 0,   // スプリットなし
   },
+  // 年度区間別の平均球速 (km/h) ― FanGraphs未取得年(2001-2006)に使用
+  phases: [
+    { from: 2001, to: 2006, si: 150, cu: 137, sl: 140, ch: 136 },
+    { from: 2007, to: 2008, si: 148, cu: 135, sl: 140, ch: 136 },
+    { from: 2009, to: 2010, si: 148, cu: 130, sl: 141, ch: 138 },
+  ],
+  // FanGraphs未取得年の年度別投球割合
+  yearPcts: {
+    '2001': { si: 65, cu: 20, sl: 10, ch: 5 },
+    '2002': { si: 63, cu: 21, sl: 11, ch: 5 },
+    '2003': { si: 62, cu: 22, sl: 11, ch: 5 },
+    '2004': { si: 60, cu: 23, sl: 12, ch: 5 },
+    '2005': { si: 58, cu: 25, sl: 12, ch: 5 },
+    '2006': { si: 57, cu: 26, sl: 12, ch: 5 },
+    // 2007-2010: FanGraphs/Savant実測あり → yearPcts に含めない (velocity capのみ適用)
+  },
+};
+
+const _TAKATSU_PROFILE = {
+  // ODT §1: サイドスロー。日本式「シンカー」はMLB分類でChangeup(ch)。
+  // ffは130-138km/h(81-86mph)と遅く、FGブースト後に143-151km/hへ膨張するため要キャップ。
+  // si/fc/fsはODT明記で投球なし。ch上限110km/h(100km/h未満の超スローボールも混在)。
+  pitchMaxKmh: {
+    ff: 138, // ファストボール(サイドスロー)最大138km/h（ODT: 130-138、"140km/h未満"）
+    si: 0,   // MLB式シンカーなし（日本式シンカー=Changeupに分類済み）
+    ch: 110, // チェンジアップ(=日本式シンカー)最大110km/h
+    cu: 110, // カーブ最大110km/h
+    fc: 0,   // カットボールなし
+    sl: 125, // スライダー最大125km/h
+    fs: 0,   // スプリットなし
+  },
+  // 年度区間別の平均球速 (km/h) ― FanGraphsが球種データを持たない場合に使用
+  phases: [
+    { from: 2004, to: 2004, ff: 134, ch: 105, sl: 120, cu: 105 },
+    { from: 2005, to: 2005, ff: 131, ch: 101, sl: 118, cu: 101 }, // 2005は若干球速低下
+  ],
+  // 年度別投球割合 (FanGraphs BIS に pitch mix データがない年に使用)
+  yearPcts: {
+    '2004': { ff: 35, ch: 35, sl: 25, cu: 5 },
+    '2005': { ff: 35, ch: 32, sl: 25, cu: 5 },
+  },
+};
+
+const DOCX_PLAYER_PROFILES = {
+  // Scot Shields
+  'Scot Shields': _SHIELDS_PROFILE,
+  // 高津臣吾 (名義ゆれ対応: 日本語名・英語表記2種)
+  '高津臣吾':      _TAKATSU_PROFILE,
+  'Shingo Takatsu': _TAKATSU_PROFILE,
+  'Shinji Takatsu': _TAKATSU_PROFILE,  // ODT表記
 };
 
 // ── FanGraphs pitch data (2002+、API key不要) ────────────────────────────────
