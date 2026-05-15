@@ -424,7 +424,8 @@ function calcTaiTouruiFromSBData(sb, pk, ip, cs) {
   else if (sb9 >= 0) aj = Math.round(11 - sb9 * 18);
   else               return '';
   const denom = sb + cs;
-  if (denom <= 0) return '';
+  // SB・CS・PK がすべて0で盗塁関連の計算ができない場合はデフォルト値 5 を返す
+  if (denom <= 0) return 5;
   const ratio = (sb - pk) / denom;
   let ak;
   if (ratio >= 0.85)      ak = -10;
@@ -806,7 +807,17 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
     const sanshin = calcSanshinFromK9(so / ip * 9);
     if (sanshin !== '') purpleCell(ws.getCell(rn, SANSHIN_COL), sanshin, fontSize);
 
-    const omosa = calcOmosaFromHR9(hr / ip * 9);
+    // 被本塁打0の場合はイニング数に応じたデフォルト値を使用
+    // (hr9=0 は通常の計算式で範囲外になるため IP帯別に固定値を返す)
+    let omosa;
+    if (hr === 0 && ip > 0) {
+      if      (ip <= 20) omosa = 85;
+      else if (ip <= 40) omosa = 90;
+      else if (ip <= 60) omosa = 95;
+      else               omosa = 100;
+    } else {
+      omosa = calcOmosaFromHR9(ip > 0 ? hr / ip * 9 : NaN);
+    }
     if (omosa !== '') purpleCell(ws.getCell(rn, OMOSA_COL), omosa, fontSize);
 
     const avgStr = String(avgRaw || '').trim();
