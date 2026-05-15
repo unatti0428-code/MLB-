@@ -2424,6 +2424,55 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
           }
         }
 
+        // ── 2a.2b: Wikipedia primaryKey を使った si→ff 誤分類修正 ──────────────
+        // FanGraphs BIS の問題: 高速投手（Randy Johnson等）でも FB%1 を
+        //   ① 速度の高い部分 → si (BIS二塁手系バケット)
+        //   ② 速度の低い部分 → ff (スライダー等の誤分類含む)
+        // のように2つに分割して記録するケースがある。
+        // Wikipedia が 'ff' をプライマリ球種として示し、かつ 'si' を言及しない場合は
+        // 「si はファストボール(ff)の誤分類」と判断して si → ff に再分類する。
+        if (wikiProfile &&
+            wikiProfile.primaryKey === 'ff' &&
+            wikiProfile.pitchKeys.length > 0 &&
+            !wikiProfile.pitchKeys.includes('si')) {
+          const fgMisclassYears = fgTargetYears.filter(y => yearHasPct(y) && +y < 2015);
+          let reclassCount = 0;
+          for (const yr of fgMisclassYears) {
+            const ffD = rawPitch[yr]?.['ff'];
+            const siD = rawPitch[yr]?.['si'];
+            if (!siD || siD.velo === '--' || siD.pct === '--') continue;
+
+            const siVelo = parseFloat(siD.velo);
+            const siPct  = parseFloat(String(siD.pct).replace('%', ''));
+            if (isNaN(siVelo) || isNaN(siPct) || siVelo <= 0 || siPct <= 0) continue;
+
+            const ffVelo = (ffD && ffD.velo !== '--') ? parseFloat(ffD.velo) : 0;
+            const ffPct  = (ffD && ffD.pct  !== '--') ? parseFloat(String(ffD.pct).replace('%', '')) : 0;
+
+            // si が ff より 3mph 以上速く、かつ si の投球割合が ff より高い場合
+            // → si が実際のファストボール、ff は誤分類 or 別球種の可能性
+            if (siVelo > ffVelo + 3 && siPct > ffPct) {
+              // si のデータを ff に移動（BA/SLG も含む）
+              rawPitch[yr]['ff'] = { ...siD };
+              rawPitch[yr]['si'] = { velo: '--', ba: '--', slg: '--', pct: '--' };
+              // showKyuiMap も更新 (ff idx=0, si idx=5)
+              if (showKyuiMap[yr]) {
+                if (showKyuiMap[yr][5] !== undefined) {
+                  showKyuiMap[yr][0] = showKyuiMap[yr][5];
+                  delete showKyuiMap[yr][5];
+                }
+              }
+              const siKmh = Math.round(siVelo * 1.6 + 4);
+              const ffKmh = ffVelo > 0 ? Math.round(ffVelo * 1.6 + 4) : '--';
+              onProgress(`[2a.2b Wikipedia再分類] ${yr}: si(${siKmh}km/h,${Math.round(siPct)}%) > ff(${ffKmh}km/h,${Math.round(ffPct)}%) → Wikipedia='ff'優先 → si を ff に再分類`);
+              reclassCount++;
+            }
+          }
+          if (reclassCount > 0) {
+            onProgress(`[2a.2b] ${reclassCount}年で si→ff 再分類完了（Wikipedia: ${wikiProfile.pageTitle} で「sinker」の記述なし）`);
+          }
+        }
+
         // ── 2a.3: 複数ソース補正 (THT/MLB.com/BR/Wikipedia/BA) ─────────────────
         // FanGraphs BIS の球種分類・球速誤りを一次資料で検証して補正する。
         // ①Baseball Savant(Statcast) 実測年(2015+)はスキップ。
