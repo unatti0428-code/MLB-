@@ -856,6 +856,21 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
           const est = calcKyuiPreStatcast(veloNum, pg.idx, pctNum, perfEra, perfBaa1000, perfHr9);
           if (est !== '') kyui = est;
         }
+        // ── 球威キャップ（③以降推定年: 投球回数・防御率による上限制約）─────────────────
+        // ①②(Baseball Savant 実測) は BA/SLG あり → if(ah!==''&&ai!=='') ブランチを通るため制約なし。
+        // ③(推定)/④(FanGraphs)/⑤(Claude+AgingCurve) は BA/SLG='--' → このブランチで制約適用。
+        // 通算行はスキップ（yr==='通算' は年度別IPが不明のため）。
+        if (kyui !== '' && Number(kyui) >= 95 && yr !== '通算') {
+          const eraNum = !isNaN(perfEra) ? perfEra : NaN;
+          let shouldCap = false;
+          if      (ip >= 75 && ip <= 100 && !isNaN(eraNum) && eraNum > 1.50) shouldCap = true;
+          else if (ip >= 45 && ip <  75  && !isNaN(eraNum) && eraNum > 1.25) shouldCap = true;
+          else if (ip >  0  && ip <  45  && !isNaN(eraNum) && eraNum > 1.00) shouldCap = true;
+          if (shouldCap) {
+            const A = Number(kyui);
+            kyui = Math.min(110, 95 + Math.round((A - 95) * 0.6));
+          }
+        }
       }
       // ── ナックルボール球威 +5 補正 ───────────────────────────────────────────
       // ナックルボールは速度と球質が無相関（遅くても打ちにくい）ため、算出値に+5する。
