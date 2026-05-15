@@ -860,15 +860,38 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
         // ①②(Baseball Savant 実測) は BA/SLG あり → if(ah!==''&&ai!=='') ブランチを通るため制約なし。
         // ③(推定)/④(FanGraphs)/⑤(Claude+AgingCurve) は BA/SLG='--' → このブランチで制約適用。
         // 通算行はスキップ（yr==='通算' は年度別IPが不明のため）。
-        if (kyui !== '' && Number(kyui) >= 95 && yr !== '通算') {
+        //
+        // IP 75-100:  ERA≧3.00 → ×0.4, 2.99-2.00 → ×0.5, 1.99-1.00 → ×0.6  (閾値90, ベース95)
+        // IP 45-74:   ERA≧2.80 → ×0.4, 2.79-1.80 → ×0.5, 1.79-0.80 → ×0.6  (閾値90, ベース95)
+        // IP 25-44:   ERA≧2.50 → ×0.4, 2.49-1.50 → ×0.5, 1.49-0.50 → ×0.6  (閾値90, ベース95)
+        // IP 0-24:    ERA≧1.50 → ×0.4, 1.49-0.00 → ×0.5                     (閾値90, ベース90)
+        if (kyui !== '' && yr !== '通算') {
           const eraNum = !isNaN(perfEra) ? perfEra : NaN;
-          let shouldCap = false;
-          if      (ip >= 75 && ip <= 100 && !isNaN(eraNum) && eraNum > 1.50) shouldCap = true;
-          else if (ip >= 45 && ip <  75  && !isNaN(eraNum) && eraNum > 1.25) shouldCap = true;
-          else if (ip >  0  && ip <  45  && !isNaN(eraNum) && eraNum > 1.00) shouldCap = true;
-          if (shouldCap) {
+          if (!isNaN(eraNum) && eraNum >= 0) {
             const A = Number(kyui);
-            kyui = Math.min(110, 95 + Math.round((A - 95) * 0.6));
+            let base = 95, threshold = 95, mult = null;
+
+            if (ip >= 75 && ip <= 100) {
+              if      (eraNum >= 3.00)              { threshold = 95; mult = 0.4; }
+              else if (eraNum >= 2.00)              { threshold = 95; mult = 0.5; }
+              else if (eraNum >= 1.00)              { threshold = 95; mult = 0.6; }
+            } else if (ip >= 45 && ip < 75) {
+              if      (eraNum >= 2.80)              { threshold = 95; mult = 0.4; }
+              else if (eraNum >= 1.80)              { threshold = 95; mult = 0.5; }
+              else if (eraNum >= 0.80)              { threshold = 95; mult = 0.6; }
+            } else if (ip >= 25 && ip < 45) {
+              if      (eraNum >= 2.50)              { threshold = 95; mult = 0.4; }
+              else if (eraNum >= 1.50)              { threshold = 95; mult = 0.5; }
+              else if (eraNum >= 0.50)              { threshold = 95; mult = 0.6; }
+            } else if (ip >= 0 && ip < 25) {
+              base = 90;
+              if      (eraNum >= 1.50)              { threshold = 90; mult = 0.4; }
+              else if (eraNum >= 0.00)              { threshold = 90; mult = 0.5; }
+            }
+
+            if (mult !== null && A >= threshold) {
+              kyui = Math.min(110, base + Math.round((A - base) * mult));
+            }
           }
         }
       }
