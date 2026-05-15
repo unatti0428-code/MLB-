@@ -1194,6 +1194,47 @@ function estimateShowUsagePct(n) {
   return tables[Math.min(n, 5)] || tables[5];
 }
 
+// ── ODT分析ドキュメント プロファイル (優先度③) ────────────────────────────────
+// MLB_PitchAnalysis_3Players.odt の年度別解析データをハードコード。
+// 優先度: ① Savant > ② Brooks(廃止) > ③ このプロファイル > ④ FanGraphs > ⑤ Claude
+//
+// pitchMaxKmh[key] = 0  : その球種は投球しない → rawPitch から削除
+// pitchMaxKmh[key] = N  : 最大球速キャップ (FGブーストで超過した場合に上限適用)
+// phases              : 年度区間別の平均球速 (km/h) ※ km/h → mph 変換: (kmh-4)/1.6
+// yearPcts            : FanGraphs未取得年の年度別投球割合 (合計≈100%)
+const DOCX_PLAYER_PROFILES = {
+  'Scot Shields': {
+    // ODT §2: シンカー/2シームが最大の武器。フォーシームは投げない。
+    // PITCHf/x実測(2007-2010)は si≈92mph(148km/h) が正確値。
+    // FanGraphsブースト(+3~+6mph)を適用すると 157-161km/h になるバグを pitchMaxKmh でキャップ。
+    pitchMaxKmh: {
+      ff: 0,   // フォーシームなし（ODT明記）
+      si: 153, // シンカー最大153km/h (≈95mph)
+      ch: 138, // チェンジアップ最大138km/h
+      cu: 140, // カーブ/スラーブ最大140km/h
+      fc: 0,   // カットボールなし
+      sl: 143, // スライダー最大143km/h
+      fs: 0,   // スプリットなし
+    },
+    // 年度区間別の平均球速 (km/h) ― FanGraphs未取得年(2001-2006)に使用
+    phases: [
+      { from: 2001, to: 2006, si: 150, cu: 137, sl: 140, ch: 136 },
+      { from: 2007, to: 2008, si: 148, cu: 135, sl: 140, ch: 136 },
+      { from: 2009, to: 2010, si: 148, cu: 130, sl: 141, ch: 138 },
+    ],
+    // FanGraphs未取得年の年度別投球割合
+    yearPcts: {
+      '2001': { si: 65, cu: 20, sl: 10, ch: 5 },
+      '2002': { si: 63, cu: 21, sl: 11, ch: 5 },
+      '2003': { si: 62, cu: 22, sl: 11, ch: 5 },
+      '2004': { si: 60, cu: 23, sl: 12, ch: 5 },
+      '2005': { si: 58, cu: 25, sl: 12, ch: 5 },
+      '2006': { si: 57, cu: 26, sl: 12, ch: 5 },
+      // 2007-2010: FanGraphs/Savant実測あり → yearPcts に含めない (velocity capのみ適用)
+    },
+  },
+};
+
 // ── FanGraphs pitch data (2002+、API key不要) ────────────────────────────────
 // BIS era (pre-2008): FB%1/FBv, SL%/SLv, CH%/CHv, CB%/CBv, CT%/CTv, SF%/SFv, KN%/KNv
 // PITCHf/x era (2008+): pfxFA%/pfxvFA, pfxSL%/pfxvSL, ..., pfxKN%/pfxvKN
@@ -1917,6 +1958,47 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         }
       }
 
+      // ── 2a.5: ODTプロファイル(③) — FanGraphs未取得年を補完 ────────────────
+      // FanGraphs(④)で pitch mix が取れなかった年(例: Shields 2001-2006)に
+      // ODT分析ドキュメントの年度別球種・球速・割合を設定する。
+      // yearHasPct=true(Savant/FanGraphs実測済み)の年はスキップ。
+      {
+        const docxP = DOCX_PLAYER_PROFILES[englishName] || DOCX_PLAYER_PROFILES[playerName] || null;
+        if (docxP?.yearPcts) {
+          for (const yr of years.filter(y => y !== '通算' && !yearHasPct(y))) {
+            const yPct = docxP.yearPcts[yr];
+            if (!yPct) continue;
+            const phase = docxP.phases?.find(p => +yr >= p.from && +yr <= p.to);
+            let filledCount = 0;
+            PITCH_KEYS.forEach(key => {
+              const pct = yPct[key] ?? 0;
+              if (pct <= 0) {
+                rawPitch[yr][key] = { velo: '--', ba: '--', slg: '--', pct: '--' };
+                return;
+              }
+              const avgKmh = phase?.[key] ?? null;
+              if (!avgKmh) return;
+              const mph = +((avgKmh - 4) / 1.6).toFixed(1);
+              rawPitch[yr][key] = { velo: String(mph), ba: '--', slg: '--', pct: String(pct) };
+              // showKyuiMap にも事前計算
+              const ki = PITCH_KEYS.indexOf(key);
+              const byr = basic[yr];
+              const bEra = byr ? parseFloat(String(byr.era)) : NaN;
+              const bBaa = byr ? (byr.avg ? Number(byr.avg) * 1000 : NaN) : NaN;
+              const bIp  = byr ? parseFloat(String(byr.ip).replace(/\.(\d)$/, '.$10')) : 0;
+              const bHr9 = (byr && bIp > 0) ? (byr.hr * 9 / bIp) : NaN;
+              const kyui = calcKyuiPreStatcast(mph, ki, pct, bEra, bBaa, bHr9);
+              if (kyui !== '') {
+                if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+                showKyuiMap[yr][ki] = kyui;
+              }
+              filledCount++;
+            });
+            if (filledCount > 0) onProgress(`[③ ODT] ${yr}: ${filledCount}球種を設定 (FanGraphs未取得年)`);
+          }
+        }
+      }
+
       // ── 2b: MLB The Show (FanGraphs で未取得の年 + pre-2002) ──────────────
       const afterFgMissing = preShowYears.filter(yr => !yearHasPct(yr));
       if (afterFgMissing.length > 0) {
@@ -1951,6 +2033,60 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         } catch (e) {
           onProgress('⚠ MLB The Show API 取得失敗: ' + e.message);
         }
+      }
+    }
+
+    // ── 2b.5: ODTプロファイル(③) — 全年への球速キャップ + 禁止球種クリア ────
+    // FanGraphsブーストで上限を超えた球速を ODT記載の最大値に抑える。
+    // Savant実測(①)を含む全年に適用（Savant実測が上限を超えることはないが念のため）。
+    // pitchMaxKmh[key]=0 の球種は rawPitch・showKyuiMap から完全削除。
+    {
+      const docxP = DOCX_PLAYER_PROFILES[englishName] || DOCX_PLAYER_PROFILES[playerName] || null;
+      if (docxP?.pitchMaxKmh) {
+        const maxKmh = docxP.pitchMaxKmh;
+        let capCount = 0;
+        for (const yr of years.filter(y => y !== '通算')) {
+          for (const key of PITCH_KEYS) {
+            const d = rawPitch[yr]?.[key];
+            if (!d) continue;
+            const limit = maxKmh[key];
+            if (limit === undefined) continue;
+            const ki = PITCH_KEYS.indexOf(key);
+            // limit=0: この球種は投球しない → 全フィールドを '--' に
+            if (limit === 0) {
+              if (d.velo !== '--' || d.pct !== '--') {
+                rawPitch[yr][key] = { velo: '--', ba: '--', slg: '--', pct: '--' };
+                if (showKyuiMap[yr]) delete showKyuiMap[yr][ki];
+                onProgress(`[③ ODT] ${yr} ${key}: 投球なし → 削除`);
+                capCount++;
+              }
+              continue;
+            }
+            // limit>0: 球速が上限を超えていればキャップ + showKyuiMap 再計算
+            if (d.velo !== '--') {
+              const veloNum = parseFloat(d.velo);
+              const maxMph = (limit - 4) / 1.6;
+              if (!isNaN(veloNum) && veloNum > maxMph) {
+                const cappedMph = +maxMph.toFixed(1);
+                rawPitch[yr][key].velo = String(cappedMph);
+                const byr = basic[yr];
+                const bEra = byr ? parseFloat(String(byr.era)) : NaN;
+                const bBaa = byr ? (byr.avg ? Number(byr.avg) * 1000 : NaN) : NaN;
+                const bIp  = byr ? parseFloat(String(byr.ip).replace(/\.(\d)$/, '.$10')) : 0;
+                const bHr9 = (byr && bIp > 0) ? (byr.hr * 9 / bIp) : NaN;
+                const pctNum = parseFloat(String(d.pct).replace('%', ''));
+                const newKyui = calcKyuiPreStatcast(cappedMph, ki, isNaN(pctNum) ? 20 : pctNum, bEra, bBaa, bHr9);
+                if (newKyui !== '') {
+                  if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
+                  showKyuiMap[yr][ki] = newKyui;
+                }
+                onProgress(`[③ ODT] ${yr} ${key}: ${Math.round(veloNum * 1.6 + 4)}km/h → キャップ ${limit}km/h`);
+                capCount++;
+              }
+            }
+          }
+        }
+        if (capCount === 0) onProgress('[③ ODT] 球速キャップ: 適用なし（全球種が上限以内）');
       }
     }
 
