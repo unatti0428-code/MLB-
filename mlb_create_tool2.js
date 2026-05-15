@@ -1150,6 +1150,75 @@ const PRE08_PITCH_BASELINES = [
   [83, 220, 340,  8, 12],  // 6: FS  (split)
 ];
 
+// ── 変化量推定ボーナス ──────────────────────────────────────────────────────────
+// Baseball Savant 実測がない年において、PRE08_PITCH_BASELINES の速度→球威換算では
+// 捉えられない「球種固有の変化量・球質」が球威に与える寄与を補正する固定値。
+// FF/SI は球速依存度が高いためボーナス小。CU/CH/FS は変化量依存度が高いため大きい値。
+// キャリブレーション参考:
+//   CU +5: 良いカーブは速度が低くても大きな縦落差で球威を発揮（コービン2.24 ERA的水準）
+//   CH +4: アームサイドのフェードと緩急が球威に寄与（サンタナ / チェンジアップ系エース）
+//   FS +4: 急激な落差（スプリットフィンガーの鋭い変化）
+//   SL +3: 横の変化・スイープが球威に寄与（縦カーブほど速度から予測しにくくはない）
+//   SI +2: グラウンドボール誘発（フォーシームより変化が少し多い）
+//   FC +1: 微細なカット成分（ほぼ速度依存）
+//   FF  0: 球速依存のためボーナスなし
+const PITCH_MOVEMENT_BONUS = [
+  0,  // 0: FF  - 球速依存
+  3,  // 1: SL  - 横変化
+  4,  // 2: CH  - フェード＋緩急
+  5,  // 3: CU  - 縦落差（最も速度から推定しにくい）
+  1,  // 4: FC  - 微細なカット
+  2,  // 5: SI  - グラウンドボール変化
+  4,  // 6: FS  - 急激な落差
+];
+
+/**
+ * 緩急差ボーナス: 同年の主速球との球速差が大きいほど変化球はタイミングを外しやすい。
+ * 速球（ff/si）には適用しない（緩急差の「与え手」のため）。
+ * @param {number} speed    この球種の球速 (mph)
+ * @param {number} idx      球種インデックス (0-6)
+ * @param {number} ffSpeed  同年の主速球速度 (mph)
+ * @returns {number} 緩急差ボーナス (0〜+7)
+ * キャリブレーション参考 (CH idx=2, scale=1.2):
+ *   diff 10mph → raw1 × 1.2 → +1  (平均的ピッチャーの速球-CH差)
+ *   diff 15mph → raw2 × 1.2 → +2  (Santana 93-78mph)
+ *   diff 20mph → raw4 × 1.2 → +5  (高津 82-62mph)
+ *   diff 25mph → raw6 × 1.2 → +7  (Wake/Dickey型ナックル)
+ */
+function calcKakkyoSaBonus(speed, idx, ffSpeed) {
+  if (isNaN(ffSpeed) || ffSpeed <= 0 || isNaN(speed) || speed <= 0) return 0;
+  // idx 別スケール: CH が最大（緩急依存度最高）、SI/FF は与え手のため 0
+  const scale = [0.0, 0.6, 1.2, 0.8, 0.3, 0.0, 1.0];
+  if ((scale[idx] ?? 0) === 0) return 0;
+  const diff = ffSpeed - speed;
+  if (diff < 8) return 0;
+  // diff  8-12mph → raw 1
+  // diff 13-17mph → raw 2
+  // diff 18-22mph → raw 4
+  // diff   23mph+ → raw 6
+  const raw = diff >= 23 ? 6 : diff >= 18 ? 4 : diff >= 13 ? 2 : 1;
+  return Math.round(raw * scale[idx]);
+}
+
+/**
+ * rawPitch の単一年データから主速球速度 (ff/si のうち投球割合が高い方) を返す。
+ * @param {Object} rawPitchYr  rawPitch[yr] の値
+ * @returns {number} 主速球速度 (mph)。取得できない場合は NaN。
+ */
+function getPrimaryFfMph(rawPitchYr) {
+  if (!rawPitchYr) return NaN;
+  let best = NaN, bestPct = 0;
+  for (const fk of ['ff', 'si']) {
+    const d = rawPitchYr[fk];
+    if (!d || d.velo === '--') continue;
+    const v = parseFloat(d.velo);
+    const p = parseFloat(String(d.pct ?? '').replace('%', ''));
+    if (isNaN(v) || v <= 0 || isNaN(p) || p <= 0) continue;
+    if (p > bestPct) { bestPct = p; best = v; }
+  }
+  return best;
+}
+
 /**
  * パフォーマンス補正値を計算 (球威へのボーナス/ペナルティ)
  * ERA・被打率・HR/9 から投手の実際の支配力を評価する。
@@ -2338,6 +2407,46 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
           }
           onProgress(`The Show 年 velo 補正完了: ${showVeloOverrideYears.join(', ')} → aging curve 速球+3/変化球+1 ± 成績補正適用`);
         }
+      }
+    }
+
+    // ── 2e: 緩急差・変化量ボーナスを showKyuiMap に適用 (Statcast非実測年のみ) ──
+    // Baseball Savant 実測年 (BA/SLG に数値がある年) は Savant が実際の
+    // 変化量・変化方向を計測しているためスキップ。
+    // FanGraphs(④)・ODT(③)・Claude推定・Aging curve 由来の年に以下を加算する:
+    //   ① PITCH_MOVEMENT_BONUS: 球種固有の変化量特性による推定補正
+    //   ② calcKakkyoSaBonus:    主速球との球速差が大きいほど変化球が有効になる緩急差補正
+    // 適用後の値は addAbilityToFile で perfBoost と合算されて最終球威になる。
+    for (const yr of years.filter(y => y !== '通算')) {
+      const yrPitch = rawPitch[yr];
+      if (!yrPitch || !showKyuiMap[yr]) continue;
+      // BA/SLG 実測値 (Statcast) がある年はスキップ
+      const hasStatcast = PITCH_KEYS.some(k => {
+        const d = yrPitch[k];
+        return d && d.ba !== '--' && d.ba !== '' && d.ba != null && !isNaN(Number(d.ba));
+      });
+      if (hasStatcast) continue;
+      const ffMph = getPrimaryFfMph(yrPitch);
+      let bonusLog = [];
+      for (const key of PITCH_KEYS) {
+        const ki = PITCH_KEYS.indexOf(key);
+        const cur = showKyuiMap[yr][ki];
+        if (cur === undefined) continue;
+        const d = yrPitch[key];
+        if (!d || d.velo === '--') continue;
+        const speed = parseFloat(d.velo);
+        if (isNaN(speed) || speed <= 0) continue;
+        const movBonus     = PITCH_MOVEMENT_BONUS[ki] ?? 0;
+        const kakkyoBonus  = calcKakkyoSaBonus(speed, ki, ffMph);
+        const totalBonus   = movBonus + kakkyoBonus;
+        if (totalBonus > 0) {
+          const newVal = Math.max(30, Math.min(110, Number(cur) + totalBonus));
+          showKyuiMap[yr][ki] = newVal;
+          bonusLog.push(`${key}:+${totalBonus}(mov+${movBonus}/緩急差+${kakkyoBonus})`);
+        }
+      }
+      if (bonusLog.length > 0) {
+        onProgress(`[2e 変化量・緩急差] ${yr}: ${bonusLog.join(' ')}`);
       }
     }
 
