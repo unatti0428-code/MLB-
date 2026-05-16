@@ -1132,19 +1132,55 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
 // ── チーム略称の正規化テーブル ────────────────────────────────────────────────
 // MLB Stats API が返す略称はシーズン・移転により揺れがあるため統一する
 const TEAM_ABBR_NORMALIZE = {
-  // アメリカンリーグ東
-  'TBD': 'TB',  'TBR': 'TB',                    // Devil Rays / Rays 表記揺れ
-  'KCR': 'KC',                                    // Royals alt
-  'CHW': 'CWS',                                   // White Sox alt
-  // アメリカンリーグ西
-  'ANA': 'LAA',  'CAL': 'LAA',                   // Angels 旧名
-  'OAK': 'ATH',                                   // Athletics（Oakland→Sacramento移転後）
-  // ナショナルリーグ東
-  'FLA': 'MIA',                                   // Florida Marlins → Miami Marlins
-  'MON': 'WSH',  'WSN': 'WSH',                   // Montreal Expos → Washington Nationals
-  // ナショナルリーグ西
-  'SDP': 'SD',                                    // Padres alt
-  'SFG': 'SF',                                    // Giants alt
+  // ── 略称の表記揺れ ────────────────────────────────────────────────────────
+  'TBD': 'TB',  'TBR': 'TB',
+  'KCR': 'KC',
+  'CHW': 'CWS',
+  'ANA': 'LAA',  'CAL': 'LAA',
+  'OAK': 'ATH',
+  'FLA': 'MIA',
+  'MON': 'WSH',  'WSN': 'WSH',
+  'SDP': 'SD',
+  'SFG': 'SF',
+  // ── フルチーム名 → 略称（APIがabbreviationを返さない場合のフォールバック）──
+  'New York Yankees':               'NYY',
+  'New York Mets':                  'NYM',
+  'Los Angeles Angels':             'LAA',
+  'Los Angeles Angels of Anaheim':  'LAA',
+  'Anaheim Angels':                 'LAA',
+  'California Angels':              'LAA',
+  'Los Angeles Dodgers':            'LAD',
+  'Chicago Cubs':                   'CHC',
+  'Chicago White Sox':              'CWS',
+  'Boston Red Sox':                 'BOS',
+  'Baltimore Orioles':              'BAL',
+  'Tampa Bay Rays':                 'TB',
+  'Tampa Bay Devil Rays':           'TB',
+  'Toronto Blue Jays':              'TOR',
+  'Cleveland Guardians':            'CLE',
+  'Cleveland Indians':              'CLE',
+  'Detroit Tigers':                 'DET',
+  'Kansas City Royals':             'KC',
+  'Minnesota Twins':                'MIN',
+  'Houston Astros':                 'HOU',
+  'Oakland Athletics':              'ATH',
+  'Sacramento Athletics':           'ATH',
+  'Seattle Mariners':               'SEA',
+  'Texas Rangers':                  'TEX',
+  'Atlanta Braves':                 'ATL',
+  'Miami Marlins':                  'MIA',
+  'Florida Marlins':                'MIA',
+  'Philadelphia Phillies':          'PHI',
+  'Washington Nationals':           'WSH',
+  'Montreal Expos':                 'WSH',
+  'Arizona Diamondbacks':           'ARI',
+  'Colorado Rockies':               'COL',
+  'San Diego Padres':               'SD',
+  'San Francisco Giants':           'SF',
+  'Cincinnati Reds':                'CIN',
+  'Milwaukee Brewers':              'MIL',
+  'Pittsburgh Pirates':             'PIT',
+  'St. Louis Cardinals':            'STL',
 };
 function normalizeTeamAbbr(raw) {
   return TEAM_ABBR_NORMALIZE[raw] || raw;
@@ -1176,9 +1212,9 @@ async function fetchPitchingStats(id, y1, y2) {
     if (rows.length > 1) {
       const named   = rows.filter(r => r.team);
       const primary = named.reduce((a, b) => (a.stat.gamesPitched >= b.stat.gamesPitched ? a : b));
-      teamStr = normalizeTeamAbbr(primary.team?.abbreviation || primary.team?.name?.slice(0,3)?.toUpperCase() || '???') + named.length;
+      teamStr = normalizeTeamAbbr(primary.team?.abbreviation || primary.team?.name || '???') + named.length;
     } else {
-      teamStr = normalizeTeamAbbr(row.team?.abbreviation || row.team?.name?.slice(0,3)?.toUpperCase() || '???');
+      teamStr = normalizeTeamAbbr(row.team?.abbreviation || row.team?.name || '???');
     }
     const st = row.stat;
     basic[yr] = {
@@ -3719,9 +3755,9 @@ async function batFetchMLBStats(id, y1, y2) {
     if (rows.length > 1) {
       const named   = rows.filter(r => r.team);
       const primary = named.reduce((a, b) => (a.stat.gamesPlayed >= b.stat.gamesPlayed ? a : b));
-      teamStr = (primary.team?.abbreviation || primary.team?.name?.slice(0,3)?.toUpperCase() || '???') + named.length;
+      teamStr = normalizeTeamAbbr(primary.team?.abbreviation || primary.team?.name || '???') + named.length;
     } else {
-      teamStr = row.team?.abbreviation || row.team?.name?.slice(0,3)?.toUpperCase() || '???';
+      teamStr = normalizeTeamAbbr(row.team?.abbreviation || row.team?.name || '???');
     }
     const st = row.stat;
     basic[yr] = {
