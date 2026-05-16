@@ -890,10 +890,17 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
     redPurpleCell(ws.getCell(2, base + 2), '割合', fontSize);
   });
 
+  // 通算球威: 各年の球威をアウト数加重平均で算出するためのストア
+  // { outs: number, kyuiByI: { [pitchListIdx]: number } }
+  const yearKyuiStore = [];
+
   let count = 0;
   for (const { rn, yr, ipRaw, g, gs, bb, eraRaw, hr, so, avgRaw, vsLRaw, sb, pk, cs, pitchData } of dataRows) {
     const ip = parseIP(ipRaw);
     if (!ip) continue;
+
+    const isCareerRow = String(yr).trim() === '通算';
+    const _rowKyuiByI = {}; // この行の球種別 kyui（非通算行のみ蓄積）
 
     const stamina = calcStaminaFromIP(ip, g, gs);
     if (stamina !== '') purpleCell(ws.getCell(rn, STAMINA_COL), stamina, fontSize);
@@ -1001,107 +1008,119 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
       }
       if (kyusoku !== '') redPurpleCell(ws.getCell(rn, base + 0), kyusoku, fontSize);
 
-      const ah = calcAH_pitch(pg.idx, baNum);
-      const ai = calcAI_pitch(pg.idx, slgNum);
       let kyui = '';
-      if (ah !== '' && ai !== '') {
-        const aj = (Number(ah) + Number(ai)) / 2;
-        const ak = calcAK_pitch(pg.idx, aj, pctNum);
-        kyui = calcKyuI(aj, ak, pctNum);
+      if (isCareerRow) {
+        // ── 通算行: 各年度の球威をアウト数加重平均で算出 ──────────────────────────
+        // BA/SLGパスで再計算すると「通算pct（全キャリア割合）vs Statcast年のBAのみ」の
+        // 不整合が生じ kyui が MAX 超えや転向選手で歪む。
+        // 各年度の最終 kyui（補正済み）をそのままアウト数加重平均することで正確な通算値を得る。
+        let sumKO = 0, sumO = 0;
+        for (const { outs, kyuiByI } of yearKyuiStore) {
+          if (kyuiByI[i] !== undefined) { sumKO += kyuiByI[i] * outs; sumO += outs; }
+        }
+        if (sumO > 0) kyui = Math.round(sumKO / sumO);
       } else {
-        // BA/SLG なし年: パフォーマンス補正値を算出
-        const perfBoost = calcPerfBoost(perfEra, perfBaa1000, perfHr9);
-        // ── BIS-split 対策: フォーシーム(idx=0)で si 速度を採用した年 ──────────────
-        // FanGraphs BIS は「速い部分→si」「遅い部分→ff」に分割して記録するケースがある。
-        // showKyuiMap[yr][0] は低速 ff 値で計算されているため球威が過小になる。
-        // BIS-split 検知時は si の高速値（_bgVeloNum）で 球威 を再計算して上書きする。
-        if (_bisSplitDetected) {
-          const est = calcKyuiPreStatcast(_bgVeloNum, pg.idx, pctNum, perfEra, perfBaa1000, perfHr9);
-          if (est !== '') kyui = Math.max(30, Math.min(110, Number(est) + perfBoost));
+        // ── 年度行: 通常の計算 ──────────────────────────────────────────────────
+        const ah = calcAH_pitch(pg.idx, baNum);
+        const ai = calcAI_pitch(pg.idx, slgNum);
+        if (ah !== '' && ai !== '') {
+          const aj = (Number(ah) + Number(ai)) / 2;
+          const ak = calcAK_pitch(pg.idx, aj, pctNum);
+          kyui = calcKyuI(aj, ak, pctNum);
         } else {
-        // フォールバック①: showKyuiMap（The Show / FanGraphs / 推定データ）+ 補正
-        const showKyui = showKyuiMap[yr]?.[pg.idx];
-        if (showKyui !== undefined) {
-          kyui = Math.max(30, Math.min(110, Number(showKyui) + perfBoost));
-        } else if (!isNaN(veloNum) && veloNum > 0) {
-          // フォールバック②: showKyuiMap にキーがない場合（未取得年・データ欠損）→ 球速 + 補正で推定
-          const est = calcKyuiPreStatcast(veloNum, pg.idx, pctNum, perfEra, perfBaa1000, perfHr9);
-          if (est !== '') kyui = est;
-        }
-        }
-        // ── 球威キャップ（③以降推定年: 投球回数・防御率による上限制約）─────────────────
-        // ①②(Baseball Savant 実測) は BA/SLG あり → if(ah!==''&&ai!=='') ブランチを通るため制約なし。
-        // ③(推定)/④(FanGraphs)/⑤(Claude+AgingCurve) は BA/SLG='--' → このブランチで制約適用。
-        // 通算行はスキップ（yr==='通算' は年度別IPが不明のため）。
-        //
-        // IP 200-270: ERA≧3.70 → ×0.4, 3.69-2.70 → ×0.5, 2.69-1.70 → ×0.6  (閾値95, ベース95)
-        // IP 151-199: ERA≧3.30 → ×0.4, 3.29-2.30 → ×0.5, 2.29-1.30 → ×0.6  (閾値95, ベース95)
-        // IP 100-150: ERA≧3.00 → ×0.4, 2.99-2.00 → ×0.5, 1.99-1.00 → ×0.6  (閾値95, ベース95)
-        // IP 75-99:   ERA≧2.80 → ×0.4, 2.79-1.80 → ×0.5, 1.79-0.80 → ×0.6  (閾値95, ベース95)
-        // IP 35-74:   ERA≧2.50 → ×0.4, 2.49-1.50 → ×0.5, 1.49-0.50 → ×0.6  (閾値95, ベース95)
-        // IP 0-34:    ERA≧1.50 → ×0.4, 1.49-0.00 → ×0.5                     (閾値90, ベース90)
-        if (kyui !== '' && yr !== '通算') {
-          const eraNum = !isNaN(perfEra) ? perfEra : NaN;
-          if (!isNaN(eraNum) && eraNum >= 0) {
-            const A = Number(kyui);
-            let base = 95, threshold = 95, mult = null;
+          // BA/SLG なし年: パフォーマンス補正値を算出
+          const perfBoost = calcPerfBoost(perfEra, perfBaa1000, perfHr9);
+          // ── BIS-split 対策: フォーシーム(idx=0)で si 速度を採用した年 ──────────────
+          // FanGraphs BIS は「速い部分→si」「遅い部分→ff」に分割して記録するケースがある。
+          // showKyuiMap[yr][0] は低速 ff 値で計算されているため球威が過小になる。
+          // BIS-split 検知時は si の高速値（_bgVeloNum）で 球威 を再計算して上書きする。
+          if (_bisSplitDetected) {
+            const est = calcKyuiPreStatcast(_bgVeloNum, pg.idx, pctNum, perfEra, perfBaa1000, perfHr9);
+            if (est !== '') kyui = Math.max(30, Math.min(110, Number(est) + perfBoost));
+          } else {
+          // フォールバック①: showKyuiMap（The Show / FanGraphs / 推定データ）+ 補正
+          const showKyui = showKyuiMap[yr]?.[pg.idx];
+          if (showKyui !== undefined) {
+            kyui = Math.max(30, Math.min(110, Number(showKyui) + perfBoost));
+          } else if (!isNaN(veloNum) && veloNum > 0) {
+            // フォールバック②: showKyuiMap にキーがない場合（未取得年・データ欠損）→ 球速 + 補正で推定
+            const est = calcKyuiPreStatcast(veloNum, pg.idx, pctNum, perfEra, perfBaa1000, perfHr9);
+            if (est !== '') kyui = est;
+          }
+          }
+          // ── 球威キャップ（③以降推定年: 投球回数・防御率による上限制約）─────────────────
+          // ①②(Baseball Savant 実測) は BA/SLG あり → if(ah!==''&&ai!=='') ブランチを通るため制約なし。
+          // ③(推定)/④(FanGraphs)/⑤(Claude+AgingCurve) は BA/SLG='--' → このブランチで制約適用。
+          if (kyui !== '') {
+            const eraNum = !isNaN(perfEra) ? perfEra : NaN;
+            if (!isNaN(eraNum) && eraNum >= 0) {
+              const A = Number(kyui);
+              let base = 95, threshold = 95, mult = null;
 
-            if (ip >= 200 && ip <= 270) {
-              if      (eraNum >= 3.70)              { threshold = 95; mult = 0.4; }
-              else if (eraNum >= 2.70)              { threshold = 95; mult = 0.5; }
-              else if (eraNum >= 1.70)              { threshold = 95; mult = 0.6; }
-            } else if (ip >= 151 && ip < 200) {
-              if      (eraNum >= 3.30)              { threshold = 95; mult = 0.4; }
-              else if (eraNum >= 2.30)              { threshold = 95; mult = 0.5; }
-              else if (eraNum >= 1.30)              { threshold = 95; mult = 0.6; }
-            } else if (ip >= 100 && ip <= 150) {
-              if      (eraNum >= 3.00)              { threshold = 95; mult = 0.4; }
-              else if (eraNum >= 2.00)              { threshold = 95; mult = 0.5; }
-              else if (eraNum >= 1.00)              { threshold = 95; mult = 0.6; }
-            } else if (ip >= 75 && ip < 100) {
-              if      (eraNum >= 2.80)              { threshold = 95; mult = 0.4; }
-              else if (eraNum >= 1.80)              { threshold = 95; mult = 0.5; }
-              else if (eraNum >= 0.80)              { threshold = 95; mult = 0.6; }
-            } else if (ip >= 35 && ip < 75) {
-              if      (eraNum >= 2.50)              { threshold = 95; mult = 0.4; }
-              else if (eraNum >= 1.50)              { threshold = 95; mult = 0.5; }
-              else if (eraNum >= 0.50)              { threshold = 95; mult = 0.6; }
-            } else if (ip >= 0 && ip < 35) {
-              base = 90;
-              if      (eraNum >= 1.50)              { threshold = 90; mult = 0.4; }
-              else if (eraNum >= 0.00)              { threshold = 90; mult = 0.5; }
-            }
+              if (ip >= 200 && ip <= 270) {
+                if      (eraNum >= 3.70)              { threshold = 95; mult = 0.4; }
+                else if (eraNum >= 2.70)              { threshold = 95; mult = 0.5; }
+                else if (eraNum >= 1.70)              { threshold = 95; mult = 0.6; }
+              } else if (ip >= 151 && ip < 200) {
+                if      (eraNum >= 3.30)              { threshold = 95; mult = 0.4; }
+                else if (eraNum >= 2.30)              { threshold = 95; mult = 0.5; }
+                else if (eraNum >= 1.30)              { threshold = 95; mult = 0.6; }
+              } else if (ip >= 100 && ip <= 150) {
+                if      (eraNum >= 3.00)              { threshold = 95; mult = 0.4; }
+                else if (eraNum >= 2.00)              { threshold = 95; mult = 0.5; }
+                else if (eraNum >= 1.00)              { threshold = 95; mult = 0.6; }
+              } else if (ip >= 75 && ip < 100) {
+                if      (eraNum >= 2.80)              { threshold = 95; mult = 0.4; }
+                else if (eraNum >= 1.80)              { threshold = 95; mult = 0.5; }
+                else if (eraNum >= 0.80)              { threshold = 95; mult = 0.6; }
+              } else if (ip >= 35 && ip < 75) {
+                if      (eraNum >= 2.50)              { threshold = 95; mult = 0.4; }
+                else if (eraNum >= 1.50)              { threshold = 95; mult = 0.5; }
+                else if (eraNum >= 0.50)              { threshold = 95; mult = 0.6; }
+              } else if (ip >= 0 && ip < 35) {
+                base = 90;
+                if      (eraNum >= 1.50)              { threshold = 90; mult = 0.4; }
+                else if (eraNum >= 0.00)              { threshold = 90; mult = 0.5; }
+              }
 
-            if (mult !== null && A >= threshold) {
-              kyui = Math.min(110, base + Math.round((A - base) * mult));
+              if (mult !== null && A >= threshold) {
+                kyui = Math.min(110, base + Math.round((A - base) * mult));
+              }
             }
           }
         }
-      }
-      // ── ナックルボール球威 +5 補正 ───────────────────────────────────────────
-      // ナックルボールは速度と球質が無相関（遅くても打ちにくい）ため、算出値に+5する。
-      // 判定: fs バケット(idx=6) かつ pitchNameOverrides に 'ナックル' 登録あり
-      // ★ 旧判定②「球速 ≤ 83mph」は廃止: スプリット/フォークも 83mph 以下になりうるため
-      //   長谷川滋利など 'スプリット' 投手への誤適用が発生した。
-      //   真のナックルボーラー（ディッキー 72-77mph / ウェイクフィールド 65-70mph）は
-      //   pitchNameOverrides で 'ナックル' が正しく設定されるため①のみで十分。
-      if (kyui !== '' && pg.idx === 6) {
-        const ovName = pitchNameOverrides[pg.idx] ?? '';
-        const isKnuckleball = ovName === 'ナックル';
-        if (isKnuckleball) kyui = Math.max(30, Math.min(110, Number(kyui) + 5));
-      }
-      // ── Wikipedia 決め球 球威補正 ─────────────────────────────────────────────
-      // Wikipedia テキストから「weapon/signature/out-pitch」等の語句近傍に出現する
-      // 変化球が決め球として検出された場合、その球種の球威に+5 を加算する。
-      // 対象: Statcast年(BA/SLG実測)・非Statcast年ともに適用。
-      // 例: クレメンスのスプリット(idx=6) → 高速スプリットの落差球威を正しく反映
-      if (kyui !== '' && outPitchBoosts[pg.idx]) {
-        kyui = Math.max(30, Math.min(110, Number(kyui) + outPitchBoosts[pg.idx]));
+        // ── ナックルボール球威 +5 補正 ───────────────────────────────────────────
+        // ナックルボールは速度と球質が無相関（遅くても打ちにくい）ため、算出値に+5する。
+        // 判定: fs バケット(idx=6) かつ pitchNameOverrides に 'ナックル' 登録あり
+        // ★ 旧判定②「球速 ≤ 83mph」は廃止: スプリット/フォークも 83mph 以下になりうるため
+        //   長谷川滋利など 'スプリット' 投手への誤適用が発生した。
+        //   真のナックルボーラー（ディッキー 72-77mph / ウェイクフィールド 65-70mph）は
+        //   pitchNameOverrides で 'ナックル' が正しく設定されるため①のみで十分。
+        if (kyui !== '' && pg.idx === 6) {
+          const ovName = pitchNameOverrides[pg.idx] ?? '';
+          const isKnuckleball = ovName === 'ナックル';
+          if (isKnuckleball) kyui = Math.max(30, Math.min(110, Number(kyui) + 5));
+        }
+        // ── Wikipedia 決め球 球威補正 ─────────────────────────────────────────────
+        // Wikipedia テキストから「weapon/signature/out-pitch」等の語句近傍に出現する
+        // 変化球が決め球として検出された場合、その球種の球威に+5 を加算する。
+        // 対象: Statcast年(BA/SLG実測)・非Statcast年ともに適用。
+        // 例: クレメンスのスプリット(idx=6) → 高速スプリットの落差球威を正しく反映
+        if (kyui !== '' && outPitchBoosts[pg.idx]) {
+          kyui = Math.max(30, Math.min(110, Number(kyui) + outPitchBoosts[pg.idx]));
+        }
+        // 蓄積: 通算加重平均に使用
+        if (kyui !== '') _rowKyuiByI[i] = Number(kyui);
       }
       if (kyui !== '') redPurpleCell(ws.getCell(rn, base + 1), kyui, fontSize);
 
       redPurpleCell(ws.getCell(rn, base + 2), pctNum, fontSize);
     });
+
+    // 年度行のみ kyuiStore に蓄積（通算行はスキップ）
+    if (!isCareerRow && Object.keys(_rowKyuiByI).length > 0) {
+      yearKyuiStore.push({ outs: ipToOuts(ipRaw), kyuiByI: _rowKyuiByI });
+    }
 
     count++;
   }
@@ -3642,36 +3661,6 @@ async function runCreateJob(jobId, params) {
 
     upd('Excel ファイルを生成中...');
     const outFile = await buildExcel(params.name, years, basic, vsLeftByYear, rawPitch);
-
-    // ── 通算 showKyuiMap: 各年の球威をイニング数 × 投球割合で加重平均 ──────────────
-    // 【目的】通算行の addAbilityToFile で showKyuiMap['通算'] が参照されるが、
-    //        未設定の場合は球速推定にフォールバックするため精度が低下する。
-    //        各年の showKyuiMap[yr][idx] をアウト数加重平均して通算値を算出する。
-    // 【重み】アウト数のみ（pct は全年比較で「その球種を多用した年」を優遇すると
-    //         転向選手で歪む）。ただし pct < 5 の年（球種未使用）はスキップ。
-    {
-      const _careerKyui = {};
-      for (let idx = 0; idx < PITCH_KEYS.length; idx++) {
-        const key = PITCH_KEYS[idx];
-        let sumKyuiOuts = 0, sumOuts = 0;
-        for (const yr of years) {
-          const outs = ipToOuts(basic[yr]?.ip || '0');
-          if (!outs) continue;
-          // 投球割合 5% 未満の年（その球種をほぼ投げていない年）はスキップ
-          const pct = parseFloat(String(rawPitch[yr]?.[key]?.pct ?? '').replace('%', ''));
-          if (isNaN(pct) || pct < 5) continue;
-          const kyui = showKyuiMap[yr]?.[idx];
-          if (kyui === undefined) continue;
-          sumKyuiOuts += Number(kyui) * outs;
-          sumOuts     += outs;
-        }
-        if (sumOuts > 0) _careerKyui[idx] = Math.round(sumKyuiOuts / sumOuts);
-      }
-      if (Object.keys(_careerKyui).length > 0) {
-        showKyuiMap['通算'] = _careerKyui;
-        upd(`[通算球威] イニング数加重平均: ${Object.entries(_careerKyui).map(([i,v])=>`${PITCH_NAMES_JA[i]}=${v}`).join(' ')}`);
-      }
-    }
 
     upd('スタミナ・制球を計算中...');
     let abilityRows = 0;
