@@ -1508,6 +1508,14 @@ async function fetchWikipediaPitchProfile(searchName) {
 /**
  * 日本語 Wikipedia の「選手としての特徴」等のセクションから球速・球種情報を抽出する。
  * 英語 Wikipedia より正確な最高球速（"最速100mph" 形式）を記述していることが多い。
+ *
+ * ★ 実装方針:
+ *   長大な記事（経歴セクションが多い選手）では全文の30000文字以内に対象セクションが
+ *   収まらない場合がある。そのため MediaWiki の action=parse&prop=sections API で
+ *   セクション番号を特定し、action=parse&section=N&prop=wikitext で該当セクションの
+ *   テキストだけを取得する「セクション直接取得」方式を採用する。
+ *   これにより記事の全長に依存せず確実に対象セクションを抽出できる。
+ *
  * @param {string} searchName  日本語選手名（カタカナ可）または英語名
  * @returns {{ veloMentions:number[], outPitchKey:string|null, pageTitle:string, sectionText:string } | null}
  */
@@ -1542,17 +1550,16 @@ async function fetchJaWikiCharSection(searchName) {
   ];
 
   // 日本語テキストから mph 値を抽出するパターン
-  // 「最速100mph」「100 mph」「100mph」等に対応
   const _JA_MPH_RE = /(\d{2,3})\s*mph/gi;
 
   // 日本語球種ワード → PITCH_KEYS マッピング
   const JA_PITCH_WORDS = [
-    { key: 'ff', words: ['フォーシーム', '4シーム', '速球', '直球', 'ストレート', 'ライジングファストボール', 'ファストボール'] },
-    { key: 'si', words: ['シンカー', 'ツーシーム', '2シーム', 'サインカー', 'ムービングファストボール'] },
-    { key: 'sl', words: ['スライダー', 'カットスライダー', 'スイーパー'] },
-    { key: 'ch', words: ['チェンジアップ', 'サークルチェンジ', 'スクリューボール', 'パームボール'] },
-    { key: 'cu', words: ['カーブ', 'ドロップカーブ', 'ナックルカーブ', 'パワーカーブ'] },
-    { key: 'fc', words: ['カットボール', 'カッター', 'カットファストボール'] },
+    { key: 'ff', words: ['フォーシーム', '4シーム', '速球', '直球', 'ストレート', 'ファストボール'] },
+    { key: 'si', words: ['シンカー', 'ツーシーム', '2シーム'] },
+    { key: 'sl', words: ['スライダー', 'スイーパー'] },
+    { key: 'ch', words: ['チェンジアップ', 'スクリューボール', 'パームボール'] },
+    { key: 'cu', words: ['カーブ', 'ナックルカーブ'] },
+    { key: 'fc', words: ['カットボール', 'カッター'] },
     { key: 'fs', words: ['スプリッター', 'スプリット', 'フォークボール', 'フォーク', 'ナックルボール', 'ナックル'] },
   ];
 
@@ -1562,15 +1569,43 @@ async function fetchJaWikiCharSection(searchName) {
     '最も恐れられた', '最も得意', '強みとした', '主要な武器',
   ];
 
+  // wikitext から mph を抽出してスプリット結果を返す
+  const extractFromText = (text) => {
+    const veloMentions = [];
+    for (const m of text.matchAll(_JA_MPH_RE)) {
+      const v = parseInt(m[1]);
+      if (v >= 80 && v <= 106) veloMentions.push(v);
+    }
+    let outPitchKey = null;
+    let _minDist = 300;
+    for (const word of JA_OUT_INDICATORS) {
+      let pos = 0;
+      while ((pos = text.indexOf(word, pos)) !== -1) {
+        for (const { key, words: jaPitchWords } of JA_PITCH_WORDS) {
+          if (key === 'ff' || key === 'si') continue;
+          for (const pw of jaPitchWords) {
+            let ppos = 0;
+            while ((ppos = text.indexOf(pw, ppos)) !== -1) {
+              const dist = Math.abs(ppos - pos);
+              if (dist < _minDist) { _minDist = dist; outPitchKey = key; }
+              ppos += pw.length;
+            }
+          }
+        }
+        pos += word.length;
+      }
+    }
+    return { veloMentions, outPitchKey };
+  };
+
   try {
-    // Step 1: opensearch で日本語 Wikipedia を検索
+    // ── Step 1: opensearch で日本語 Wikipedia を検索 ──
     const q1 = encodeURIComponent(searchName + ' 野球');
     const searchRes = await jaWikiGet(
       `https://ja.wikipedia.org/w/api.php?action=opensearch&search=${q1}&limit=5&namespace=0&format=json&origin=*`
     ).catch(() => null);
 
     let titles = searchRes?.[1] ?? [];
-    // ヒットなし → " 野球" なしで再検索
     if (!titles.length) {
       const q2 = encodeURIComponent(searchName);
       const fb = await jaWikiGet(
@@ -1581,72 +1616,57 @@ async function fetchJaWikiCharSection(searchName) {
     if (!titles.length) return null;
 
     const bestTitle = titles[0];
-
-    // Step 2: 記事テキスト取得（最大 30000 文字）
     const qt = encodeURIComponent(bestTitle);
-    const extractRes = await jaWikiGet(
-      `https://ja.wikipedia.org/w/api.php?action=query&titles=${qt}&prop=extracts&explaintext=true&format=json&origin=*`
+
+    // ── Step 2: action=parse&prop=sections でセクション一覧を取得 ──
+    // 記事全文を取得せず目次だけ取得するため高速・軽量。
+    const sectionsRes = await jaWikiGet(
+      `https://ja.wikipedia.org/w/api.php?action=parse&page=${qt}&prop=sections&format=json&origin=*`
     ).catch(() => null);
 
-    const pages = extractRes?.query?.pages;
-    if (!pages) return null;
-    const page = Object.values(pages)[0];
-    if (!page || page.missing !== undefined) return null;
+    const sections = sectionsRes?.parse?.sections ?? [];
+    const pageTitle = sectionsRes?.parse?.title ?? bestTitle;
 
-    const fullText = (page.extract || '').slice(0, 30000);
-    if (!fullText) return null;
-
-    // Step 3: 対象セクションを抽出
-    // MediaWiki explaintext は "== セクション名 ==" 形式のヘッダーを含む
-    const sectionParts = [];
-    for (const secName of TARGET_SECTIONS) {
-      // "== 選手としての特徴 ==" 等のヘッダーを探す（前後スペース・レベル違い対応）
-      const secRe = new RegExp(`={2,4}\\s*${secName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*={2,4}`, 'i');
-      const secMatch = secRe.exec(fullText);
-      if (!secMatch) continue;
-      const secStart = secMatch.index + secMatch[0].length;
-      // 次のヘッダー（== ）まで、または文末まで
-      const nextHeadRe = /\n={2,4}[^=]/;
-      const nextMatch = nextHeadRe.exec(fullText.slice(secStart));
-      const secEnd = nextMatch ? secStart + nextMatch.index : fullText.length;
-      sectionParts.push(fullText.slice(secStart, secEnd));
-    }
-
-    const sectionText = sectionParts.join('\n');
-    // セクションが見つからなかった場合は全文を使用（フォールバック）
-    const targetText = sectionText || fullText.slice(0, 5000);
-
-    // Step 4: mph 値の抽出
-    const veloMentions = [];
-    for (const m of targetText.matchAll(_JA_MPH_RE)) {
-      const v = parseInt(m[1]);
-      if (v >= 80 && v <= 106) veloMentions.push(v);
-    }
-
-    // Step 5: 決め球の検出（日本語インジケーター近傍の球種）
-    let outPitchKey = null;
-    const textLower = targetText; // 日本語はそのまま（toLowerCase不要）
-    let _minDist = 300;
-    for (const word of JA_OUT_INDICATORS) {
-      let pos = 0;
-      while ((pos = textLower.indexOf(word, pos)) !== -1) {
-        for (const { key, words: jaPitchWords } of JA_PITCH_WORDS) {
-          if (key === 'ff' || key === 'si') continue; // 速球は除外
-          for (const pw of jaPitchWords) {
-            let ppos = 0;
-            while ((ppos = textLower.indexOf(pw, ppos)) !== -1) {
-              const dist = Math.abs(ppos - pos);
-              if (dist < _minDist) { _minDist = dist; outPitchKey = key; }
-              ppos += pw.length;
-            }
-          }
-        }
-        pos += word.length;
+    // ── Step 3: 対象セクション番号を特定 ──
+    let targetSectionIndices = [];
+    for (const sec of sections) {
+      if (TARGET_SECTIONS.includes(sec.line)) {
+        targetSectionIndices.push(sec.index); // "1", "2", ... の文字列
       }
     }
 
+    if (targetSectionIndices.length === 0) {
+      // セクション見つからず → 全文フォールバック（exlimit を大きく設定）
+      const extractRes = await jaWikiGet(
+        `https://ja.wikipedia.org/w/api.php?action=query&titles=${qt}&prop=extracts&explaintext=true&exlimit=1&format=json&origin=*`
+      ).catch(() => null);
+      const pages = extractRes?.query?.pages;
+      const page = pages ? Object.values(pages)[0] : null;
+      const fullText = page?.extract ?? '';
+      if (!fullText) return null;
+      const { veloMentions, outPitchKey } = extractFromText(fullText);
+      if (veloMentions.length === 0 && !outPitchKey) return null;
+      return { veloMentions, outPitchKey, pageTitle, sectionText: fullText.slice(0, 3000) };
+    }
+
+    // ── Step 4: 対象セクションの wikitext を取得（セクション番号指定）──
+    // action=parse&section=N&prop=wikitext は該当セクションのみ返すため高速。
+    // wikitext には [[リンク]] や {{テンプレート}} が含まれるが mph 値は生テキストとして
+    // 含まれるため、専用の抽出ロジックで問題なく取得できる。
+    let combinedText = '';
+    for (const idx of targetSectionIndices) {
+      const secRes = await jaWikiGet(
+        `https://ja.wikipedia.org/w/api.php?action=parse&page=${qt}&section=${idx}&prop=wikitext&format=json&origin=*`
+      ).catch(() => null);
+      const wikitext = secRes?.parse?.wikitext?.['*'] ?? '';
+      if (wikitext) combinedText += '\n' + wikitext;
+    }
+
+    if (!combinedText.trim()) return null;
+
+    const { veloMentions, outPitchKey } = extractFromText(combinedText);
     if (veloMentions.length === 0 && !outPitchKey) return null;
-    return { veloMentions, outPitchKey, pageTitle: page.title, sectionText: targetText };
+    return { veloMentions, outPitchKey, pageTitle, sectionText: combinedText };
   } catch {
     return null;
   }
