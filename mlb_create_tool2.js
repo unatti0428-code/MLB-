@@ -993,7 +993,10 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
       // Wikipedia が最高球速（例: 100mph=161km/h）を明記している場合、
       // ゲームスケール換算(×1.6+4)の誤差でキャップを超えることがあるため実変換値で上限を設定。
       // ff(idx=0)・si(idx=5) の主速球グループにのみ適用する。
-      if (wikiCapKmh && kyusoku !== '' && (pg.idx === 0 || pg.idx === 5) && Number(kyusoku) > wikiCapKmh) {
+      // ★ 閾値: wikiCapKmh < 150（≒93mph未満）は適用しない。
+      //   Wikipediaが低速度のみ言及（変化球・晩年球速等）している場合に
+      //   本来の速球BGが誤って下げられる問題を防ぐ。
+      if (wikiCapKmh && wikiCapKmh >= 150 && kyusoku !== '' && (pg.idx === 0 || pg.idx === 5) && Number(kyusoku) > wikiCapKmh) {
         kyusoku = wikiCapKmh;
       }
       if (kyusoku !== '') redPurpleCell(ws.getCell(rn, base + 0), kyusoku, fontSize);
@@ -2687,7 +2690,9 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         // ── 2a.3 非実行時のフォールバック: Wikipedia 最高球速キャップを適用 ──────────
         // Claude API なし（apiKey 未設定）かつ wikiProfile に球速情報がある場合に限り適用。
         // 2a.3 が実行された場合は careerPeakSpeeds が同様のキャップを担うためスキップ。
-        if (!apiKey && wikiProfile?._capPeak && wikiProfile?._capKey) {
+        // ★ capPeak < 93mph（≒150km/h未満）はキャップ不適用。
+        //   Wikipedia が変化球・晩年球速のみ言及する場合に速球が誤って下げられるのを防ぐ。
+        if (!apiKey && wikiProfile?._capPeak && wikiProfile?._capPeak >= 93 && wikiProfile?._capKey) {
           const capKey  = wikiProfile._capKey;
           const capPeak = wikiProfile._capPeak;        // Wikipedia 最高球速 (mph)
           const seasonAvgCap = capPeak - 3.7;          // 瞬間最大 → シーズン平均上限
