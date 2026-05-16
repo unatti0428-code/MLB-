@@ -1348,26 +1348,35 @@ function parsePitchProfile(text) {
   const pitchKeys  = pitchOrder.map(p => p.key);
   const primaryKey = pitchKeys[0] ?? null;
 
-  // 球速の抽出: 80-106mph の数値（投手の実用球速範囲）
-  // 対応フォーマット: "100 mph" / "100mph" / "100 miles per hour" / "161 km/h"(→mph換算)
-  const veloMentions = [];
-  const _addVelo = (v) => { if (v >= 80 && v <= 106) veloMentions.push(v); };
-
-  // ① "NNN mph" / "NNN-NNN mph" 形式
-  for (const m of text.matchAll(/(\d{2,3})\s*(?:[-–to]+\s*(\d{2,3}))?\s*mph/gi)) {
+  // ── 球速の抽出: fastball 関連の mph 値を優先して取得 ─────────────────────────
+  // ★ km/h 変換は廃止: 丸め誤差で 93mph スプリッター→94mph と誤判定しキャップが
+  //   誤発動する問題があったため削除。mph / miles per hour 表記のみ対応。
+  //
+  // 抽出戦略:
+  //   ① fastball 関連キーワード近傍（前後 200 文字）の mph 値 → fastballVeloMentions
+  //   ② それ以外の全 mph 値                                    → allVeloMentions
+  // 優先度: ① > ②（① があれば ① の MAX を使用、なければ ② の MAX）
+  // これにより "93mph splitter" は除外し "100mph fastball" だけをキャップに使える。
+  const _FASTBALL_WORDS = [
+    'fastball', 'four-seam', '4-seam', 'four seam', '4 seam', 'two-seam', '2-seam',
+    'heater', 'heat', 'straight', 'sinker', 'sinking fastball', 'gas', 'fireball',
+  ];
+  const _VPH_RE = /(\d{2,3})\s*(?:[-–to]+\s*(\d{2,3}))?\s*(?:mph|miles per hour)/gi;
+  const _rawVelos = []; // { mph, pos }
+  for (const m of text.matchAll(_VPH_RE)) {
     const v1 = parseInt(m[1]), v2 = m[2] ? parseInt(m[2]) : null;
-    _addVelo(v1); if (v2) _addVelo(v2);
+    if (v1 >= 80 && v1 <= 106) _rawVelos.push({ mph: v1, pos: m.index });
+    if (v2 && v2 >= 80 && v2 <= 106) _rawVelos.push({ mph: v2, pos: m.index });
   }
-  // ② "NNN miles per hour" 形式（mph 略さない場合）
-  for (const m of text.matchAll(/(\d{2,3})\s*(?:[-–to]+\s*(\d{2,3}))?\s*miles per hour/gi)) {
-    const v1 = parseInt(m[1]), v2 = m[2] ? parseInt(m[2]) : null;
-    _addVelo(v1); if (v2) _addVelo(v2);
-  }
-  // ③ "NNN km/h" / "NNN kph" 形式 → mph 換算（投手速度帯: 128-170 km/h ≒ 80-106mph）
-  for (const m of text.matchAll(/(\d{3})\s*(?:[-–to]+\s*(\d{3}))?\s*(?:km\/h|kph)/gi)) {
-    const toMph = (kmh) => Math.round(parseInt(kmh) / 1.60934);
-    _addVelo(toMph(m[1])); if (m[2]) _addVelo(toMph(m[2]));
-  }
+  const allVeloMentions = _rawVelos.map(v => v.mph);
+  // fastball 関連語句の近傍（前後 200 文字以内）に出現する速度のみ抽出
+  const fastballVeloMentions = _rawVelos
+    .filter(({ mph, pos }) => _FASTBALL_WORDS.some(w =>
+      lower.substring(Math.max(0, pos - 200), pos + 200).includes(w)
+    ))
+    .map(v => v.mph);
+  // 最終的な veloMentions: fastball 関連があればそれ優先、なければ全体
+  const veloMentions = fastballVeloMentions.length > 0 ? fastballVeloMentions : allVeloMentions;
 
   // ── 決め球（out pitch / signature pitch）検出 ──────────────────────────────
   // "weapon", "signature", "best pitch", "out pitch" 等の語句から 200 文字以内に
