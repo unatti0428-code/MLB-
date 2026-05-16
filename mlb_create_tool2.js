@@ -2687,42 +2687,60 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         // ── 2a.3 非実行時のフォールバック: Wikipedia 最高球速キャップを適用 ──────────
         // Claude API なし（apiKey 未設定）かつ wikiProfile に球速情報がある場合に限り適用。
         // 2a.3 が実行された場合は careerPeakSpeeds が同様のキャップを担うためスキップ。
-        //
-        // BIS-split 対策: FanGraphs BIS は「速い部分→si」「遅い部分→ff」に分割するため
-        // si 速度が ff より大幅に高くなる。capKey(ff) だけでなく si も同じキャップで制限する。
         if (!apiKey && wikiProfile?._capPeak && wikiProfile?._capKey) {
           const capKey  = wikiProfile._capKey;
           const capPeak = wikiProfile._capPeak;        // Wikipedia 最高球速 (mph)
           const seasonAvgCap = capPeak - 3.7;          // 瞬間最大 → シーズン平均上限
-          // BIS-split: capKey が 'ff' の場合は 'si' にも同じキャップを適用
-          const capKeys = [capKey];
-          if (capKey === 'ff') capKeys.push('si');
+          const ki = PITCH_KEYS.indexOf(capKey);
           let wikiCapCount = 0;
           const fgFilledYearsForWiki = fgTargetYears.filter(yr => yearHasPct(yr) && +yr < 2015);
-          for (const ck of capKeys) {
-            const ki = PITCH_KEYS.indexOf(ck);
-            for (const yr of fgFilledYearsForWiki) {
-              const d = rawPitch[yr]?.[ck];
-              if (!d || d.velo === '--') continue;
+          for (const yr of fgFilledYearsForWiki) {
+            // ── capKey(ff) のキャップ適用 ──
+            const d = rawPitch[yr]?.[capKey];
+            if (d && d.velo !== '--') {
               const v = parseFloat(d.velo);
-              if (isNaN(v) || v <= seasonAvgCap) continue;
-              rawPitch[yr][ck].velo = String(+seasonAvgCap.toFixed(1));
-              const byr = basic[yr];
-              const bEra = byr ? parseFloat(String(byr.era)) : NaN;
-              const bBaa = byr ? (byr.avg ? Number(byr.avg) * 1000 : NaN) : NaN;
-              const bIp  = byr ? parseFloat(String(byr.ip).replace(/\.(\d)$/, '.$10')) : 0;
-              const bHr9 = (byr && bIp > 0) ? (byr.hr * 9 / bIp) : NaN;
-              const pctNum = parseFloat(String(d.pct).replace('%', ''));
-              const kyui = calcKyuiPreStatcast(seasonAvgCap, ki, isNaN(pctNum) ? 20 : pctNum, bEra, bBaa, bHr9);
-              if (kyui !== '') {
-                if (!showKyuiMap[yr]) showKyuiMap[yr] = {};
-                showKyuiMap[yr][ki] = kyui;
+              if (!isNaN(v) && v > seasonAvgCap) {
+                rawPitch[yr][capKey].velo = String(+seasonAvgCap.toFixed(1));
+                const byr = basic[yr];
+                const bEra = byr ? parseFloat(String(byr.era)) : NaN;
+                const bBaa = byr ? (byr.avg ? Number(byr.avg) * 1000 : NaN) : NaN;
+                const bIp  = byr ? parseFloat(String(byr.ip).replace(/\.(\d)$/, '.$10')) : 0;
+                const bHr9 = (byr && bIp > 0) ? (byr.hr * 9 / bIp) : NaN;
+                const pctNum = parseFloat(String(d.pct).replace('%', ''));
+                const kyui = calcKyuiPreStatcast(seasonAvgCap, ki, isNaN(pctNum) ? 20 : pctNum, bEra, bBaa, bHr9);
+                if (kyui !== '') { if (!showKyuiMap[yr]) showKyuiMap[yr] = {}; showKyuiMap[yr][ki] = kyui; }
+                wikiCapCount++;
               }
-              wikiCapCount++;
+            }
+            // ── BIS-split 対策: si が ff より 4mph 以上速い年のみ si もキャップ ──────
+            // FanGraphs BIS は「速い部分→si」「遅い部分→ff」に分割するため si が実際の
+            // ファストボールより高く記録される。この場合のみ si にも同じキャップを適用する。
+            // 通常のシンカー投手（si ≈ ff）は対象外にして誤キャップを防ぐ。
+            if (capKey === 'ff') {
+              const ffD = rawPitch[yr]?.['ff'];
+              const siD = rawPitch[yr]?.['si'];
+              if (siD && siD.velo !== '--' && ffD && ffD.velo !== '--') {
+                const siV = parseFloat(siD.velo);
+                const ffV = parseFloat(ffD.velo);
+                // si > ff + 4mph → BIS-split と判断してsiもキャップ
+                if (!isNaN(siV) && !isNaN(ffV) && siV > ffV + 4 && siV > seasonAvgCap) {
+                  const siKi = PITCH_KEYS.indexOf('si');
+                  rawPitch[yr]['si'].velo = String(+seasonAvgCap.toFixed(1));
+                  const byr = basic[yr];
+                  const bEra = byr ? parseFloat(String(byr.era)) : NaN;
+                  const bBaa = byr ? (byr.avg ? Number(byr.avg) * 1000 : NaN) : NaN;
+                  const bIp  = byr ? parseFloat(String(byr.ip).replace(/\.(\d)$/, '.$10')) : 0;
+                  const bHr9 = (byr && bIp > 0) ? (byr.hr * 9 / bIp) : NaN;
+                  const siPct = parseFloat(String(siD.pct).replace('%', ''));
+                  const siKyui = calcKyuiPreStatcast(seasonAvgCap, siKi, isNaN(siPct) ? 20 : siPct, bEra, bBaa, bHr9);
+                  if (siKyui !== '') { if (!showKyuiMap[yr]) showKyuiMap[yr] = {}; showKyuiMap[yr][siKi] = siKyui; }
+                  wikiCapCount++;
+                }
+              }
             }
           }
           if (wikiCapCount > 0) {
-            onProgress(`[2a.2 Wikipedia キャップ] ${capKeys.join('+')} 最高球速 ${capPeak}mph → シーズン平均上限 ${seasonAvgCap.toFixed(1)}mph 適用 (${wikiCapCount}年)`);
+            onProgress(`[2a.2 Wikipedia キャップ] ${capKey}(+BIS-split si) 最高球速 ${capPeak}mph → シーズン平均上限 ${seasonAvgCap.toFixed(1)}mph 適用 (${wikiCapCount}年)`);
           }
         }
 
