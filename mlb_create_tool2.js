@@ -3129,7 +3129,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
       }
     }
 
-    return { rawPitch, showKyuiMap, pitchNameOverrides };
+    return { rawPitch, showKyuiMap, pitchNameOverrides, wikiProfile };
   } finally {
     await browser.close();
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
@@ -3303,7 +3303,7 @@ async function runCreateJob(jobId, params) {
 
     upd('ブラウザを起動して Baseball Savant / MLB The Show から球種データを取得中...');
     const apiKey = params.apiKey || process.env.ANTHROPIC_API_KEY || '';
-    const { rawPitch, showKyuiMap, pitchNameOverrides } = await fetchBrowserData(params.slug, params.id, years, upd, params.name, apiKey, params.fullName || '', basic);
+    const { rawPitch, showKyuiMap, pitchNameOverrides, wikiProfile } = await fetchBrowserData(params.slug, params.id, years, upd, params.name, apiKey, params.fullName || '', basic);
 
     upd('Excel ファイルを生成中...');
     const outFile = await buildExcel(params.name, years, basic, vsLeftByYear, rawPitch);
