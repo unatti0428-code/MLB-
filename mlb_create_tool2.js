@@ -1520,7 +1520,10 @@ async function fetchWikipediaPitchProfile(searchName) {
  * @returns {{ veloMentions:number[], outPitchKey:string|null, pageTitle:string, sectionText:string } | null}
  */
 async function fetchJaWikiCharSection(searchName) {
-  if (!searchName || !searchName.trim()) return null;
+  // searchName はオブジェクト { _jaTitle: "..." } または文字列のどちらも受け付ける
+  if (!searchName) return null;
+  if (typeof searchName === 'object' && !searchName._jaTitle) return null;
+  if (typeof searchName === 'string' && !searchName.trim()) return null;
 
   const jaWikiGet = url => new Promise((resolve, reject) => {
     const mod = url.startsWith('https') ? require('https') : require('http');
