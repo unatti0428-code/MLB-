@@ -1142,6 +1142,7 @@ const TEAM_ABBR_NORMALIZE = {
   'MON': 'WSH',  'WSN': 'WSH',  'WAS': 'WSH',         // Nationals
   'SDP': 'SD',                                        // Padres
   'SFG': 'SF',  'SFN': 'SF',                          // Giants
+  'SLN': 'STL',                                        // Cardinals
   // ── フルチーム名 → 略称（APIがabbreviationを返さない場合のフォールバック）──
   'New York Yankees':               'NYY',
   'New York Mets':                  'NYM',
