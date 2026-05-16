@@ -1349,11 +1349,24 @@ function parsePitchProfile(text) {
   const primaryKey = pitchKeys[0] ?? null;
 
   // 球速の抽出: 80-106mph の数値（投手の実用球速範囲）
+  // 対応フォーマット: "100 mph" / "100mph" / "100 miles per hour" / "161 km/h"(→mph換算)
   const veloMentions = [];
+  const _addVelo = (v) => { if (v >= 80 && v <= 106) veloMentions.push(v); };
+
+  // ① "NNN mph" / "NNN-NNN mph" 形式
   for (const m of text.matchAll(/(\d{2,3})\s*(?:[-–to]+\s*(\d{2,3}))?\s*mph/gi)) {
     const v1 = parseInt(m[1]), v2 = m[2] ? parseInt(m[2]) : null;
-    if (v1 >= 80 && v1 <= 106) veloMentions.push(v1);
-    if (v2 && v2 >= 80 && v2 <= 106) veloMentions.push(v2);
+    _addVelo(v1); if (v2) _addVelo(v2);
+  }
+  // ② "NNN miles per hour" 形式（mph 略さない場合）
+  for (const m of text.matchAll(/(\d{2,3})\s*(?:[-–to]+\s*(\d{2,3}))?\s*miles per hour/gi)) {
+    const v1 = parseInt(m[1]), v2 = m[2] ? parseInt(m[2]) : null;
+    _addVelo(v1); if (v2) _addVelo(v2);
+  }
+  // ③ "NNN km/h" / "NNN kph" 形式 → mph 換算（投手速度帯: 128-170 km/h ≒ 80-106mph）
+  for (const m of text.matchAll(/(\d{3})\s*(?:[-–to]+\s*(\d{3}))?\s*(?:km\/h|kph)/gi)) {
+    const toMph = (kmh) => Math.round(parseInt(kmh) / 1.60934);
+    _addVelo(toMph(m[1])); if (m[2]) _addVelo(toMph(m[2]));
   }
 
   // ── 決め球（out pitch / signature pitch）検出 ──────────────────────────────
@@ -1459,9 +1472,9 @@ async function fetchWikipediaPitchProfile(searchName) {
       }
     }
 
-    // ── Step 2: 記事テキストを取得（最大 25000 文字）──
+    // ── Step 2: 記事テキストを取得（最大 50000 文字）──
     // クレメンス・ジョンソン等の長大記事では「Pitching style」セクションが
-    // 8000 文字以降に来ることがある。25000 文字まで拡張して球速言及を確実に捕捉する。
+    // 25000 文字以降に来る場合がある。50000 文字まで拡張して球速言及を確実に捕捉する。
     const qt = encodeURIComponent(bestTitle);
     const extractRes = await wikiGet(
       `https://en.wikipedia.org/w/api.php?action=query&titles=${qt}&prop=extracts&explaintext=true&format=json&origin=*`
@@ -1472,7 +1485,7 @@ async function fetchWikipediaPitchProfile(searchName) {
     const page = Object.values(pages)[0];
     if (!page || page.missing !== undefined) return null;
 
-    const fullText = (page.extract || '').slice(0, 25000);
+    const fullText = (page.extract || '').slice(0, 50000);
     if (!fullText) return null;
 
     const profile = parsePitchProfile(fullText);
