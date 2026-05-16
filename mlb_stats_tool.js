@@ -1133,15 +1133,15 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
 // MLB Stats API が返す略称はシーズン・移転により揺れがあるため統一する
 const TEAM_ABBR_NORMALIZE = {
   // ── 略称の表記揺れ ────────────────────────────────────────────────────────
-  'TBD': 'TB',  'TBR': 'TB',
-  'KCR': 'KC',
-  'CHW': 'CWS',
-  'ANA': 'LAA',  'CAL': 'LAA',
-  'OAK': 'ATH',
-  'FLA': 'MIA',
-  'MON': 'WSH',  'WSN': 'WSH',
-  'SDP': 'SD',
-  'SFG': 'SF',
+  'TBD': 'TB',  'TBR': 'TB',  'TBA': 'TB',          // Rays
+  'KCR': 'KC',                                        // Royals
+  'CHW': 'CWS',                                       // White Sox
+  'ANA': 'LAA',  'CAL': 'LAA',                        // Angels
+  'OAK': 'ATH',                                       // Athletics
+  'FLA': 'MIA',  'FLO': 'MIA',                        // Marlins
+  'MON': 'WSH',  'WSN': 'WSH',  'WAS': 'WSH',         // Nationals
+  'SDP': 'SD',                                        // Padres
+  'SFG': 'SF',  'SFN': 'SF',                          // Giants
   // ── フルチーム名 → 略称（APIがabbreviationを返さない場合のフォールバック）──
   'New York Yankees':               'NYY',
   'New York Mets':                  'NYM',
