@@ -3452,6 +3452,31 @@ async function buildExcel(playerName, years, basic, vsLeftByYear, rawPitch) {
 
   // Career pitch data: アウト数加重平均
   const careerPitch = emptyPitchP();
+
+  // ── 通算 pct 専用: キャリア全体のアウト数を分母に使用 ────────────────────────
+  // 【修正理由】球種ごとに「velo が有効な年だけ」を分母にすると、
+  // 途中から球種を変えた投手（例: RA Dickey のナックルボール転向）で
+  // 分母が球種によって異なり、通算割合が大きく歪む。
+  // 正しい通算 pct = Σ(全年の pct × アウト数) / Σ(キャリア全体のアウト数)
+  // 未使用年（pct = '--'）は 0% として扱い分母には含める。
+  const _totalCareerOuts = years.reduce((s, yr) => s + ipToOuts(basic[yr]?.ip || '0'), 0);
+  const _careerPctRaw = {};
+  if (_totalCareerOuts > 0) {
+    for (const key of PITCH_KEYS) {
+      const sumPctOuts = years.reduce((s, yr) => {
+        const outs = ipToOuts(basic[yr]?.ip || '0');
+        if (!outs) return s;
+        const d = rawPitch[yr]?.[key];
+        if (!d || d.pct == null || d.pct === '--') return s; // 未使用年は 0%
+        const pct = parseFloat(String(d.pct).replace('%', ''));
+        if (isNaN(pct) || pct <= 0) return s;
+        return s + pct * outs;
+      }, 0);
+      const avg = sumPctOuts / _totalCareerOuts;
+      _careerPctRaw[key] = avg >= 0.05 ? String(avg.toFixed(1)) : '--';
+    }
+  }
+
   for (const key of PITCH_KEYS) {
     const entries = years
       .map(yr => ({ outs: ipToOuts(basic[yr]?.ip || '0'), d: rawPitch[yr]?.[key] }))
@@ -3476,7 +3501,8 @@ async function buildExcel(playerName, years, basic, vsLeftByYear, rawPitch) {
       velo: wAvg('velo', false),
       ba:   wAvg('ba',   true),
       slg:  wAvg('slg',  true),
-      pct:  wAvg('pct',  false),  // % 形式で保存（decimal変換しない）
+      // pct は全キャリアのアウト数を分母にした値を使用（球種ごとの分母バグを修正）
+      pct:  _careerPctRaw[key] ?? '--',
     };
   }
 
