@@ -1024,7 +1024,7 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
         if (showKyui !== undefined) {
           kyui = Math.max(30, Math.min(110, Number(showKyui) + perfBoost));
         } else if (!isNaN(veloNum) && veloNum > 0) {
-          // フォールバック②: 通算行など showKyuiMap にキーがない場合 → 球速 + 補正で推定
+          // フォールバック②: showKyuiMap にキーがない場合（未取得年・データ欠損）→ 球速 + 補正で推定
           const est = calcKyuiPreStatcast(veloNum, pg.idx, pctNum, perfEra, perfBaa1000, perfHr9);
           if (est !== '') kyui = est;
         }
@@ -3642,6 +3642,36 @@ async function runCreateJob(jobId, params) {
 
     upd('Excel ファイルを生成中...');
     const outFile = await buildExcel(params.name, years, basic, vsLeftByYear, rawPitch);
+
+    // ── 通算 showKyuiMap: 各年の球威をイニング数 × 投球割合で加重平均 ──────────────
+    // 【目的】通算行の addAbilityToFile で showKyuiMap['通算'] が参照されるが、
+    //        未設定の場合は球速推定にフォールバックするため精度が低下する。
+    //        各年の showKyuiMap[yr][idx] をアウト数加重平均して通算値を算出する。
+    // 【重み】アウト数のみ（pct は全年比較で「その球種を多用した年」を優遇すると
+    //         転向選手で歪む）。ただし pct < 5 の年（球種未使用）はスキップ。
+    {
+      const _careerKyui = {};
+      for (let idx = 0; idx < PITCH_KEYS.length; idx++) {
+        const key = PITCH_KEYS[idx];
+        let sumKyuiOuts = 0, sumOuts = 0;
+        for (const yr of years) {
+          const outs = ipToOuts(basic[yr]?.ip || '0');
+          if (!outs) continue;
+          // 投球割合 5% 未満の年（その球種をほぼ投げていない年）はスキップ
+          const pct = parseFloat(String(rawPitch[yr]?.[key]?.pct ?? '').replace('%', ''));
+          if (isNaN(pct) || pct < 5) continue;
+          const kyui = showKyuiMap[yr]?.[idx];
+          if (kyui === undefined) continue;
+          sumKyuiOuts += Number(kyui) * outs;
+          sumOuts     += outs;
+        }
+        if (sumOuts > 0) _careerKyui[idx] = Math.round(sumKyuiOuts / sumOuts);
+      }
+      if (Object.keys(_careerKyui).length > 0) {
+        showKyuiMap['通算'] = _careerKyui;
+        upd(`[通算球威] イニング数加重平均: ${Object.entries(_careerKyui).map(([i,v])=>`${PITCH_NAMES_JA[i]}=${v}`).join(' ')}`);
+      }
+    }
 
     upd('スタミナ・制球を計算中...');
     let abilityRows = 0;
