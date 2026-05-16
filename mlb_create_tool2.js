@@ -957,7 +957,34 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
 
       const base = PITCH_ABILITY_START_COL + i * 3;
 
-      const kyusoku = calcKyuSoku(veloNum);
+      // BG列（球速）= 最高球速。
+      // 先発投手は長いイニングをペーシングするため FanGraphs/推定のシーズン平均は
+      // 実際のゲーム最高球速より 3mph 程度低い。非 Statcast 年（BA='--'）かつ
+      // 先発比率 > 50% の場合に +3mph を加算して最高球速に近似させる。
+      // Statcast 年（BA あり）は計測精度が高いためそのまま使用。
+      // 中継ぎ・抑えはシーズン平均 ≈ 最高球速のためブーストなし。
+      const _isStarter       = gs > 0 && g > 0 && (gs / g) > 0.5;
+      const _hasStatcastVelo = baStr !== '--' && baStr !== '';
+      const _starterBoostMph = (!_hasStatcastVelo && _isStarter) ? 3 : 0;
+      // ── BIS-split 対策: フォーシーム(idx=0)の非Statcast先発年 ──────────────────
+      // FanGraphs BIS は「速い部分→si」「遅い部分→ff」に分割して記録するケースがある。
+      // その場合、si の速度が ff より大幅に高く（>4mph）なる。
+      // BG列（最高球速）は速球の最高球速を表すため、si と ff の速い方を採用する。
+      // ※ Statcast 年(BA あり)は正確な計測値が入るためそのままとする。
+      let _bgVeloNum = veloNum;
+      let _bisSplitDetected = false; // BIS-split検知フラグ（球速・球威両方の補正に使用）
+      if (pg.idx === 0 && !_hasStatcastVelo && !isNaN(veloNum)) {
+        // pitchData[5] = シンカー(si)
+        const _siPd  = pitchData[5];
+        const _siPct = _siPd ? parseFloat(String(_siPd.pct ?? '').replace('%', '')) : NaN;
+        const _siV   = (_siPd && !isNaN(_siPct) && _siPct >= 5)
+                       ? parseFloat(String(_siPd.velo || '')) : NaN;
+        if (!isNaN(_siV) && _siV > veloNum + 4) {
+          _bgVeloNum = _siV; // si が ff より 4mph 以上速い → si 速度を BG・球威表示に使用
+          _bisSplitDetected = true;
+        }
+      }
+      const kyusoku = calcKyuSoku(isNaN(_bgVeloNum) ? _bgVeloNum : _bgVeloNum + _starterBoostMph);
       if (kyusoku !== '') redPurpleCell(ws.getCell(rn, base + 0), kyusoku, fontSize);
 
       const ah = calcAH_pitch(pg.idx, baNum);
@@ -970,6 +997,14 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
       } else {
         // BA/SLG なし年: パフォーマンス補正値を算出
         const perfBoost = calcPerfBoost(perfEra, perfBaa1000, perfHr9);
+        // ── BIS-split 対策: フォーシーム(idx=0)で si 速度を採用した年 ──────────────
+        // FanGraphs BIS は「速い部分→si」「遅い部分→ff」に分割して記録するケースがある。
+        // showKyuiMap[yr][0] は低速 ff 値で計算されているため球威が過小になる。
+        // BIS-split 検知時は si の高速値（_bgVeloNum）で 球威 を再計算して上書きする。
+        if (_bisSplitDetected) {
+          const est = calcKyuiPreStatcast(_bgVeloNum, pg.idx, pctNum, perfEra, perfBaa1000, perfHr9);
+          if (est !== '') kyui = Math.max(30, Math.min(110, Number(est) + perfBoost));
+        } else {
         // フォールバック①: showKyuiMap（The Show / FanGraphs / 推定データ）+ 補正
         const showKyui = showKyuiMap[yr]?.[pg.idx];
         if (showKyui !== undefined) {
@@ -979,11 +1014,14 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
           const est = calcKyuiPreStatcast(veloNum, pg.idx, pctNum, perfEra, perfBaa1000, perfHr9);
           if (est !== '') kyui = est;
         }
+        }
         // ── 球威キャップ（③以降推定年: 投球回数・防御率による上限制約）─────────────────
         // ①②(Baseball Savant 実測) は BA/SLG あり → if(ah!==''&&ai!=='') ブランチを通るため制約なし。
         // ③(推定)/④(FanGraphs)/⑤(Claude+AgingCurve) は BA/SLG='--' → このブランチで制約適用。
         // 通算行はスキップ（yr==='通算' は年度別IPが不明のため）。
         //
+        // IP 200-270: ERA≧3.70 → ×0.4, 3.69-2.70 → ×0.5, 2.69-1.70 → ×0.6  (閾値95, ベース95)
+        // IP 151-199: ERA≧3.30 → ×0.4, 3.29-2.30 → ×0.5, 2.29-1.30 → ×0.6  (閾値95, ベース95)
         // IP 100-150: ERA≧3.00 → ×0.4, 2.99-2.00 → ×0.5, 1.99-1.00 → ×0.6  (閾値95, ベース95)
         // IP 75-99:   ERA≧2.80 → ×0.4, 2.79-1.80 → ×0.5, 1.79-0.80 → ×0.6  (閾値95, ベース95)
         // IP 35-74:   ERA≧2.50 → ×0.4, 2.49-1.50 → ×0.5, 1.49-0.50 → ×0.6  (閾値95, ベース95)
@@ -994,7 +1032,15 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
             const A = Number(kyui);
             let base = 95, threshold = 95, mult = null;
 
-            if (ip >= 100 && ip <= 150) {
+            if (ip >= 200 && ip <= 270) {
+              if      (eraNum >= 3.70)              { threshold = 95; mult = 0.4; }
+              else if (eraNum >= 2.70)              { threshold = 95; mult = 0.5; }
+              else if (eraNum >= 1.70)              { threshold = 95; mult = 0.6; }
+            } else if (ip >= 151 && ip < 200) {
+              if      (eraNum >= 3.30)              { threshold = 95; mult = 0.4; }
+              else if (eraNum >= 2.30)              { threshold = 95; mult = 0.5; }
+              else if (eraNum >= 1.30)              { threshold = 95; mult = 0.6; }
+            } else if (ip >= 100 && ip <= 150) {
               if      (eraNum >= 3.00)              { threshold = 95; mult = 0.4; }
               else if (eraNum >= 2.00)              { threshold = 95; mult = 0.5; }
               else if (eraNum >= 1.00)              { threshold = 95; mult = 0.6; }
@@ -2293,6 +2339,8 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
     const careerLenNum  = lastYearNum - debutYearNum + 1;
     // Claude キャリアプロファイル（2c で取得 → 2d で活用）
     let claudeProfile = null;
+    // Wikipedia 球種プロファイル（2a.2 で取得 → 2d.5 で活用）
+    let wikiProfile = null;
     // The Show が充填した年（2d で velo を aging curve 補正するために追跡）
     const showFilledYears = new Set();
     // The Show カード参照（2d でピーク球速の下限推定に使用）
@@ -2357,7 +2405,7 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
         // Wikipedia 公開 API から投手の球種・球速情報を取得して FanGraphs データを検証する。
         // Anthropic API 不要のため常に実行する。結果は 2a.3 の Claude 補正がない場合の
         // フォールバックとして、または 2a.3 の補強として活用する。
-        let wikiProfile = null;
+        // ※ wikiProfile は外側スコープで宣言済み（Step 2d.5 でも参照するため）
         {
           // 日本語名は除去して英語名で検索（Wikipedia は英語版を優先）
           const wikiSearchName = (englishName || playerName).replace(/[　-鿿゠-ヿ぀-ゟ]/g, '').trim();
@@ -2424,54 +2472,12 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
           }
         }
 
-        // ── 2a.2b: Wikipedia primaryKey を使った si→ff 誤分類修正 ──────────────
-        // FanGraphs BIS の問題: 高速投手（Randy Johnson等）でも FB%1 を
-        //   ① 速度の高い部分 → si (BIS二塁手系バケット)
-        //   ② 速度の低い部分 → ff (スライダー等の誤分類含む)
-        // のように2つに分割して記録するケースがある。
-        // Wikipedia が 'ff' をプライマリ球種として示し、かつ 'si' を言及しない場合は
-        // 「si はファストボール(ff)の誤分類」と判断して si → ff に再分類する。
-        if (wikiProfile &&
-            wikiProfile.primaryKey === 'ff' &&
-            wikiProfile.pitchKeys.length > 0 &&
-            !wikiProfile.pitchKeys.includes('si')) {
-          const fgMisclassYears = fgTargetYears.filter(y => yearHasPct(y) && +y < 2015);
-          let reclassCount = 0;
-          for (const yr of fgMisclassYears) {
-            const ffD = rawPitch[yr]?.['ff'];
-            const siD = rawPitch[yr]?.['si'];
-            if (!siD || siD.velo === '--' || siD.pct === '--') continue;
-
-            const siVelo = parseFloat(siD.velo);
-            const siPct  = parseFloat(String(siD.pct).replace('%', ''));
-            if (isNaN(siVelo) || isNaN(siPct) || siVelo <= 0 || siPct <= 0) continue;
-
-            const ffVelo = (ffD && ffD.velo !== '--') ? parseFloat(ffD.velo) : 0;
-            const ffPct  = (ffD && ffD.pct  !== '--') ? parseFloat(String(ffD.pct).replace('%', '')) : 0;
-
-            // si が ff より 3mph 以上速く、かつ si の投球割合が ff より高い場合
-            // → si が実際のファストボール、ff は誤分類 or 別球種の可能性
-            if (siVelo > ffVelo + 3 && siPct > ffPct) {
-              // si のデータを ff に移動（BA/SLG も含む）
-              rawPitch[yr]['ff'] = { ...siD };
-              rawPitch[yr]['si'] = { velo: '--', ba: '--', slg: '--', pct: '--' };
-              // showKyuiMap も更新 (ff idx=0, si idx=5)
-              if (showKyuiMap[yr]) {
-                if (showKyuiMap[yr][5] !== undefined) {
-                  showKyuiMap[yr][0] = showKyuiMap[yr][5];
-                  delete showKyuiMap[yr][5];
-                }
-              }
-              const siKmh = Math.round(siVelo * 1.6 + 4);
-              const ffKmh = ffVelo > 0 ? Math.round(ffVelo * 1.6 + 4) : '--';
-              onProgress(`[2a.2b Wikipedia再分類] ${yr}: si(${siKmh}km/h,${Math.round(siPct)}%) > ff(${ffKmh}km/h,${Math.round(ffPct)}%) → Wikipedia='ff'優先 → si を ff に再分類`);
-              reclassCount++;
-            }
-          }
-          if (reclassCount > 0) {
-            onProgress(`[2a.2b] ${reclassCount}年で si→ff 再分類完了（Wikipedia: ${wikiProfile.pageTitle} で「sinker」の記述なし）`);
-          }
-        }
+        // ── 2a.2b: ※ 無効化 ──────────────────────────────────────────────────────
+        // このステップは aging curve (Step 2d) より前に実行されるため、
+        // 2a.2b で si をクリアしても Step 2d が si を再推定して上書きしてしまう問題があった。
+        // また 2008-2009 等の FG si 実測値（aging curve の参照年）を早期に削除すると
+        // aging curve の参照年が消えて推定精度が低下する。
+        // → si→ff 速度転写は aging curve 完了後の Step 2d.5 で実施する。
 
         // ── 2a.3: 複数ソース補正 (THT/MLB.com/BR/Wikipedia/BA) ─────────────────
         // FanGraphs BIS の球種分類・球速誤りを一次資料で検証して補正する。
@@ -2951,6 +2957,55 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
           }
           onProgress(`The Show 年 velo 補正完了: ${showVeloOverrideYears.join(', ')} → aging curve 速球+3/変化球+1 ± 成績補正適用`);
         }
+      }
+    }
+
+    // ── 2d.5: Wikipedia primaryKey='ff' 選手の si→ff 速度転写（aging curve 後）────
+    // aging curve 完了後に実施することで、FG si 実測年（2008-2009等）が aging curve の
+    // 参照年として正しく機能した上で、最終的に si の速度を ff に転写できる。
+    // 条件: Wikipedia primaryKey='ff' かつ si が ff より 3mph 以上速い年
+    // 処理: rawPitch[yr]['ff'].velo ← si の速度（ff の pct は保持）、si を無効化
+    if (wikiProfile?.primaryKey === 'ff') {
+      let d5Count = 0;
+      for (const yr of years.filter(y => y !== '通算')) {
+        const ffD = rawPitch[yr]?.['ff'];
+        const siD = rawPitch[yr]?.['si'];
+        if (!siD || siD.velo === '--') continue;
+        const siVelo = parseFloat(siD.velo);
+        if (isNaN(siVelo) || siVelo <= 0) continue;
+        const ffVelo = (ffD && ffD.velo !== '--') ? parseFloat(ffD.velo) : 0;
+        if (siVelo <= ffVelo + 3) continue; // si が大幅に速くない年はスキップ
+
+        // ff の速度を si の速度で上書き（投球割合は ff のものを保持）
+        const ffPct = (ffD && ffD.pct !== '--') ? ffD.pct : siD.pct;
+        rawPitch[yr]['ff'] = {
+          velo: siD.velo,
+          ba:   ffD?.ba  ?? '--',
+          slg:  ffD?.slg ?? '--',
+          pct:  ffPct,
+        };
+        rawPitch[yr]['si'] = { velo: '--', ba: '--', slg: '--', pct: '--' };
+
+        // showKyuiMap: si(idx=5) のエントリを削除し ff(idx=0) を新速度で再計算
+        if (showKyuiMap[yr]) {
+          delete showKyuiMap[yr][5];
+          const byr  = basic[yr];
+          const bEra = byr ? parseFloat(String(byr.era)) : NaN;
+          const bBaa = byr ? (byr.avg ? Number(byr.avg) * 1000 : NaN) : NaN;
+          const bIp  = byr ? parseFloat(String(byr.ip).replace(/\.(\d)$/, '.$10')) : 0;
+          const bHr9 = (byr && bIp > 0) ? (byr.hr * 9 / bIp) : NaN;
+          const pctNum = parseFloat(String(ffPct).replace('%', ''));
+          const newKyui = calcKyuiPreStatcast(siVelo, 0, isNaN(pctNum) ? 20 : pctNum, bEra, bBaa, bHr9);
+          if (newKyui !== '') showKyuiMap[yr][0] = newKyui;
+        }
+
+        const siKmh = Math.round(siVelo * 1.6 + 4);
+        const ffKmh = ffVelo > 0 ? Math.round(ffVelo * 1.6 + 4) : '--';
+        onProgress(`[2d.5 si→ff転写] ${yr}: si=${siKmh}km/h → ff(旧${ffKmh}km/h) 速度転写、割合=${ffPct}%保持`);
+        d5Count++;
+      }
+      if (d5Count > 0) {
+        onProgress(`[2d.5] ${d5Count}年でsi→ff速度転写完了（aging curve後・Wikipedia primaryKey='ff'）`);
       }
     }
 
