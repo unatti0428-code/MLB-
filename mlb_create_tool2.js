@@ -824,7 +824,11 @@ const OMOSA_COL     = 56;
 const TAILEFT_COL   = 57;
 const TAITOURUI_COL = 58;
 
-async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides = {}) {
+async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides = {}, extraOptions = {}) {
+  // extraOptions:
+  //   outPitchBoosts {Object}  idx → 追加球威ポイント  (例: {6: 5} でスプリット+5)
+  //   wikiCapKmh     {number|null}  BG列の実km/h上限（Wikipedia 最高球速の実変換値）
+  const { outPitchBoosts = {}, wikiCapKmh = null } = extraOptions;
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(xlsxPath);
   const ws = wb.worksheets[0];
@@ -984,7 +988,14 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
           _bisSplitDetected = true;
         }
       }
-      const kyusoku = calcKyuSoku(isNaN(_bgVeloNum) ? _bgVeloNum : _bgVeloNum + _starterBoostMph);
+      let kyusoku = calcKyuSoku(isNaN(_bgVeloNum) ? _bgVeloNum : _bgVeloNum + _starterBoostMph);
+      // ── Wikipedia 最高球速 km/h キャップ（BG列表示上限）──────────────────────────
+      // Wikipedia が最高球速（例: 100mph=161km/h）を明記している場合、
+      // ゲームスケール換算(×1.6+4)の誤差でキャップを超えることがあるため実変換値で上限を設定。
+      // ff(idx=0)・si(idx=5) の主速球グループにのみ適用する。
+      if (wikiCapKmh && kyusoku !== '' && (pg.idx === 0 || pg.idx === 5) && Number(kyusoku) > wikiCapKmh) {
+        kyusoku = wikiCapKmh;
+      }
       if (kyusoku !== '') redPurpleCell(ws.getCell(rn, base + 0), kyusoku, fontSize);
 
       const ah = calcAH_pitch(pg.idx, baNum);
@@ -1075,6 +1086,14 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
         const ovName = pitchNameOverrides[pg.idx] ?? '';
         const isKnuckleball = ovName === 'ナックル';
         if (isKnuckleball) kyui = Math.max(30, Math.min(110, Number(kyui) + 5));
+      }
+      // ── Wikipedia 決め球 球威補正 ─────────────────────────────────────────────
+      // Wikipedia テキストから「weapon/signature/out-pitch」等の語句近傍に出現する
+      // 変化球が決め球として検出された場合、その球種の球威に+5 を加算する。
+      // 対象: Statcast年(BA/SLG実測)・非Statcast年ともに適用。
+      // 例: クレメンスのスプリット(idx=6) → 高速スプリットの落差球威を正しく反映
+      if (kyui !== '' && outPitchBoosts[pg.idx]) {
+        kyui = Math.max(30, Math.min(110, Number(kyui) + outPitchBoosts[pg.idx]));
       }
       if (kyui !== '') redPurpleCell(ws.getCell(rn, base + 1), kyui, fontSize);
 
@@ -1334,8 +1353,46 @@ function parsePitchProfile(text) {
     if (v2 && v2 >= 80 && v2 <= 106) veloMentions.push(v2);
   }
 
+  // ── 決め球（out pitch / signature pitch）検出 ──────────────────────────────
+  // "weapon", "signature", "best pitch", "out pitch" 等の語句から 200 文字以内に
+  // 変化球（ff/si 以外）の球種ワードが出現した場合を「決め球」と判定する。
+  // 速球（ff/si）は除外: 速球はほぼ全投手の「主球種」であり、決め球扱いには馴染まない。
+  const _OUT_INDICATORS = [
+    'out pitch', 'out-pitch', 'put-away', 'put away', 'signature', 'best pitch',
+    'weapon', 'devastating', 'go-to pitch', 'go to pitch', 'trademark',
+    'relied on', 'relied heavily', 'primary weapon', 'most effective',
+    'known for', 'feared for', 'deadliest', 'crown jewel', 'bread and butter',
+  ];
+  const _OUT_WINDOW = 200; // 近傍判定ウィンドウ (文字数)
+  let outPitchKey = null;
+
+  // インジケーターの全出現位置を収集
+  const _indPos = [];
+  for (const word of _OUT_INDICATORS) {
+    let pos = 0;
+    while ((pos = lower.indexOf(word, pos)) !== -1) { _indPos.push(pos); pos += word.length; }
+  }
+
+  if (_indPos.length > 0) {
+    let _minDist = _OUT_WINDOW + 1;
+    for (const { key, words } of WIKI_PITCH_PATTERNS) {
+      if (key === 'ff' || key === 'si') continue; // 速球は対象外
+      if (!pitchCounts[key]) continue;            // テキスト中に出現しない球種はスキップ
+      for (const word of words) {
+        let pos = 0;
+        while ((pos = lower.indexOf(word, pos)) !== -1) {
+          for (const ip of _indPos) {
+            const dist = Math.abs(pos - ip);
+            if (dist < _minDist) { _minDist = dist; outPitchKey = key; }
+          }
+          pos += word.length;
+        }
+      }
+    }
+  }
+
   if (pitchKeys.length === 0 && veloMentions.length === 0) return null;
-  return { pitchKeys, primaryKey, pitchCounts, veloMentions };
+  return { pitchKeys, primaryKey, pitchCounts, veloMentions, outPitchKey };
 }
 
 /**
@@ -2461,7 +2518,17 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
                   // フォールバック用として wikiProfile に格納（2a.3 非実行時に使用）
                   wikiProfile._capKey  = primaryFfKey;
                   wikiProfile._capPeak = wikiPeak; // 瞬間最大球速 (mph)
-                  onProgress(`[2a.2 Wikipedia] 最高球速参考値: ${primaryFfKey}=${wikiPeak}mph（2a.3 未実行時のキャップに使用）`);
+                  // 実際の mph→km/h 変換でのキャップ値（BG列表示上限に使用）
+                  // ゲームスケール(×1.6+4)ではなく実換算(×1.60934)で表示上限を設定
+                  // 例: 100mph → 161km/h（ゲームスケールなら164だが実際は161）
+                  wikiProfile._capKmh  = Math.round(wikiPeak * 1.60934);
+                  onProgress(`[2a.2 Wikipedia] 最高球速参考値: ${primaryFfKey}=${wikiPeak}mph (MAX ${wikiProfile._capKmh}km/h)（BG上限・2a.3未実行時キャップに使用）`);
+                }
+                // ── 決め球（out pitch）検出 ──────────────────────────────────────────
+                if (wikiProfile.outPitchKey) {
+                  wikiProfile._outPitchKey = wikiProfile.outPitchKey;
+                  const outJa = { sl:'スライダー', ch:'チェンジアップ', cu:'カーブ', fc:'カット', fs:'スプリット' }[wikiProfile.outPitchKey] ?? wikiProfile.outPitchKey;
+                  onProgress(`[2a.2 Wikipedia] 決め球検出: ${outJa}(${wikiProfile.outPitchKey}) — 球威に+5補正を適用予定`);
                 }
               } else {
                 onProgress('[2a.2 Wikipedia] 球種情報が見つかりませんでした（記事なし、または球種の記述なし）');
@@ -3244,7 +3311,23 @@ async function runCreateJob(jobId, params) {
     upd('スタミナ・制球を計算中...');
     let abilityRows = 0;
     try {
-      abilityRows = await addAbilityToFile(outFile, showKyuiMap, pitchNameOverrides);
+      // ── Wikipedia 決め球ブースト・BG km/h キャップを extraOptions に組み立て ──
+      const _outPitchBoosts = {};
+      if (wikiProfile?._outPitchKey) {
+        const _outIdx = PITCH_KEYS.indexOf(wikiProfile._outPitchKey);
+        if (_outIdx >= 0) {
+          _outPitchBoosts[_outIdx] = 5; // 決め球 +5
+          const _outJa = { sl:'スライダー', ch:'チェンジアップ', cu:'カーブ', fc:'カット', fs:'スプリット' }[wikiProfile._outPitchKey] ?? wikiProfile._outPitchKey;
+          upd(`[決め球補正] ${_outJa}(idx=${_outIdx}) 球威 +5 を全年度に適用`);
+        }
+      }
+      const _wikiCapKmh = wikiProfile?._capKmh ?? null;
+      if (_wikiCapKmh) upd(`[BG上限] Wikipedia最高球速 ${wikiProfile._capPeak}mph → BG列上限 ${_wikiCapKmh}km/h`);
+
+      abilityRows = await addAbilityToFile(outFile, showKyuiMap, pitchNameOverrides, {
+        outPitchBoosts: _outPitchBoosts,
+        wikiCapKmh: _wikiCapKmh,
+      });
       upd(`スタミナ・制球追加完了: ${abilityRows} 行`);
     } catch (e) {
       upd('⚠ スタミナ・制球追加失敗: ' + e.message);
