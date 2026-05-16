@@ -1505,6 +1505,153 @@ async function fetchWikipediaPitchProfile(searchName) {
   }
 }
 
+/**
+ * 日本語 Wikipedia の「選手としての特徴」等のセクションから球速・球種情報を抽出する。
+ * 英語 Wikipedia より正確な最高球速（"最速100mph" 形式）を記述していることが多い。
+ * @param {string} searchName  日本語選手名（カタカナ可）または英語名
+ * @returns {{ veloMentions:number[], outPitchKey:string|null, pageTitle:string, sectionText:string } | null}
+ */
+async function fetchJaWikiCharSection(searchName) {
+  if (!searchName || !searchName.trim()) return null;
+
+  const jaWikiGet = url => new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? require('https') : require('http');
+    mod.get(url, {
+      headers: {
+        'User-Agent': 'MLB-PitchTool/1.0 (Node.js; baseball stats research)',
+        'Accept': 'application/json',
+      },
+    }, res => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        const loc = res.headers.location;
+        if (loc) return jaWikiGet(loc).then(resolve).catch(reject);
+        return reject(new Error('redirect without location'));
+      }
+      let buf = '';
+      res.on('data', c => buf += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(buf)); } catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+
+  // 対象セクション名（日本語 Wikipedia の投手記事で使われるセクション）
+  const TARGET_SECTIONS = [
+    '選手としての特徴', '投球スタイル', '投手としての特徴', 'プレースタイル',
+    '特徴', '球種', '投球',
+  ];
+
+  // 日本語テキストから mph 値を抽出するパターン
+  // 「最速100mph」「100 mph」「100mph」等に対応
+  const _JA_MPH_RE = /(\d{2,3})\s*mph/gi;
+
+  // 日本語球種ワード → PITCH_KEYS マッピング
+  const JA_PITCH_WORDS = [
+    { key: 'ff', words: ['フォーシーム', '4シーム', '速球', '直球', 'ストレート', 'ライジングファストボール', 'ファストボール'] },
+    { key: 'si', words: ['シンカー', 'ツーシーム', '2シーム', 'サインカー', 'ムービングファストボール'] },
+    { key: 'sl', words: ['スライダー', 'カットスライダー', 'スイーパー'] },
+    { key: 'ch', words: ['チェンジアップ', 'サークルチェンジ', 'スクリューボール', 'パームボール'] },
+    { key: 'cu', words: ['カーブ', 'ドロップカーブ', 'ナックルカーブ', 'パワーカーブ'] },
+    { key: 'fc', words: ['カットボール', 'カッター', 'カットファストボール'] },
+    { key: 'fs', words: ['スプリッター', 'スプリット', 'フォークボール', 'フォーク', 'ナックルボール', 'ナックル'] },
+  ];
+
+  // 日本語 決め球 インジケーター
+  const JA_OUT_INDICATORS = [
+    '最大の武器', '代名詞', '得意とした', '決め球', '主武器', '看板', '持ち味',
+    '最も恐れられた', '最も得意', '強みとした', '主要な武器',
+  ];
+
+  try {
+    // Step 1: opensearch で日本語 Wikipedia を検索
+    const q1 = encodeURIComponent(searchName + ' 野球');
+    const searchRes = await jaWikiGet(
+      `https://ja.wikipedia.org/w/api.php?action=opensearch&search=${q1}&limit=5&namespace=0&format=json&origin=*`
+    ).catch(() => null);
+
+    let titles = searchRes?.[1] ?? [];
+    // ヒットなし → " 野球" なしで再検索
+    if (!titles.length) {
+      const q2 = encodeURIComponent(searchName);
+      const fb = await jaWikiGet(
+        `https://ja.wikipedia.org/w/api.php?action=opensearch&search=${q2}&limit=5&namespace=0&format=json&origin=*`
+      ).catch(() => null);
+      titles = fb?.[1] ?? [];
+    }
+    if (!titles.length) return null;
+
+    const bestTitle = titles[0];
+
+    // Step 2: 記事テキスト取得（最大 30000 文字）
+    const qt = encodeURIComponent(bestTitle);
+    const extractRes = await jaWikiGet(
+      `https://ja.wikipedia.org/w/api.php?action=query&titles=${qt}&prop=extracts&explaintext=true&format=json&origin=*`
+    ).catch(() => null);
+
+    const pages = extractRes?.query?.pages;
+    if (!pages) return null;
+    const page = Object.values(pages)[0];
+    if (!page || page.missing !== undefined) return null;
+
+    const fullText = (page.extract || '').slice(0, 30000);
+    if (!fullText) return null;
+
+    // Step 3: 対象セクションを抽出
+    // MediaWiki explaintext は "== セクション名 ==" 形式のヘッダーを含む
+    const sectionParts = [];
+    for (const secName of TARGET_SECTIONS) {
+      // "== 選手としての特徴 ==" 等のヘッダーを探す（前後スペース・レベル違い対応）
+      const secRe = new RegExp(`={2,4}\\s*${secName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*={2,4}`, 'i');
+      const secMatch = secRe.exec(fullText);
+      if (!secMatch) continue;
+      const secStart = secMatch.index + secMatch[0].length;
+      // 次のヘッダー（== ）まで、または文末まで
+      const nextHeadRe = /\n={2,4}[^=]/;
+      const nextMatch = nextHeadRe.exec(fullText.slice(secStart));
+      const secEnd = nextMatch ? secStart + nextMatch.index : fullText.length;
+      sectionParts.push(fullText.slice(secStart, secEnd));
+    }
+
+    const sectionText = sectionParts.join('\n');
+    // セクションが見つからなかった場合は全文を使用（フォールバック）
+    const targetText = sectionText || fullText.slice(0, 5000);
+
+    // Step 4: mph 値の抽出
+    const veloMentions = [];
+    for (const m of targetText.matchAll(_JA_MPH_RE)) {
+      const v = parseInt(m[1]);
+      if (v >= 80 && v <= 106) veloMentions.push(v);
+    }
+
+    // Step 5: 決め球の検出（日本語インジケーター近傍の球種）
+    let outPitchKey = null;
+    const textLower = targetText; // 日本語はそのまま（toLowerCase不要）
+    let _minDist = 300;
+    for (const word of JA_OUT_INDICATORS) {
+      let pos = 0;
+      while ((pos = textLower.indexOf(word, pos)) !== -1) {
+        for (const { key, words: jaPitchWords } of JA_PITCH_WORDS) {
+          if (key === 'ff' || key === 'si') continue; // 速球は除外
+          for (const pw of jaPitchWords) {
+            let ppos = 0;
+            while ((ppos = textLower.indexOf(pw, ppos)) !== -1) {
+              const dist = Math.abs(ppos - pos);
+              if (dist < _minDist) { _minDist = dist; outPitchKey = key; }
+              ppos += pw.length;
+            }
+          }
+        }
+        pos += word.length;
+      }
+    }
+
+    if (veloMentions.length === 0 && !outPitchKey) return null;
+    return { veloMentions, outPitchKey, pageTitle: page.title, sectionText: targetText };
+  } catch {
+    return null;
+  }
+}
+
 // 球威計算 (MLB The Show ゲームデータ基準)
 // speed: 実際mph(100mph=100%), control/movement: 0〜99スケール
 // 平均>=90%: 90+(avg-90)*2 → 90%=球威90, 95%=球威100, 100%=球威110
@@ -2563,6 +2710,49 @@ async function fetchBrowserData(slug, id, years, onProgress, playerName = '', ap
             } catch (e) {
               onProgress('⚠ Wikipedia 取得エラー: ' + e.message);
             }
+          }
+        }
+
+        // ── 2a.2ja: 日本語 Wikipedia「選手としての特徴」セクション補正 ────────────
+        // 英語 Wikipedia は「94mph fastball」のようにシーズン平均球速を記述することが多く、
+        // キャリア最高球速（例: クレメンス 100mph）を取りこぼす場合がある。
+        // 日本語 Wikipedia の「選手としての特徴」セクションは「最速100mph」等と
+        // 明示的に最高球速を記述する傾向があるため、英語版の補正・上書きに活用する。
+        // ■ 優先度: 日本語 Wikipedia ≥ 英語 Wikipedia
+        //   (jaPeak >= enPeak の場合のみ上書き)
+        if (playerName && playerName.trim()) {
+          // 英語名がある場合は英語名でも試みる（日本語名で見つからない場合の保険）
+          const jaSearchName = playerName.trim();
+          onProgress(`日本語 Wikipedia「選手としての特徴」検索中: "${jaSearchName}"...`);
+          try {
+            const jaProfile = await fetchJaWikiCharSection(jaSearchName);
+            if (jaProfile && jaProfile.veloMentions.length > 0) {
+              const jaPeak = Math.max(...jaProfile.veloMentions);
+              const enPeak = wikiProfile?._capPeak ?? 0;
+              onProgress(`[2a.2ja 日本語Wikipedia] "${jaProfile.pageTitle}": 最高球速言及 ${jaPeak}mph (英語版: ${enPeak}mph)`);
+              // 日本語版が英語版以上 かつ 93mph 以上の場合のみ採用
+              if (jaPeak >= enPeak && jaPeak >= 93) {
+                if (!wikiProfile) wikiProfile = { pitchKeys: [], primaryKey: null, pitchCounts: {}, veloMentions: [], outPitchKey: null };
+                const primaryFfKey = wikiProfile._capKey || 'ff';
+                wikiProfile._capKey  = primaryFfKey;
+                wikiProfile._capPeak = jaPeak;
+                wikiProfile._capKmh  = Math.round(jaPeak * 1.60934);
+                onProgress(`[2a.2ja ✓] 日本語Wikipedia 最高球速 ${jaPeak}mph (${wikiProfile._capKmh}km/h) を採用 — 英語版(${enPeak}mph)より正確`);
+              } else if (jaPeak < enPeak) {
+                onProgress(`[2a.2ja ℹ] 日本語Wikipedia ${jaPeak}mph < 英語版 ${enPeak}mph のため英語版を維持`);
+              }
+              // 決め球: 日本語版で検出した場合は英語版を上書き
+              if (jaProfile.outPitchKey && !wikiProfile._outPitchKey) {
+                if (!wikiProfile) wikiProfile = { pitchKeys: [], primaryKey: null, pitchCounts: {}, veloMentions: [], outPitchKey: null };
+                wikiProfile._outPitchKey = jaProfile.outPitchKey;
+                const outJa = { sl:'スライダー', ch:'チェンジアップ', cu:'カーブ', fc:'カット', fs:'スプリット' }[jaProfile.outPitchKey] ?? jaProfile.outPitchKey;
+                onProgress(`[2a.2ja Wikipedia] 決め球検出(日本語): ${outJa}(${jaProfile.outPitchKey}) — 球威に+5補正を適用予定`);
+              }
+            } else {
+              onProgress('[2a.2ja 日本語Wikipedia] 対象セクションで球速情報が見つかりませんでした');
+            }
+          } catch (e) {
+            onProgress('⚠ 日本語Wikipedia 取得エラー: ' + e.message);
           }
         }
 
