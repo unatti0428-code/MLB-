@@ -481,6 +481,7 @@ let g_brefId          = null;    // BR選手ID (例: "willide03" / "suzukic01")
 let g_brefFetchPromise = null;   // fetchBRefData の Promise（Wikipedia名取得のために await 可能にする）
 const _brefCache    = {};   // { brefId: { "2023": { war:"3.2", fip:"2.84" }, ... } }
 const _brefInFlight = new Set(); // 取得中のbrefIdを管理（重複リクエスト防止）
+const _mlbYearPhotoCache = {}; // { mlbId: { cardPhotoMap, currentUrl, hasAnyPhoto, hasOnlyCurrent } }
 
 // ── BRef 写真 直接アクセス用データ ──
 // BRef写真URL: /req/{VERSION}/images/headshots/{hash[0]}/{hash}_{type}.jpg
@@ -7064,23 +7065,112 @@ async function _directBRefPhoto(brefId, preferTypes = ['sabr', 'br', 'mlbam', 'd
  * @param {string|null}   brPhoto   BRef フォールバック写真URL
  * @param {number}        genId     世代ID（旧カードへの誤適用防止）
  */
+
+/**
+ * MLB CDN の年別ヘッドショットをスキャンしてカード年→写真URLのマップを構築する。
+ *
+ * ═══ マッピング方式 ═══
+ * URL年度 X → カード年度 X+1（シーズン末撮影写真が翌年カードに適用される）
+ * スキャン年度: 2014〜2021 + "current" を並列取得
+ *
+ * ═══ キャリーフォワード ═══
+ * URL年度 X がヒット・X+1 がミスの場合 → カード年 X+2 にも X の写真を使用
+ * （2021 URL → カード 2022 まで自動延長）
+ *
+ * ═══ "current" URL の役割 ═══
+ * カード年 ≤2014 または ≥2023 → "current" URL を使用
+ * 年別URL が全て不在でも "current" がヒットすれば全年度に使用
+ *
+ * 結果は mlbId でキャッシュ（年度切替時に再スキャン不要）
+ *
+ * @param {string|number} mlbId
+ * @returns {Promise<{cardPhotoMap:Object, currentUrl:string|null, hasAnyPhoto:boolean, hasOnlyCurrent:boolean}>}
+ */
+async function fetchMlbYearSpecificPhotos(mlbId) {
+  const key = String(mlbId);
+  if (_mlbYearPhotoCache[key]) return _mlbYearPhotoCache[key];
+
+  const SCAN_YEARS = [2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 'current'];
+
+  // d_ フォールバックなしURL: 実写真→onload / シルエット→404→onerror
+  const makeUrl = (y) =>
+    `https://img.mlbstatic.com/mlb-photos/image/upload/w_213,h_282,c_fit,q_auto:best/v1/people/${mlbId}/headshot/67/${y}`;
+
+  // 全年度を並列スキャン
+  const results = await Promise.all(
+    SCAN_YEARS.map(async (y) => {
+      const url = makeUrl(y);
+      const ok  = await _testHeadshotUrl(url, 5000);
+      console.log(`[YearPhoto] ID${mlbId} 年度${y}: ${ok ? '✓実写真' : '✗なし'}`);
+      return { year: y, url, ok };
+    })
+  );
+
+  // ヒットした年度マップ
+  const hitMap = {};
+  for (const r of results) {
+    if (r.ok) hitMap[r.year] = r.url;
+  }
+
+  // カード年→写真URL (URL年X → カード年X+1)
+  const cardPhotoMap = {};
+  for (const urlYear of [2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021]) {
+    if (hitMap[urlYear]) cardPhotoMap[urlYear + 1] = hitMap[urlYear];
+  }
+
+  // キャリーフォワード: 直前の有効URLを空白年度に引き継ぐ (2015〜2022)
+  let lastUrl = null;
+  for (let yr = 2015; yr <= 2022; yr++) {
+    if (cardPhotoMap[yr]) {
+      lastUrl = cardPhotoMap[yr];
+    } else if (lastUrl) {
+      cardPhotoMap[yr] = lastUrl;
+    }
+  }
+
+  const hasNumericHit = [2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021].some(y => hitMap[y]);
+  const result = {
+    cardPhotoMap,
+    currentUrl:    hitMap['current'] || null,
+    hasAnyPhoto:   Object.keys(hitMap).length > 0,
+    hasOnlyCurrent: !hasNumericHit && !!hitMap['current'],
+  };
+  _mlbYearPhotoCache[key] = result;
+  console.log(`[YearPhoto] ID${mlbId} スキャン完了 カード年マップ=`,
+    Object.keys(cardPhotoMap), 'current=', !!result.currentUrl);
+  return result;
+}
+
+/**
+ * fetchMlbYearSpecificPhotos の結果からカード年に対応する写真URLを返す。
+ * @param {{cardPhotoMap:Object, currentUrl:string|null, hasAnyPhoto:boolean, hasOnlyCurrent:boolean}} cache
+ * @param {number|string} cardYear  カード表示年度（4桁数値）
+ * @returns {string|null}
+ */
+function getMlbPhotoForYear(cache, cardYear) {
+  if (!cache || !cache.hasAnyPhoto) return null;
+
+  const yr = parseInt(String(cardYear)) || 0;
+
+  // current のみヒット → 全年度に current を使用
+  if (cache.hasOnlyCurrent) return cache.currentUrl;
+
+  // カード年 ≤2014 または ≥2023 → "current" URL
+  if (yr <= 2014 || yr >= 2023) return cache.currentUrl;
+
+  // カード年 2015〜2022 → 年別マップ（キャリーフォワード済み）、なければ current
+  return cache.cardPhotoMap[yr] || cache.currentUrl || null;
+}
+
 /**
  * カード年度に合致する選手写真URLをバックグラウンドで探索し、
  * カードの <img> を差し替える。
  *
  * ═══ 探索方針 ═══
- * ① MLB Static CDN を全年スキャン（指定年に近い順 → 残り全年 2006〜現在）
- *    - makeUrl（c_fit,h_282 → 切り取りなし・頭や耳が欠けない）で判定・表示を兼用
- *    - 年代不一致でも写真画像と判断できれば使用
+ * ① MLB Static CDN 年別スキャン（fetchMlbYearSpecificPhotos キャッシュ使用）
+ *    URL年 X → カード年 X+1 のマッピング、キャリーフォワードで空白年を補完
  * ② BRef 直接写真（MLB CDN 全滅時のみ）
  * ③ BRef プロキシ写真（最終手段）
- *
- * ═══ 探索年度の選定 ═══
- * 通算カード → g_peakYear の写真（最も活躍したチームの帽子写真）
- * 単年カード → 指定年度を起点に ±8年、その後 2006〜現在の残り全年
- *
- * ※ MLBのCDNは概ね2012〜2013年以降のデータを保有
- *   2011年以前は隣接年度（+1〜+5）でカバーすることが多い
  *
  * @param {number|string} mlbId     MLB選手ID
  * @param {string|number} year      カード年度（4桁数字 or 通算文字列）
@@ -7096,43 +7186,29 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
   if (!baseYear || !/^\d{4}$/.test(String(baseYear))) return;
 
   const yr  = parseInt(baseYear);
-  const now = new Date().getFullYear();
-
-  // Cloudinary: c_fit で枠内に収める（切り取りなし・頭や耳が欠けない）
-  const makeUrl = (y) =>
-    `https://img.mlbstatic.com/mlb-photos/image/upload/w_213,h_282,c_fit,q_auto:best/v1/people/${mlbId}/headshot/67/${y}`;
-
-  // ── MLB CDN 全年スキャン候補リスト ──
-  // 指定年に近い順で並べ、その後 2006〜現在の残り全年を追加
-  // → 年代不一致でも写真画像と判断できれば MLB CDN を最優先で使用
   const isOldPlayer = yr < 2010;
-  const mlbScanYears = [yr];
-  for (let d = 1; d <= 8; d++) {
-    if (yr - d >= 2006)  mlbScanYears.push(yr - d);
-    if (yr + d <= now)   mlbScanYears.push(yr + d);
-  }
-  for (let y = now; y >= 2006; y--) {
-    if (!mlbScanYears.includes(y)) mlbScanYears.push(y);
-  }
 
   let found = null;
 
-  // ── Step 1: MLB CDN 全年スキャン（年代不一致でも写真があれば優先） ──
-  // ただし g_mlbHasRealPhoto === false（シルエット確認済み）の場合はスキャンをスキップして高速化
+  // ── Step 1: MLB CDN 年別スキャン（fetchMlbYearSpecificPhotos キャッシュ使用）──
+  // URL年度 X → カード年度 X+1 のマッピング。キャリーフォワードで空白年を補完。
+  // g_mlbHasRealPhoto === false（全年シルエット確認済み）の場合はスキャンをスキップ。
   if (g_mlbHasRealPhoto === false) {
     console.log('[Photo] MLB シルエット確認済 → CDNスキャンをスキップ、BRef直接取得へ');
   } else {
-    // d_フォールバックなしURLで試す: 実写真あり→onload(true) / なし→404→onerror(false)
-    // 寸法比較は廃止(c_fit後の実写真とシルエットが同寸法になり得るため誤判定する)
-    for (const testYr of mlbScanYears) {
-      if (await _testHeadshotUrl(makeUrl(testYr), 4000)) {
-        found = makeUrl(testYr);
-        const label = testYr === yr
-          ? `${testYr}年`
-          : `${testYr}年 (要求:${yr}年)`;
-        console.log(`[Photo] MLB CDN写真 ${label} 取得成功`);
-        break;
+    const yearCache = await fetchMlbYearSpecificPhotos(mlbId);
+    if (yearCache.hasAnyPhoto) {
+      // 通算カードはピーク年、単年カードはカード年でルックアップ
+      const lookupYear = isCareer ? (parseInt(g_peakYear) || yr) : yr;
+      const yearUrl = getMlbPhotoForYear(yearCache, lookupYear);
+      if (yearUrl) {
+        found = yearUrl;
+        console.log(`[Photo] MLB年別写真 カード年${lookupYear} → 取得成功`);
       }
+    } else {
+      // 全年度シルエット/なし → BRef へ委譲
+      console.log('[Photo] MLB CDN 全年度シルエット/なし → BRef取得へ');
+      if (g_mlbHasRealPhoto === null) g_mlbHasRealPhoto = false;
     }
   }
 
@@ -7310,9 +7386,17 @@ async function _doGenerate(photoInput) {
 
     } else if (g_mlbId && g_mlbHasRealPhoto === true) {
       // ② MLB実写真が確認済み → MLB CDN使用（最良品質）
-      cardContent = cardContent.replace(/__PHOTO__/g, mlbCurrent);
-      g_resolvedPhotoUrl = mlbCurrent;
-      console.log('[Photo] MLB実写真確認済 → MLB CDN使用');
+      // 年別スキャンキャッシュが既にあれば年度対応URLを即時使用（年度切替の2回目以降）
+      const _yrCache = _mlbYearPhotoCache[String(g_mlbId)];
+      const _isCareerNow = !/^\d{4}$/.test(String(selectedRow[1] ?? ''));
+      const _lookupYr = _isCareerNow ? (parseInt(g_peakYear) || 0) : parseInt(String(selectedRow[1]));
+      const _cachedYrUrl = _yrCache ? getMlbPhotoForYear(_yrCache, _lookupYr) : null;
+      const _photoUrl2 = _cachedYrUrl || mlbCurrent;
+      cardContent = cardContent.replace(/__PHOTO__/g, _photoUrl2);
+      g_resolvedPhotoUrl = _photoUrl2;
+      console.log(_cachedYrUrl
+        ? `[Photo] MLB年別キャッシュ→カード年${_lookupYr}の写真を即時適用`
+        : '[Photo] MLB実写真確認済 → MLB CDN(current)使用');
 
     } else if (g_mlbHasRealPhoto === false || !g_mlbId) {
       // ③ MLBシルエット確認済み OR MLB IDなし → BRef写真を優先
