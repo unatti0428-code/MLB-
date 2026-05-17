@@ -930,6 +930,10 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
   // { outs: number, kyuiByI: { [pitchListIdx]: number } }
   const yearKyuiStore = [];
 
+  // 通算回復量: 各年の回復量（ボーナス込み）をイニング加重平均で算出するためのストア
+  // { ip: number, kaifuku: number }
+  const yearKaifukuStore = [];
+
   // ── Wiki最高球速アンカー: ff(idx=0)/si(idx=5) の FG球速ピーク値を事前集計 ─────
   // wikiCapKmh が設定されている場合、高球速年 × 好成績年を161km/hとし
   // 球速差・ERA/BAA/HR9 に基づいて ±2-3km/h 可変させる（後述アンカーロジック参照）。
@@ -1005,7 +1009,24 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
     const taitourui = calcTaiTouruiFromSBData(sb, pk, ip, cs);
     if (taitourui !== '') purpleCell(ws.getCell(rn, TAITOURUI_COL), taitourui, fontSize);
 
-    const kaifuku = calcKaifukuryo(ip, g, gs);
+    // 回復量: 通算行はイニング加重平均、年度行は基本値＋試合数ボーナス
+    let kaifuku = '';
+    if (isCareerRow) {
+      // 通算: 各年の回復量（ボーナス込み）をイニング加重平均
+      let sumKI = 0, sumI = 0;
+      for (const { ip: yi, kaifuku: yk } of yearKaifukuStore) {
+        sumKI += yk * yi; sumI += yi;
+      }
+      if (sumI > 0) kaifuku = Math.round(sumKI / sumI);
+    } else {
+      // 年度行: 基本値 + ボーナス (G≥80:+2, G≥70:+1)
+      const _kBase = calcKaifukuryo(ip, g, gs);
+      if (_kBase !== '') {
+        const _kBonus = g >= 80 ? 2 : g >= 70 ? 1 : 0;
+        kaifuku = _kBase + _kBonus;
+        yearKaifukuStore.push({ ip, kaifuku });
+      }
+    }
     if (kaifuku !== '') purpleCell(ws.getCell(rn, KAIFUKURYO_COL), kaifuku, fontSize);
 
     // 球種能力値
