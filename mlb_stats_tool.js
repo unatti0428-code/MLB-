@@ -5067,14 +5067,20 @@ async function processFile(filePath, catcherData = null) {
 
     // リード (START_COL+9) と 阻止率 (START_COL+10) — 捕手のみ
     {
-      const cInn = parseInn(row.getCell(29).value); // C Inn列
-      if (cInn != null && cInn > 0) {
-        const yrData  = catcherData?.byYear?.[yr]  ?? null;
-        const carData = catcherData?.career         ?? null;
+      const cInn    = parseInn(row.getCell(29).value); // C Inn列
+      const yrData  = catcherData?.byYear?.[yr]  ?? null;
+      const carData = catcherData?.career         ?? null;
+      // 2002年以前は FanGraphs 対象外で C Inn 列が空になるため
+      // MLB Stats API の捕手守備データがある年も捕手と判定する
+      const hasCatcher = (cInn != null && cInn > 0)
+        || (!isCareer && (yrData?.fielding?.g  ?? 0) > 0)
+        || ( isCareer && (carData?.fielding?.g ?? 0) > 0);
+      if (hasCatcher) {
 
         // リード: Baseball Savant フレーミング実データ（2018年以降）
         //         2017年以前 or データなし → CS% vs 時代別リーグ平均から仮想算出
-        const framingData = yrData?.framing ?? carData?.framing;
+        // ※年別行はキャリア framing にフォールバックしない（誤った通算値が入るのを防ぐ）
+        const framingData = yrData?.framing ?? (isCareer ? carData?.framing : null);
         let leadVal = 0;
         if (framingData && framingData.pitches > 0) {
           // ── 実データ: pitches 1500換算フレーミングrun ──────────────────────
