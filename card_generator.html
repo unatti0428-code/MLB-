@@ -469,6 +469,7 @@ let g_mlbId       = null;   // MLB選手ID
 let g_mlbNameEn   = null;   // 英語正式名称 (例: "Dylan Cease")
 let g_mlbHeadshot = null;   // ヘッドショット画像URL
 let g_mlbHeadshotOk = null; // true=読み込み成功 / false=失敗 / null=未確認
+let g_mlbHasRealPhoto = null; // true=実写真あり / false=シルエットのみ / null=未確認
 let g_mlbPos      = null;   // ポジション略称
 let g_mlbTeam     = null;   // 現所属チーム名
 let g_pitchHand   = null;   // 投球腕: 'R'=右, 'L'=左
@@ -484,8 +485,27 @@ const _brefInFlight = new Set(); // 取得中のbrefIdを管理（重複リク�
 // BRef写真URL: /req/{VERSION}/images/headshots/{hash[0]}/{hash}_{type}.jpg
 // ハッシュはBRefの内部IDから算出（アルゴリズム非公開のため手動収集）
 // バージョン番号はBRefのデプロイ時に変更される（localStorage でキャッシュ）
+// BRef バージョン番号候補（YYYYMMDDsuffix 形式、デプロイ毎に変更される）
+// _getActiveBRefVersion() が並列チェックで有効なものを自動検出する
 const _BREF_PHOTO_VERSIONS = [
-  '2025011210',   // 2025-01-12 (現在確認済み)
+  '2025011210',   // 2025-01-12 (確認済み)
+  '2025020110', '2025021510',
+  '2025030110', '2025031510',
+  '2025040110', '2025041510',
+  '2025050110', '2025051510',
+  '2025060110', '2025061510',
+  '2025070110', '2025071510',
+  '2025080110', '2025081510',
+  '2025090110', '2025091510',
+  '2025100110', '2025101510',
+  '2025110110', '2025111510',
+  '2025120110', '2025121510',
+  '2026010110', '2026011510',
+  '2026020110', '2026021510',
+  '2026030110', '2026031510',
+  '2026040110', '2026041510',
+  '2026050110', '2026051510',
+  '2026051710',
 ];
 const _BREF_HASHES = {
   // ── 投手 ──
@@ -625,8 +645,9 @@ async function mlbSelectPlayer(id, fullName, pos, team) {
   g_mlbNameEn   = fullName;
   g_mlbPos      = pos;
   g_mlbTeam     = team;
-  g_mlbHeadshot   = `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${id}/headshot/67/current`;
-  g_mlbHeadshotOk = null; // 読み込み結果をリセット
+  g_mlbHeadshot     = `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/${id}/headshot/67/current`;
+  g_mlbHeadshotOk   = null; // 読み込み結果をリセット
+  g_mlbHasRealPhoto = null; // 実写真チェック結果をリセット
 
   // 選択済み表示
   const photoEl = document.getElementById('mlb-selected-photo');
@@ -637,6 +658,17 @@ async function mlbSelectPlayer(id, fullName, pos, team) {
     g_mlbHeadshotOk = false;
     console.log('[Photo] MLB ヘッドショット読み込み失敗 → BRef フォールバック試行');
   };
+
+  // ── MLB CDN に実写真があるかバックグラウンドでチェック ──
+  // シルエット（ジェネリック画像）かどうかを事前判定し、カード生成時の初期写真選択に利用する
+  (async () => {
+    const genericDims = await _getGenericFingerprint();
+    // "current" 年の URL（d_ フォールバックなし）で判定
+    const testUrl = `https://img.mlbstatic.com/mlb-photos/image/upload/w_213,h_282,c_fit,q_auto:best/v1/people/${id}/headshot/67/current`;
+    const isReal = await _testHeadshotUrl(testUrl, 6000, genericDims);
+    g_mlbHasRealPhoto = isReal;
+    console.log(`[Photo] MLB実写真チェック(ID:${id}): ${isReal ? '✅ 実写真あり' : '❌ シルエットのみ'}`);
+  })();
   document.getElementById('mlb-selected-name-label').textContent = fullName;
   document.getElementById('mlb-selected-meta-label').textContent =
     (pos ? pos : '') + (team ? (pos ? ' · ' : '') + team : '') + `  (ID: ${id})`;
@@ -853,12 +885,13 @@ function _renderBRefCandidates(candidates, statusEl, inputEl) {
 }
 
 function clearMlbSelection() {
-  g_mlbId       = null;
-  g_mlbNameEn   = null;
-  g_mlbPos      = null;
-  g_mlbTeam     = null;
-  g_mlbHeadshot = null;
-  g_pitchHand   = null;
+  g_mlbId           = null;
+  g_mlbNameEn       = null;
+  g_mlbPos          = null;
+  g_mlbTeam         = null;
+  g_mlbHeadshot     = null;
+  g_mlbHasRealPhoto = null;
+  g_pitchHand       = null;
   g_batSide     = null;
   document.getElementById('mlb-selected-player').style.display = 'none';
   document.getElementById('mlb-search-input').value = '';
@@ -6526,25 +6559,46 @@ function _getGenericFingerprint() {
 let _brefVersionCache = null;
 async function _getActiveBRefVersion() {
   if (_brefVersionCache) return _brefVersionCache;
+
+  // ① localStorage キャッシュを確認（有効なら即返す）
   try {
     const cached = localStorage.getItem('brefPhotoVersion');
     if (cached) {
-      // キャッシュされたバージョンが有効か検証（既知ハッシュで確認）
       const testUrl = `https://www.baseball-reference.com/req/${cached}/images/headshots/e/e905e1ef_br.jpg`;
       if (await _testImageUrl(testUrl, 4000)) {
         _brefVersionCache = cached;
         return cached;
       }
+      // 無効なキャッシュは削除
+      localStorage.removeItem('brefPhotoVersion');
     }
   } catch(e) {}
-  for (const v of _BREF_PHOTO_VERSIONS) {
-    const testUrl = `https://www.baseball-reference.com/req/${v}/images/headshots/e/e905e1ef_br.jpg`;
-    if (await _testImageUrl(testUrl, 4000)) {
-      _brefVersionCache = v;
-      try { localStorage.setItem('brefPhotoVersion', v); } catch(e) {}
-      console.log('[BRef] バージョン確認済:', v);
-      return v;
-    }
+
+  // ② 全候補バージョンを並列チェック（404は即座にonerror→高速）
+  // 無効バージョンはほぼ0msで失敗し、有効バージョンは~500msで成立する
+  console.log('[BRef] バージョン番号スキャン中（並列）...');
+  const found = await new Promise(resolve => {
+    let settled = false;
+    let remaining = _BREF_PHOTO_VERSIONS.length;
+    _BREF_PHOTO_VERSIONS.forEach(v => {
+      const url = `https://www.baseball-reference.com/req/${v}/images/headshots/e/e905e1ef_br.jpg`;
+      _testImageUrl(url, 5000).then(ok => {
+        remaining--;
+        if (ok && !settled) {
+          settled = true;
+          resolve(v);
+        } else if (remaining === 0 && !settled) {
+          resolve(null);
+        }
+      });
+    });
+  });
+
+  if (found) {
+    _brefVersionCache = found;
+    try { localStorage.setItem('brefPhotoVersion', found); } catch(e) {}
+    console.log('[BRef] バージョン確認済:', found);
+    return found;
   }
   console.warn('[BRef] 有効なバージョン番号なし（_BREF_PHOTO_VERSIONSの更新が必要かもしれません）');
   return null;
@@ -6646,16 +6700,21 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
   let found = null;
 
   // ── Step 1: MLB CDN 全年スキャン（年代不一致でも写真があれば優先） ──
-  // ジェネリック画像（シルエット）フィンガープリントを並列取得しておく
-  const genericDims = await _getGenericFingerprint();
-  for (const testYr of mlbScanYears) {
-    if (await _testHeadshotUrl(makeUrl(testYr), 4000, genericDims)) {
-      found = makeUrl(testYr);
-      const label = testYr === yr
-        ? `${testYr}年`
-        : `${testYr}年 (要求:${yr}年)`;
-      console.log(`[Photo] MLB CDN写真 ${label} 取得成功`);
-      break;
+  // ただし g_mlbHasRealPhoto === false（シルエット確認済み）の場合はスキャンをスキップして高速化
+  if (g_mlbHasRealPhoto === false) {
+    console.log('[Photo] MLB シルエット確認済 → CDNスキャンをスキップ、BRef直接取得へ');
+  } else {
+    // ジェネリック画像（シルエット）フィンガープリントを並列取得しておく
+    const genericDims = await _getGenericFingerprint();
+    for (const testYr of mlbScanYears) {
+      if (await _testHeadshotUrl(makeUrl(testYr), 4000, genericDims)) {
+        found = makeUrl(testYr);
+        const label = testYr === yr
+          ? `${testYr}年`
+          : `${testYr}年 (要求:${yr}年)`;
+        console.log(`[Photo] MLB CDN写真 ${label} 取得成功`);
+        break;
+      }
     }
   }
 
@@ -6804,24 +6863,55 @@ async function _doGenerate(photoInput) {
     }
 
     // 写真の即時差し込み（カードを素早く表示するため、まず手元にある写真を使用）
-    // 優先順位（即時）: ① 手動アップロード → ② MLB current（generic fallback付き）→ ③ BRef → ④ なし
+    // 優先順位（即時）:
+    //   ① 手動アップロード
+    //   ② MLB current（実写真確認済みの場合）
+    //   ③ BRef（MLBがシルエットと判明している場合、またはMLB IDなし）
+    //   ④ MLB current with generic fallback（未確認の場合の暫定表示）
+    //   ⑤ なし
     // ※ 年度別写真への差し替えは DOM注入後に resolveYearPhotoAsync が非同期で行う
     const brPhoto = g_brefId ? _brefCache[g_brefId]?.photoUrl : null;
     const _isManualPhoto = !!(photoInput && photoInput.files && photoInput.files[0]);
+    const mlbCurrent = g_mlbId
+      ? `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,h_282,c_fit,q_auto:best/v1/people/${g_mlbId}/headshot/67/current`
+      : null;
+
     if (_isManualPhoto) {
+      // ① 手動アップロード最優先
       const photoURL = URL.createObjectURL(photoInput.files[0]);
       cardContent = cardContent.replace(/__PHOTO__/g, photoURL);
       g_resolvedPhotoUrl = photoURL;
-    } else if (g_mlbId) {
-      // MLB current（d_people:generic fallback付き = 常に何か表示される）
-      const mlbCurrent = `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,h_282,c_fit,q_auto:best/v1/people/${g_mlbId}/headshot/67/current`;
+    } else if (g_mlbId && g_mlbHasRealPhoto === true) {
+      // ② MLB実写真が確認済み → MLB URLを使用
       cardContent = cardContent.replace(/__PHOTO__/g, mlbCurrent);
       g_resolvedPhotoUrl = mlbCurrent;
-    } else if (brPhoto) {
+    } else if (g_mlbHasRealPhoto === false) {
+      // ③ MLBがシルエットと確認済み → BRef写真を取得して即時使用
+      // キャッシュ済みURL → _directBRefPhoto 直接取得 → 諦めてシルエット の順
+      const _yr = parseInt(String(selectedRow[1] ?? '')) || 2000;
+      const _isOld = _yr < 2010;
+      const _types = _isOld ? ['sabr','br','milb','mlbam','davis'] : ['sabr','br','mlbam','davis'];
+      let _brefPhoto = brPhoto; // まずキャッシュ済みURLを確認
+      if (!_brefPhoto && g_brefId) {
+        console.log('[Photo] MLB シルエット確認済 → BRef直接取得中...');
+        _brefPhoto = await _directBRefPhoto(g_brefId, _types);
+        if (_brefPhoto) console.log('[Photo] BRef直接取得成功(初期表示):', _brefPhoto);
+        else console.log('[Photo] BRef直接取得も失敗 → resolveYearPhotoAsyncに委譲');
+      }
+      const _useUrl = _brefPhoto || mlbCurrent || '';
+      cardContent = cardContent.replace(/__PHOTO__/g, _useUrl);
+      g_resolvedPhotoUrl = _useUrl;
+    } else if (!g_mlbId && brPhoto) {
+      // ④ MLB IDなし + BRef写真キャッシュあり
       console.log('[Photo] BRef 写真を即時表示:', brPhoto);
       cardContent = cardContent.replace(/__PHOTO__/g, brPhoto);
       g_resolvedPhotoUrl = brPhoto;
+    } else if (mlbCurrent) {
+      // ⑤ MLB未確認(null) → generic fallback付きURLで暫定表示（resolveYearPhotoAsyncが後で差し替え）
+      cardContent = cardContent.replace(/__PHOTO__/g, mlbCurrent);
+      g_resolvedPhotoUrl = mlbCurrent;
     } else {
+      // ⑥ 写真なし
       cardContent = cardContent.replace(/__PHOTO__/g, '');
       g_resolvedPhotoUrl = '';
     }
