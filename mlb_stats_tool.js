@@ -3826,7 +3826,11 @@ async function batFetchMLBStats(id, y1, y2) {
       mlbApiFielding.byYear[s.season][pos] = {
         g:   s.stat?.gamesPlayed        ?? 0,
         inn: s.stat?.innings            ?? null, // "XXX.Y" 形式 or null
-        rf9: s.stat?.rangeFactorPer9Inn ?? null, // number or null
+        rf9: s.stat?.rangeFactorPer9Inn ?? null, // API直値（なければ po+a から算出）
+        po:  s.stat?.putOuts            ?? null, // 刺殺
+        a:   s.stat?.assists            ?? null, // 補殺
+        ch:  s.stat?.chances            ?? null, // 守備機会
+        fld: s.stat?.fielding           ?? null, // 守備率 string ".987"
         cs:  s.stat?.caughtStealing     ?? 0,
         sb:  s.stat?.stolenBases        ?? 0,
         pb:  s.stat?.passedBall         ?? 0,
@@ -5312,6 +5316,10 @@ async function batRunCreateJob(jobId, params) {
     // FanGraphs は 2003 以降のみ。BB-Ref が取得できなかった年は
     // MLB Stats API の yearByYear fielding データで Inn/DRS を補完する。
     {
+      // ポジション別リーグ平均 RF/9 と守備率（時代を問わず近似値）
+      const LG_RF9 = { C:6.5, '1B':8.8, '2B':4.8, '3B':2.9, SS:4.5, LF:2.1, CF:2.7, RF:2.1, OF:2.3 };
+      const LG_FLD = { C:.994, '1B':.994, '2B':.980, '3B':.958, SS:.969, LF:.987, CF:.988, RF:.986, OF:.987 };
+
       const PRE2003 = years.filter(y => parseInt(y) < 2003);
       for (const yr of PRE2003) {
         if (!fieldingByYear[yr]) fieldingByYear[yr] = {};
@@ -5320,29 +5328,54 @@ async function batRunCreateJob(jobId, params) {
         for (const [pos, d] of Object.entries(apiYr)) {
           if (fieldingByYear[yr][pos]) continue;   // FanGraphs / BB-Ref 優先
           if (!d.g || d.g === 0) continue;
-          // イニング: API 値があれば使う、なければ試合数×推定値
-          let innFmt = null;
+
+          // ── イニング: API 値があれば使う、なければ試合数×推定値 ────────────
+          let innFmt = null, innDec = 0;
           if (d.inn) {
             const s = String(d.inn).replace(/[,\s]/g, '');
             const m = s.match(/^(\d+)(?:\.(\d))?$/);
-            if (m && (parseInt(m[1]) + parseInt(m[2] || '0') / 3) >= 1) innFmt = s;
+            if (m) {
+              innDec = parseInt(m[1]) + parseInt(m[2] || '0') / 3;
+              if (innDec >= 1) innFmt = s;
+            }
           }
           if (!innFmt) {
             const avgInn = pos === 'C' ? 8.5 : 8.7;
             const outs   = Math.round(d.g * avgInn * 3);
-            innFmt = Math.floor(outs / 3) + '.' + (outs % 3);
+            innDec  = d.g * avgInn;
+            innFmt  = Math.floor(outs / 3) + '.' + (outs % 3);
           }
-          // 推定 DRS
+
+          // ── 推定 DRS ─────────────────────────────────────────────────────
           let drs = 0;
           if (pos === 'C') {
+            // 捕手: CS% vs 時代別リーグ平均（BB-Ref 仮想DRS と同一係数）
             const total = (d.cs || 0) + (d.sb || 0);
             const yrNum = parseInt(yr);
-            const lgCs = yrNum < 1970 ? 0.38 : yrNum < 1985 ? 0.36
-                       : yrNum < 1995 ? 0.33 : yrNum < 2005 ? 0.30
-                       : yrNum < 2015 ? 0.28 : 0.26;
+            const lgCs  = yrNum < 1970 ? 0.38 : yrNum < 1985 ? 0.36
+                        : yrNum < 1995 ? 0.33 : yrNum < 2005 ? 0.30
+                        : yrNum < 2015 ? 0.28 : 0.26;
             drs = total >= 10 ? Math.round((d.cs / total - lgCs) * total * 0.40) : 0;
+          } else {
+            // 捕手以外: RF/9差 × イニング / 9 × 0.25 + エラー差成分
+            // RF/9 = API直値 または (刺殺+補殺) / イニング × 9 で算出
+            let rf9 = (typeof d.rf9 === 'number') ? d.rf9 : null;
+            if (rf9 == null && d.po != null && d.a != null && innDec > 0) {
+              rf9 = (d.po + d.a) / innDec * 9;
+            }
+            const lgRf9 = LG_RF9[pos] ?? 0;
+            const rangeDRS = (rf9 != null && lgRf9 > 0)
+              ? (rf9 - lgRf9) * innDec / 9 * 0.25
+              : 0;
+            const fldNum = d.fld ? parseFloat(String(d.fld)) : 0;
+            const lgFld  = LG_FLD[pos] ?? 0;
+            const ch     = d.ch ?? 0;
+            const errorDRS = (ch > 0 && lgFld > 0 && fldNum > 0)
+              ? ch * (fldNum - lgFld) * 0.5
+              : 0;
+            drs = Math.round(rangeDRS + errorDRS);
           }
-          // 捕手以外は DRS=0（Inn だけでも表示価値あり）
+
           fieldingByYear[yr][pos] = { inn: innFmt, drs, g: d.g };
         }
         const added = Object.keys(fieldingByYear[yr]);
