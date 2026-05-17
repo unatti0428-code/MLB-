@@ -3802,15 +3802,18 @@ async function batFetchMLBStats(id, y1, y2) {
     };
   }));
 
-  // キャッチャー守備成績（CS/SB率算出用）
-  const catcherFielding = { byYear: {}, career: null };
+  // キャッチャー守備成績（CS/SB率算出用） & 全ポジション守備（2002年以前フォールバック用）
+  const catcherFielding  = { byYear: {}, career: null };
+  const mlbApiFielding   = { byYear: {} };  // 全ポジション: FanGraphs/BB-Ref 欠損時の補完用
   try {
     const [fldYby, fldCar] = await Promise.all([
       mlbGet(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=yearByYear&group=fielding&sportId=1`),
       mlbGet(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=career&group=fielding&sportId=1`),
     ]);
     for (const s of (fldYby.stats?.[0]?.splits || [])) {
-      if (s.position?.abbreviation === 'C' && s.season && s.sport?.id === 1) {
+      const pos = s.position?.abbreviation;
+      if (!pos || !s.season || s.sport?.id !== 1) continue;
+      if (pos === 'C') {
         catcherFielding.byYear[s.season] = {
           sb: s.stat?.stolenBases    ?? 0,
           cs: s.stat?.caughtStealing ?? 0,
@@ -3818,6 +3821,16 @@ async function batFetchMLBStats(id, y1, y2) {
           g:  s.stat?.gamesPlayed    ?? 0,
         };
       }
+      // 全ポジション守備データ: innings / games / CS(捕手専用) を保存
+      if (!mlbApiFielding.byYear[s.season]) mlbApiFielding.byYear[s.season] = {};
+      mlbApiFielding.byYear[s.season][pos] = {
+        g:   s.stat?.gamesPlayed        ?? 0,
+        inn: s.stat?.innings            ?? null, // "XXX.Y" 形式 or null
+        rf9: s.stat?.rangeFactorPer9Inn ?? null, // number or null
+        cs:  s.stat?.caughtStealing     ?? 0,
+        sb:  s.stat?.stolenBases        ?? 0,
+        pb:  s.stat?.passedBall         ?? 0,
+      };
     }
     const carCat = (fldCar.stats?.[0]?.splits || []).find(s => s.position?.abbreviation === 'C');
     if (carCat) catcherFielding.career = {
@@ -3828,7 +3841,7 @@ async function batFetchMLBStats(id, y1, y2) {
     };
   } catch {}
 
-  return { years, basic, splitsRaw, catcherFielding };
+  return { years, basic, splitsRaw, catcherFielding, mlbApiFielding };
 }
 
 // ── Browser data: Baseball Savant + FanGraphs ─────────────────────────────────
@@ -5213,7 +5226,7 @@ async function batRunCreateJob(jobId, params) {
   try { fs.writeFileSync(logFile, `=== ${params.name || params.fullName} ${new Date().toLocaleString('ja-JP')} ===\n`, 'utf8'); } catch {}
   try {
     upd('MLB Stats API からデータ取得中...');
-    const { years, basic, splitsRaw, catcherFielding } = await batFetchMLBStats(params.id, params.y1, params.y2);
+    const { years, basic, splitsRaw, catcherFielding, mlbApiFielding } = await batFetchMLBStats(params.id, params.y1, params.y2);
 
     upd('ブラウザを起動して Baseball Savant / FanGraphs を取得中...');
     const { sprintSpeed, rawPitch, fieldingByYear, mlbTheShowSpeed, catcherFraming, bbRefSplits, battingHand } =
@@ -5292,6 +5305,48 @@ async function batRunCreateJob(jobId, params) {
         } else {
           upd(`得点圏打率推計(RBI余剰): ${stillMissingRisp.length}年を補完（打席情報不明のため対左は推計スキップ）`);
         }
+      }
+    }
+
+    // ── 2002年以前 守備フォールバック ──────────────────────────────────────────
+    // FanGraphs は 2003 以降のみ。BB-Ref が取得できなかった年は
+    // MLB Stats API の yearByYear fielding データで Inn/DRS を補完する。
+    {
+      const PRE2003 = years.filter(y => parseInt(y) < 2003);
+      for (const yr of PRE2003) {
+        if (!fieldingByYear[yr]) fieldingByYear[yr] = {};
+        const apiYr = mlbApiFielding.byYear[yr];
+        if (!apiYr) continue;
+        for (const [pos, d] of Object.entries(apiYr)) {
+          if (fieldingByYear[yr][pos]) continue;   // FanGraphs / BB-Ref 優先
+          if (!d.g || d.g === 0) continue;
+          // イニング: API 値があれば使う、なければ試合数×推定値
+          let innFmt = null;
+          if (d.inn) {
+            const s = String(d.inn).replace(/[,\s]/g, '');
+            const m = s.match(/^(\d+)(?:\.(\d))?$/);
+            if (m && (parseInt(m[1]) + parseInt(m[2] || '0') / 3) >= 1) innFmt = s;
+          }
+          if (!innFmt) {
+            const avgInn = pos === 'C' ? 8.5 : 8.7;
+            const outs   = Math.round(d.g * avgInn * 3);
+            innFmt = Math.floor(outs / 3) + '.' + (outs % 3);
+          }
+          // 推定 DRS
+          let drs = 0;
+          if (pos === 'C') {
+            const total = (d.cs || 0) + (d.sb || 0);
+            const yrNum = parseInt(yr);
+            const lgCs = yrNum < 1970 ? 0.38 : yrNum < 1985 ? 0.36
+                       : yrNum < 1995 ? 0.33 : yrNum < 2005 ? 0.30
+                       : yrNum < 2015 ? 0.28 : 0.26;
+            drs = total >= 10 ? Math.round((d.cs / total - lgCs) * total * 0.40) : 0;
+          }
+          // 捕手以外は DRS=0（Inn だけでも表示価値あり）
+          fieldingByYear[yr][pos] = { inn: innFmt, drs, g: d.g };
+        }
+        const added = Object.keys(fieldingByYear[yr]);
+        if (added.length) upd(`MLB API 守備補完 ${yr}: ${added.join(', ')}`);
       }
     }
 
