@@ -2335,20 +2335,25 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
 
   const leftVal  = safeNum(row[56]);
   const baseVal  = safeNum(row[57]);
-  const statBoxes = [
+
+  // 上段（4列1行）: コアステータス
+  const statBoxesTop = [
     buildStatBox('スタミナ', stam),
     buildStatBox('制　球',   ctrl),
     buildStatBox('緩　急',   change),
     buildStatBox('精　神',   ment),
-    buildStatBox('奪三振',   strk),
-    buildStatBox('球　重',   heavy),
-    leftVal  !== null
-      ? buildStatBox('対　左', leftVal)
-      : `<div class="stat-box"><span class="stat-name">対　左</span><span class="stat-val" style="font-size:14px;color:#888">--</span></div>`,
-    baseVal !== null
-      ? buildStatBox('対盗塁', baseVal)
-      : `<div class="stat-box"><span class="stat-name">対盗塁</span><span class="stat-val" style="font-size:14px;color:#888">--</span></div>`,
   ].join('');
+  // 下段: 奪三振(1fr) + 球重(1fr) + [対左/対盗塁/回復量 ミニ3マス](2fr)
+  const statBoxesBotMain = [
+    buildStatBox('奪三振', strk),
+    buildStatBox('球　重', heavy),
+  ].join('');
+  const statBoxesMini =
+    `<div class="stats-mini-group">` +
+      buildStatBoxMini('対　左', leftVal, false) +
+      buildStatBoxMini('対盗塁', baseVal, false) +
+      buildStatBoxMini('回復量', null,    false) +
+    `</div>`;
 
   const pitchRows = pitches.map(p => {
     const rawSpd = parseFloat(p.speed);
@@ -2400,7 +2405,8 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
         <div class="rec-item"><span class="rec-label">WAR</span><span class="rec-val hl">${war}</span></div>
       </div>
       <div class="sec-title">■ ゲームステータス</div>
-      <div class="stats-grid">${statBoxes}</div>
+      <div class="stats-grid">${statBoxesTop}</div>
+      <div class="stats-grid-bot">${statBoxesBotMain}${statBoxesMini}</div>
       <table class="pitch-table">
         <thead><tr><th class="pitch-sec-th">■ 球種データ</th><th class="pitch-col-th" style="width:18%;">球速</th><th class="pitch-col-th" style="width:18%;">球威</th><th class="pitch-col-th" style="width:18%;">割合</th></tr></thead>
         <tbody>${pitchRows}</tbody>
