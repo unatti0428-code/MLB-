@@ -5357,7 +5357,7 @@ async function batRunCreateJob(jobId, params) {
                         : yrNum < 2015 ? 0.28 : 0.26;
             drs = total >= 10 ? Math.round((d.cs / total - lgCs) * total * 0.40) : 0;
           } else {
-            // 捕手以外: RF/9差 × イニング / 9 × 0.25 + エラー差成分
+            // 捕手以外: RF/9差 × イニング / 9 × 0.10 + エラー差成分
             // RF/9 = API直値 または (刺殺+補殺) / イニング × 9 で算出
             let rf9 = (typeof d.rf9 === 'number') ? d.rf9 : null;
             if (rf9 == null && d.po != null && d.a != null && innDec > 0) {
@@ -5365,15 +5365,16 @@ async function batRunCreateJob(jobId, params) {
             }
             const lgRf9 = LG_RF9[pos] ?? 0;
             const rangeDRS = (rf9 != null && lgRf9 > 0)
-              ? (rf9 - lgRf9) * innDec / 9 * 0.25
+              ? (rf9 - lgRf9) * innDec / 9 * 0.10
               : 0;
             const fldNum = d.fld ? parseFloat(String(d.fld)) : 0;
             const lgFld  = LG_FLD[pos] ?? 0;
             const ch     = d.ch ?? 0;
             const errorDRS = (ch > 0 && lgFld > 0 && fldNum > 0)
-              ? ch * (fldNum - lgFld) * 0.5
+              ? ch * (fldNum - lgFld) * 0.25
               : 0;
-            drs = Math.round(rangeDRS + errorDRS);
+            const rawDrs = Math.round(rangeDRS + errorDRS);
+            drs = innDec < 700 ? Math.max(-20, Math.min(20, rawDrs)) : rawDrs;
           }
 
           fieldingByYear[yr][pos] = { inn: innFmt, drs, g: d.g };
@@ -5412,29 +5413,29 @@ const HTML = `<!DOCTYPE html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Meiryo UI','Meiryo','Yu Gothic UI',sans-serif;background:#f0e8f5;
-  min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:16px 18px}
+  min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:18px 20px}
 .card{background:white;border-radius:12px;box-shadow:0 4px 20px rgba(112,48,160,.15);
-  padding:22px 26px;width:100%;max-width:640px}
-h1{color:#7030A0;font-size:19px;margin-bottom:10px}
-.mode-toggle{display:flex;gap:8px;margin-bottom:14px}
-.mode-btn{padding:7px 17px;border:2px solid #7030A0;border-radius:20px;cursor:pointer;
+  padding:24px 28px;width:100%;max-width:640px}
+h1{color:#7030A0;font-size:20px;margin-bottom:12px}
+.mode-toggle{display:flex;gap:8px;margin-bottom:15px}
+.mode-btn{padding:8px 18px;border:2px solid #7030A0;border-radius:20px;cursor:pointer;
   font-size:14px;font-weight:bold;background:white;color:#7030A0;transition:all .15s}
 .mode-btn.active{background:#7030A0;color:white}
 .mode-btn:hover:not(.active){background:#f3e5f5}
 .mode-panel{display:none}.mode-panel.active{display:block}
-.tabs{display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid #e0c8f0}
-.tab{padding:8px 20px;cursor:pointer;font-size:13px;font-weight:bold;color:#999;
+.tabs{display:flex;gap:0;margin-bottom:18px;border-bottom:2px solid #e0c8f0}
+.tab{padding:9px 20px;cursor:pointer;font-size:13px;font-weight:bold;color:#999;
   border-bottom:3px solid transparent;margin-bottom:-2px;transition:all .15s}
 .tab.active{color:#7030A0;border-bottom-color:#7030A0}
 .tab:hover:not(.active){color:#555}
 .panel{display:none}.panel.active{display:block}
-.sec{margin-bottom:13px}
-label{display:block;font-size:12px;font-weight:bold;color:#555;margin-bottom:4px}
-input{width:100%;padding:7px 11px;border:1px solid #ddd;border-radius:6px;
+.sec{margin-bottom:15px}
+label{display:block;font-size:12px;font-weight:bold;color:#555;margin-bottom:5px}
+input{width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;
   font-size:13px;font-family:inherit}
 input:focus{outline:none;border-color:#7030A0}
 .row{display:flex;gap:8px}.row>div{flex:1}
-button{padding:9px 20px;border:none;border-radius:6px;cursor:pointer;
+button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
   font-size:13px;font-family:inherit;font-weight:bold;transition:all .15s}
 .btn-s{background:#555;color:white;white-space:nowrap}
 .btn-s:hover{background:#333}
@@ -5463,10 +5464,10 @@ button{padding:9px 20px;border:none;border-radius:6px;cursor:pointer;
   border-radius:8px;display:none;font-size:13px;color:#2e7d32}
 .err{margin-top:10px;padding:11px 14px;background:#ffebee;border:1px solid #ef9a9a;
   border-radius:8px;display:none;font-size:13px;color:#c62828;white-space:pre-wrap}
-.note{font-size:11px;color:#aaa;margin-top:10px;line-height:1.6}
+.note{font-size:12px;color:#aaa;margin-top:11px;line-height:1.6}
 .badge-row{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
 .badge{background:#f3e5f5;color:#7030A0;border:1px solid #ce93d8;border-radius:4px;
-  padding:3px 8px;font-size:11px;font-weight:bold}
+  padding:4px 9px;font-size:12px;font-weight:bold}
 .badge.red{background:#fce4ec;color:#c00060;border-color:#f48fb1}
 .opt-label{font-size:11px;color:#888;margin-left:6px;font-weight:normal}
 </style>
