@@ -1184,7 +1184,12 @@ const TEAM_ABBR_NORMALIZE = {
   'St. Louis Cardinals':            'STL',
 };
 function normalizeTeamAbbr(raw) {
-  return TEAM_ABBR_NORMALIZE[raw] || raw;
+  if (!raw) return raw;
+  const mapped = TEAM_ABBR_NORMALIZE[raw];
+  if (mapped) return mapped;
+  if (raw.length <= 3) return raw;
+  // 未登録のフル名は先頭3文字で代替（例: "Boston Braves" → "BOS"）
+  return raw.slice(0, 3).toUpperCase();
 }
 
 // ── Pitching stats fetch ──────────────────────────────────────────────────────
