@@ -6757,26 +6757,24 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
     }
   }
 
-  // ── Step 2: BRef 直接写真（MLB CDN に画像がなかった場合のみ） ──
-  // _getBRefHash が CRC32 動的計算に対応しているため、未登録選手も対象になる
-  if (!found) {
+  // ── Step 2: BRef 直接写真（MLBシルエット確認済み or 未確認のみ。実写真確認済みは使わない） ──
+  // g_mlbHasRealPhoto === true の選手にBRefを使うと画質が劣化するため絶対に使わない
+  if (!found && g_mlbHasRealPhoto !== true) {
     const typeOrder = isOldPlayer
       ? ['sabr', 'br', 'milb', 'mlbam', 'davis']
       : ['sabr', 'br', 'mlbam', 'davis'];
 
     if (g_brefId) {
-      // g_brefId が分かっている場合: 直接試す（CRC32対応で未知選手も可）
       const directPhoto = await _directBRefPhoto(g_brefId, typeOrder);
       if (directPhoto) {
         found = directPhoto;
         console.log('[Photo] BRef直接写真 使用:', directPhoto);
       }
     }
-    // g_brefId 不明 or 上記で未取得: 選手名からBRef ID候補を順に試す
     if (!found && g_mlbNameEn) {
       const cands = _genBRefCandidates(g_mlbNameEn);
       for (const candidateId of cands) {
-        if (candidateId === g_brefId) continue;  // g_brefId は上で試済み
+        if (candidateId === g_brefId) continue;
         const directPhoto = await _directBRefPhoto(candidateId, typeOrder);
         if (directPhoto) {
           found = directPhoto;
@@ -6785,13 +6783,16 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
         }
       }
     }
+  } else if (!found && g_mlbHasRealPhoto === true) {
+    // MLB実写真確認済みだが年度別URLが見つからなかった → current URLのまま維持（BRefは使わない）
+    console.log('[Photo] MLB実写真確認済みのためBRefはスキップ → current URLを維持');
   }
 
-  // ── Step 3: BRef プロキシ経由写真（最終手段） ──
-  if (!found && brPhoto) {
+  // ── Step 3: BRef キャッシュ写真（最終手段・MLBシルエット確認済みor未確認のみ） ──
+  if (!found && g_mlbHasRealPhoto !== true && brPhoto) {
     if (await _testImageUrl(brPhoto)) {
       found = brPhoto;
-      console.log('[Photo] BRefプロキシ写真 使用:', brPhoto);
+      console.log('[Photo] BRefキャッシュ写真 使用:', brPhoto);
     }
   }
 
