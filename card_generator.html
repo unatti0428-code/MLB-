@@ -463,6 +463,7 @@ let g_resolvedPhotoUrl  = '';   // 最後に使った写真URL（テーマ再適
 let g_isPeakRow         = false; // ピーク年フラグ（テーマ再適用用）
 let g_lastCardExtras    = null; // 最後のupdateCardExtrasパラメータ（テーマ再適用用）
 let g_lastRetsuden      = '';   // 最後の列伝テキスト（テーマ再適用用）
+let g_wikiCharacteristics = null; // Wikipedia「選手としての特徴」セクション解析結果
 
 // MLB.com 連携（省略可）
 let g_mlbId       = null;   // MLB選手ID
@@ -1602,11 +1603,13 @@ function getCardCSS(t) {
   #card-root .record-bar { background:rgba(0,0,0,0.45); border:2px solid ${t.recBorder}; border-radius:8px; padding:4px 5px; display:flex; align-items:center; justify-content:space-between; margin-top:4px; }
   #card-root .rec-item { display:flex; flex-direction:column; align-items:center; flex:1; min-width:0; border-right:1px solid ${t.recBorder}88; padding:1px 2px; }
   #card-root .rec-item:last-child { border-right:none; }
-  #card-root .rec-label { color:${t.recLabel}; font-size:9px; font-weight:900; letter-spacing:0; text-shadow:1px 1px 0 #000; white-space:nowrap; }
-  #card-root .rec-val { color:#fff; font-size:21px; font-weight:900; line-height:1.1; text-shadow:1px 1px 0 #000; white-space:nowrap; }
+  #card-root .rec-label { color:${t.recLabel}; font-size:10px; font-weight:900; letter-spacing:0; text-shadow:1px 1px 0 #000; white-space:nowrap; }
+  #card-root .rec-val { color:#fff; font-size:22px; font-weight:900; line-height:1.1; text-shadow:1px 1px 0 #000; white-space:nowrap; }
   #card-root .rec-val.hl { color:${t.recHl}; text-shadow:1px 1px 0 #000,0 0 10px ${t.recHlGlow}; }
   #card-root .rec-val.pp { color:${t.recPp}; text-shadow:1px 1px 0 #000,0 0 10px ${t.recPpGlow}; }
-  #card-root .rec-val.sm { font-size:15px; }
+  #card-root .rec-val.sm { font-size:22px; }
+  /* イニングが6文字以上（通算3000回超など）の場合のみ縮小。単年200回台は通常サイズで収まる */
+  #card-root .rec-val.ip-long { font-size:17px; }
   #card-root .sec-title { color:${t.sectionText}; font-size:11px; font-weight:900; letter-spacing:2px; line-height:1.1; border-left:4px solid ${t.sectionBar}; padding-left:6px; text-shadow:1px 1px 0 #000; margin-top:4px; }
   #card-root .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
   /* 2段目: 選球眼・三振耐性(各1fr) + 小3マスグループ(2fr) */
@@ -2391,7 +2394,7 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
         <div class="rec-item"><span class="rec-label">勝利</span><span class="rec-val hl">${wins}</span></div>
         <div class="rec-item"><span class="rec-label">敗北</span><span class="rec-val">${losses}</span></div>
         <div class="rec-item"><span class="rec-label">セーブ</span><span class="rec-val pp">${sv}</span></div>
-        <div class="rec-item"><span class="rec-label">イニング</span><span class="rec-val sm">${ip}</span></div>
+        <div class="rec-item"><span class="rec-label">イニング</span><span class="rec-val${String(ip).length >= 6 ? ' ip-long' : ''}">${ip}</span></div>
         <div class="rec-item"><span class="rec-label">奪三振</span><span class="rec-val pp">${k}</span></div>
         <div class="rec-item"><span class="rec-label">WAR</span><span class="rec-val hl">${war}</span></div>
       </div>
@@ -4158,7 +4161,18 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
       lines.push(`通算OPS${ops}はキャリアを通じて一線級打者だった証明で、対戦投手を常に苦しめ続けた。`);
     }
 
-    // Wikipedia フォールバック
+    // ── 「選手としての特徴」（Wikipedia特徴セクション）を優先挿入 ──
+    // 通算カードでは特徴行を最大2行まで追加（クロージング前に挿入）
+    if (g_wikiCharacteristics) {
+      const charLines = _buildCharacteristicsLines(g_wikiCharacteristics, false, true);
+      for (const cl of charLines) {
+        if (lines.length >= 5) break;
+        if (lines.some(l => l.slice(0, 12) === cl.slice(0, 12))) continue; // 重複回避
+        lines.push(cl);
+      }
+    }
+
+    // Wikipedia エピソード フォールバック
     // 活躍の乏しい選手は閾値を緩め（5行未満）、最大6行まで埋める
     // wikiMaxLines = クロージング行を足す前の上限（クロージング+1行が最終的な合計）
     const wikiThreshold = isObscure ? 5 : 4;
@@ -4327,7 +4341,18 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     }
   }
 
-  // Wikipedia フォールバック（シングルシーズン）：5行未満のとき補完し最大5行まで
+  // ── 「選手としての特徴」（Wikipedia特徴セクション）を挿入 ──
+  // シングルシーズンでは最大1行まで（引用は除く）
+  if (g_wikiCharacteristics && lines.length < 5) {
+    const charLines = _buildCharacteristicsLines(g_wikiCharacteristics, false, false);
+    for (const cl of charLines) {
+      if (lines.length >= 5) break;
+      if (lines.some(l => l.slice(0, 12) === cl.slice(0, 12))) continue;
+      lines.push(cl);
+    }
+  }
+
+  // Wikipedia エピソード フォールバック（シングルシーズン）：5行未満のとき補完し最大5行まで
   // 出身地・ドラフト・契約金・有望株・背番号・人物等のエピソードを重複なく盛り込む
   if (lines.length < 5) {
     for (const ep of wikiEpisodes) {
@@ -4478,7 +4503,17 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
       }
     }
 
-    // Wikipedia フォールバック：5行未満のとき2個以上のエピソードを補完
+    // ── 「選手としての特徴」（Wikipedia特徴セクション）を優先挿入 ──
+    if (g_wikiCharacteristics) {
+      const charLines = _buildCharacteristicsLines(g_wikiCharacteristics, true, true);
+      for (const cl of charLines) {
+        if (lines.length >= 5) break;
+        if (lines.some(l => l.slice(0, 12) === cl.slice(0, 12))) continue;
+        lines.push(cl);
+      }
+    }
+
+    // Wikipedia エピソード フォールバック：5行未満のとき補完
     if (lines.length < 5) {
       for (const ep of wikiEpisodes) {
         if (lines.length >= 5) break;
@@ -4645,7 +4680,17 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     }
   }
 
-  // Wikipedia フォールバック（シングルシーズン）：5行未満のとき補完し最大5行まで
+  // ── 「選手としての特徴」（Wikipedia特徴セクション）を挿入（投手・シングルシーズン）──
+  if (g_wikiCharacteristics && lines.length < 5) {
+    const charLines = _buildCharacteristicsLines(g_wikiCharacteristics, true, false);
+    for (const cl of charLines) {
+      if (lines.length >= 5) break;
+      if (lines.some(l => l.slice(0, 12) === cl.slice(0, 12))) continue;
+      lines.push(cl);
+    }
+  }
+
+  // Wikipedia エピソード フォールバック（シングルシーズン）：5行未満のとき補完し最大5行まで
   // 出身地・ドラフト・契約金・有望株・背番号・人物等のエピソードを重複なく盛り込む
   if (lines.length < 5) {
     for (const ep of wikiEpisodes) {
@@ -4685,8 +4730,241 @@ function buildRetsudenFromMLBData(row, mlbData, rankData = {}, trajectory = {}, 
   return buildHitterRetsuden(row, year, awardsJa, apiSt, rankData, trajectory, wikiEpisodes);
 }
 
+// ── Wikipedia「選手としての特徴」セクションを取得して解析 ─────────────────────
+
+/** JA Wikipediaのセクション一覧から「選手としての特徴」等を探してwikitextを返す */
+async function _fetchJaWikiCharacteristics(jaTitle) {
+  try {
+    // セクション一覧を取得
+    const secUrl = `https://ja.wikipedia.org/w/api.php?action=parse&page=${encodeURIComponent(jaTitle)}&prop=sections&format=json&origin=*`;
+    const secRes = await fetch(secUrl);
+    if (!secRes.ok) return null;
+    const secData = await secRes.json();
+    const sections = secData?.parse?.sections || [];
+
+    // 対象セクション名（優先順）
+    const TARGET_KEYWORDS = ['選手としての特徴', 'プレースタイル', '選手の特徴', 'プレー特徴', '特徴'];
+    let targetSec = null;
+    for (const kw of TARGET_KEYWORDS) {
+      targetSec = sections.find(s => s.line && s.line.includes(kw));
+      if (targetSec) break;
+    }
+    if (!targetSec) {
+      console.log('[Wiki特徴] 「選手としての特徴」セクションなし:', jaTitle);
+      return null;
+    }
+
+    // そのセクションのwikitextを取得
+    const secUrl2 = `https://ja.wikipedia.org/w/api.php?action=parse&page=${encodeURIComponent(jaTitle)}&section=${targetSec.index}&prop=wikitext&format=json&origin=*`;
+    const secRes2 = await fetch(secUrl2);
+    if (!secRes2.ok) return null;
+    const secData2 = await secRes2.json();
+    const wikitext = secData2?.parse?.wikitext?.['*'] || '';
+    if (!wikitext) return null;
+    console.log('[Wiki特徴] セクション取得:', targetSec.line, '/ 文字数:', wikitext.length);
+    return wikitext;
+  } catch(e) {
+    console.warn('[Wiki特徴] 取得失敗:', e.message);
+    return null;
+  }
+}
+
+/** wikitextをクリーニングして特徴情報を構造化 */
+function _parseJaWikiCharacteristics(wikitext, isPitcher) {
+  if (!wikitext) return null;
+
+  // wikitextを平文化
+  let text = wikitext
+    // ① wikitextテーブルを丸ごと除去（{| ... |} の間を含む複数行テーブル）
+    //   例: {| class="wikitable" ... |} （ティム・リンスカムの投球データ表など）
+    .replace(/\{\|[\s\S]*?\|\}/g, '')
+    // ② ファイル・画像リンクを丸ごと除去（thumb|right|年号 などが残らないよう最優先で処理）
+    //   [[ファイル:○○.jpg|thumb|right|2016年|キャプション]] のような複数パイプを持つリンク
+    .replace(/\[\[(?:ファイル|File|画像|Image):[^\]]*\]\]/gi, '')
+    // ③ カテゴリリンクを除去
+    .replace(/\[\[(?:Category|カテゴリ):[^\]]*\]\]/gi, '')
+    // ④ 通常の内部リンク [[表示文字]] または [[記事名|表示文字]] → 表示文字のみ残す
+    .replace(/\[\[(?:[^\]|]+\|)?([^\]|]+)\]\]/g, '$1')
+    // ⑤ {{テンプレート}} を除去（3回繰り返してネストに対応）
+    .replace(/\{\{[^{}]*\}\}/g, '')
+    .replace(/\{\{[^{}]*\}\}/g, '')
+    .replace(/\{\{[^{}]*\}\}/g, '')
+    // ⑥ 強調マーク ' を除去
+    .replace(/'{2,3}/g, '')
+    // ⑦ <ref> タグを除去
+    .replace(/<ref[^>]*\/>/g, '')
+    .replace(/<ref[^>]*>[\s\S]*?<\/ref>/g, '')
+    // ⑧ その他HTMLタグを除去
+    .replace(/<[^>]+>/g, '')
+    // ⑨ ==見出し== を除去
+    .replace(/^=+[^=]+=+\s*$/gm, '')
+    // ⑩ テーブル行記法の残骸（行頭の | や ! で始まる行）を除去
+    .replace(/^[|!][^\n]*/gm, '')
+    // ⑪ ファイルリンク除去後に残ったパラメータ残骸を除去
+    //   例: "thumb|right|2016年" → 行頭や文頭に孤立して残るケースを想定
+    .replace(/^(?:thumb|right|left|center|upright|frameless)\|[^\n]*/gm, '')  // 行頭残骸
+    .replace(/(?:thumb|right|left|center|upright|frameless)\|\d{4}年\s*/g, '') // |2016年 形式
+    // ⑫ 連続する空行を整理
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  const result = {
+    armStrength: null,   // 強肩・送球
+    framing: null,       // フレーミング
+    defense: null,       // 守備全般（強肩以外）
+    batting: null,       // 打撃スタイル
+    pitching: null,      // 投球スタイル（投手用）
+    quotes: [],          // 引用文（監督・チームメート等）
+    nickname: null,      // 通称・ニックネーム（文中）
+    raw: text,           // クリーン済み全文
+  };
+
+  // 文を分割（「」の中で切れないよう。！？のみで区切る。改行は段落区切りとして利用）
+  // ※ 「ESPNマガジン」のように文中に」が来ても分割しない
+  const rawSentences = text.split(/(?<=[。！？])|\n{2,}/).map(s => s.trim()).filter(s => s.length > 8);
+
+  // 文末チェック：文として完結しているか（断片を除外するため）
+  // 完全文: 。！？ で終わる、または引用閉じ」で終わる
+  const isComplete = (s) => /[。！？」]$/.test(s);
+
+  // 文末が不完全な場合は読み取り対象にするが、フィールド格納の際には後続と結合を試みる
+  // → 実用上は「不完全文はスキップ」とする（断片の混入を防ぐ）
+  const sentences = rawSentences.filter(s => isComplete(s) || s.length > 30);
+
+  for (const s of sentences) {
+    // 断片チェック：文末が不完全かつ短い（30字未満）はスキップ
+    if (!isComplete(s) && s.length <= 30) continue;
+
+    // 強肩・送球
+    if (!result.armStrength && /強肩|ロケット|Rocket|送球(?:力|速度|距離)|矢のような|肩の強さ/.test(s)) {
+      result.armStrength = s;
+    }
+    // フレーミング（キャッチャー特有）
+    if (!result.framing && /フレーミング|framing|ミットを動かさず|体を動か|ストライク(?:に変え|として|判定)|ボール球をストライク/.test(s)) {
+      result.framing = s;
+    }
+    // 守備全般（強肩・フレーミング以外）
+    if (!result.defense && /守備|リード|配球|ブロッキング|ゴールドグラブ|ワイルドピッチ防止|捕球/.test(s)
+        && !(result.armStrength && result.armStrength.includes(s.slice(0,8)))
+        && !(result.framing    && result.framing.includes(s.slice(0,8)))) {
+      result.defense = s;
+    }
+    // 打撃（野手用）
+    if (!result.batting && !isPitcher && /打撃|スイング|バッティング|打法|打率|コンタクト|パワー|長打/.test(s)) {
+      result.batting = s;
+    }
+    // 投球（投手用）
+    if (!result.pitching && isPitcher && /球種|球速|フォーム|投法|スライダー|フォーク|カーブ|チェンジアップ|速球|制球/.test(s)) {
+      result.pitching = s;
+    }
+    // 引用（「〜」と語る / と評する 等）
+    // ※「～」が文中に含まれ、かつ「と語った」等で終わる完全文のみ採用
+    if (result.quotes.length < 3
+        && /「[^」]{10,}」/.test(s)
+        && /と語|と述べ|と話|とコメント|と評|と称|と言/.test(s)
+        && isComplete(s)) {
+      result.quotes.push(s);
+    }
+    // ニックネーム（「〜と呼ばれ」「〜の異名」等）
+    if (!result.nickname && /と呼ばれ|と称され|の異名|ニックネーム|愛称/.test(s)) {
+      result.nickname = s;
+    }
+  }
+
+  // 有効なフィールドがひとつも取れなければnullを返す
+  const hasAny = result.armStrength || result.framing || result.defense
+               || result.batting || result.pitching || result.quotes.length || result.nickname;
+  if (!hasAny) return null;
+
+  console.log('[Wiki特徴] 解析結果:', {
+    armStrength: !!result.armStrength,
+    framing: !!result.framing,
+    defense: !!result.defense,
+    batting: !!result.batting,
+    pitching: !!result.pitching,
+    quotes: result.quotes.length,
+    nickname: !!result.nickname,
+  });
+  return result;
+}
+
+/**
+ * 「選手としての特徴」の構造化データから列伝に追加すべき行を生成する
+ * @param {object} chars  _parseJaWikiCharacteristics() の返り値
+ * @param {boolean} isPitcher
+ * @param {boolean} isCareer  通算カードかどうか（単年との比率調整用）
+ * @returns {string[]}  追加すべき文字列の配列（最大3行）
+ */
+function _buildCharacteristicsLines(chars, isPitcher, isCareer) {
+  if (!chars) return [];
+  const lines = [];
+
+  /**
+   * 文を適切な長さに収めてから重複チェックしてpush。
+   * 優先順位: ① 250字以内なら全文使用（Wikipedia文は1文が長いため）
+   *           ② 250字超の場合は最後の「。」で切る
+   *           ③ 「。」が見つからなければ最後の「、」で切る（150字前後）
+   *           ④ それも見つからなければ200字で強制カット
+   */
+  const _push = (text) => {
+    if (!text) return;
+    let t = text;
+    if (t.length > 250) {
+      // 250字以内の最後の「。」で切る
+      const dotIdx = t.lastIndexOf('。', 250);
+      if (dotIdx > 20) {
+        t = t.slice(0, dotIdx + 1);
+      } else {
+        // 「。」がなければ150字以内の最後の「、」で切る
+        const commaIdx = t.lastIndexOf('、', 150);
+        t = commaIdx > 20 ? t.slice(0, commaIdx) + '…' : t.slice(0, 200) + '…';
+      }
+    }
+    if (lines.some(l => l.slice(0, 12) === t.slice(0, 12))) return;
+    lines.push(t);
+  };
+
+  // --- 優先順位: ニックネーム > 強肩 > フレーミング > 守備 > 打撃/投球 > 引用 ---
+
+  // ① ニックネームがある場合（「ロケットランチャー」等）
+  if (chars.nickname && lines.length < 2) _push(chars.nickname);
+
+  // ② 強肩（ニックネームと内容が重複しなければ）
+  if (chars.armStrength && lines.length < 2) _push(chars.armStrength);
+
+  // ③ フレーミング（捕手）
+  if (chars.framing && lines.length < 2) _push(chars.framing);
+
+  // ④ 守備 or 投球/打撃スタイル
+  const styleText = isPitcher ? chars.pitching : chars.batting;
+  const defOrStyle = chars.defense || styleText;
+  if (defOrStyle && lines.length < 2) _push(defOrStyle);
+
+  // ⑤ 引用（チームメート・監督コメント） — 通算カードでは最大1件、単年は0件
+  if (isCareer && lines.length < 3) {
+    for (const q of chars.quotes) {
+      if (lines.length >= 3) break;
+      let qt = q;
+      if (qt.length > 250) {
+        // 250字以内の最後の「。」または「」で切る
+        const dotIdx   = qt.lastIndexOf('。', 250);
+        const quoteIdx = qt.lastIndexOf('」', 250);
+        const cutAt = Math.max(dotIdx, quoteIdx);
+        qt = cutAt > 20 ? qt.slice(0, cutAt + 1) : qt.slice(0, 200) + '…';
+      }
+      if (!lines.some(l => l.slice(0, 12) === qt.slice(0, 12))) {
+        lines.push(qt);
+        break; // 引用は最大1件
+      }
+    }
+  }
+
+  return lines;
+}
+
 // ── Wikipedia からエピソードを取得（列伝フォールバック・通算／通常年共通） ─────
 async function fetchWikipediaEpisodes(playerNameEn, isPitcher) {
+  g_wikiCharacteristics = null; // 前回の特徴情報をリセット
   if (!playerNameEn) return [];
   try {
     // ── Step 1: 英語Wikipedia（exintro は使わず exsentences=30 で先頭30文を取得）──
@@ -4694,6 +4972,8 @@ async function fetchWikipediaEpisodes(playerNameEn, isPitcher) {
     const title = encodeURIComponent(playerNameEn.trim());
     const url = `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exsentences=30&explaintext=true&format=json&origin=*&titles=${title}`;
     const res = await fetch(url);
+    let enEpisodes = [];
+    let jaTitle = null;
     if (res.ok) {
       const data  = await res.json();
       const pages = data?.query?.pages || {};
@@ -4702,10 +4982,16 @@ async function fetchWikipediaEpisodes(playerNameEn, isPitcher) {
         const extract = page.extract;
         console.log('[Wikipedia] EN 取得文字数:', extract.length);
         console.log('[Wikipedia] EN テキスト先頭500字:', extract.slice(0, 500));
-        const episodes = _parseWikiEpisodes(extract, isPitcher, false);
-        if (episodes.length) {
-          console.log('[Wikipedia] EN エピソード取得:', episodes.length, '件:', episodes);
-          return episodes;
+        enEpisodes = _parseWikiEpisodes(extract, isPitcher, false);
+        if (enEpisodes.length) {
+          console.log('[Wikipedia] EN エピソード取得:', enEpisodes.length, '件:', enEpisodes);
+          // EN エピソードがあっても JA「特徴」セクション取得を並行実施
+          jaTitle = await _wikidataJaTitle(playerNameEn);
+          if (jaTitle) {
+            const charWikitext = await _fetchJaWikiCharacteristics(jaTitle);
+            g_wikiCharacteristics = _parseJaWikiCharacteristics(charWikitext, isPitcher);
+          }
+          return enEpisodes;
         }
         console.log('[Wikipedia] EN 記事あり・エピソード0件 → JA Wikiを試みます');
       } else {
@@ -4714,15 +5000,21 @@ async function fetchWikipediaEpisodes(playerNameEn, isPitcher) {
     }
 
     // ── Step 2: Wikidata経由でJA-Wikipedia記事タイトルを特定（1件ずつ確認） ──
-    const jaTitle = await _wikidataJaTitle(playerNameEn);
+    jaTitle = jaTitle || await _wikidataJaTitle(playerNameEn);
     if (!jaTitle) {
       console.log('[Wikipedia] JA 記事タイトル特定不可 → スキップ');
       return [];
     }
 
-    // ── Step 3: 日本語Wikipedia 記事本文を取得して解析 ──
-    const jaUrl = `https://ja.wikipedia.org/w/api.php?action=query&prop=extracts&exsentences=30&explaintext=true&format=json&origin=*&titles=${encodeURIComponent(jaTitle)}`;
-    const jaRes = await fetch(jaUrl);
+    // ── Step 3: 日本語Wikipedia 記事本文取得 ＋「選手としての特徴」セクション取得（並行）──
+    const [jaRes, charWikitext] = await Promise.all([
+      fetch(`https://ja.wikipedia.org/w/api.php?action=query&prop=extracts&exsentences=30&explaintext=true&format=json&origin=*&titles=${encodeURIComponent(jaTitle)}`),
+      _fetchJaWikiCharacteristics(jaTitle),
+    ]);
+
+    // 特徴セクションを解析して保存
+    g_wikiCharacteristics = _parseJaWikiCharacteristics(charWikitext, isPitcher);
+
     if (!jaRes.ok) return [];
     const jaData  = await jaRes.json();
     const jaPages = jaData?.query?.pages || {};
@@ -5728,11 +6020,100 @@ function updateRetsuden(text) {
   g_lastRetsuden = text || '';   // テーマ再適用時に再描画できるよう保存
   const el = document.getElementById('retsuden-area');
   if (!el) return;
-  // 改行を全角スペース区切りに変換（改行なし・連続テキスト）
-  const normalized = text.replace(/\\n/g, '\n');
-  const lines = escapeHtml(normalized).split('\n').map(l => l.trim()).filter(l => l);
-  const body  = lines.join('　');
-  el.innerHTML = `<strong>【列伝】</strong> ${body}`;
+
+  const normalized = (text || '').replace(/\\n/g, '\n');
+  let segments = normalized.split('\n').map(l => l.trim()).filter(l => l);
+
+  // ── 内部レンダリングヘルパー ──
+  const render = (segs) => {
+    const body = segs.map(s => escapeHtml(s)).join('　');
+    el.innerHTML = `<strong>【列伝】</strong> ${body}`;
+  };
+
+  // ── オーバーフロー判定（scrollHeight へのアクセスがレイアウトを強制計算させる） ──
+  const isOverflow = () => el.scrollHeight > el.clientHeight + 2;
+
+  // ① まず全文表示
+  render(segments);
+  if (!isOverflow()) return;
+
+  // ── Step 1: （）内の補足注釈を削除（mph→km/h変換優先・その他括弧説明除去） ──
+  // ・"92.8mph（約149.3km/h）" → "約149km/h"  ← mph表記をkm/hに置換
+  // ・"最速99.3mph（約159.8km/h）" → "最速約160km/h"
+  // ・"身長5'11"（約180cm）" → "身長5'11""  ← km/h以外の括弧は除去
+  const stripParens = (segs) =>
+    segs.map(s => {
+      // ① mphの後に（...km/h...）が続くパターン → km/h値のみ残す
+      let r = s.replace(
+        /(\d+(?:\.\d+)?)mph（([^）]{1,40})）/g,
+        (_, mph, inner) => {
+          const kmhM = inner.match(/(\d+(?:\.\d+)?)km\/h/);
+          if (kmhM) {
+            // 括弧内にkm/h値が明記されていればそれを採用
+            return `約${Math.round(parseFloat(kmhM[1]))}km/h`;
+          }
+          // 明記なければ計算（1mph = 1.60934km/h）
+          return `約${Math.round(parseFloat(mph) * 1.60934)}km/h`;
+        }
+      );
+      // ② 単体のmph（括弧なし）→ km/hに変換
+      r = r.replace(
+        /(\d+(?:\.\d+)?)mph(?!（)/g,
+        (_, mph) => `約${Math.round(parseFloat(mph) * 1.60934)}km/h`
+      );
+      // ③ 残りの（）補足を除去
+      r = r.replace(/（[^）]{1,60}）/g, '').replace(/\s{2,}/g, ' ').trim();
+      return r;
+    });
+
+  segments = stripParens(segments);
+  render(segments);
+  if (!isOverflow()) return;
+
+  // ── Step 2: 複数文セグメントの末尾一文を削除（自然な文末を保つ） ──
+  // 単一文（「。」が末尾のみ）は手を加えない → "組み合わせ。" "手にし。" を防止
+  // 複数文ある場合のみ、最後の「。」の前の文末で切る
+  const trimLastSentence = (segs) =>
+    segs.map(s => {
+      const lastDot  = s.lastIndexOf('。');
+      if (lastDot < 0) return s; // 句点なし → そのまま
+      const prevDot  = s.lastIndexOf('。', lastDot - 1);
+      // 前の句点が存在し、かつ末尾句点と十分離れている（≥10字）場合のみ削る
+      if (prevDot >= 0 && (lastDot - prevDot) >= 10) {
+        return s.slice(0, prevDot + 1); // 自然な「。」で終わる
+      }
+      return s; // 単一文はそのまま → Step 3の丸ごと削除に委ねる
+    });
+
+  segments = trimLastSentence(segments);
+  render(segments);
+  if (!isOverflow()) return;
+
+  // ── Step 3: 末尾セグメントを1つずつ削除（最低1行は残す） ──
+  while (segments.length > 1) {
+    segments = segments.slice(0, -1);
+    render(segments);
+    if (!isOverflow()) return;
+  }
+
+  // ── Step 4: 1セグメントになっても収まらない場合 ──
+  // セグメント内に複数文あれば前の文末まで切る。それでも駄目なら強制カット
+  let seg = segments[0];
+  // Step 4a: セグメント内の途中の「。」で切る
+  const dotIdx = seg.lastIndexOf('。', seg.length - 2); // 末尾の「。」の一つ前を探す
+  if (dotIdx > 10) {
+    render([seg.slice(0, dotIdx + 1)]);
+    if (!isOverflow()) return;
+    seg = seg.slice(0, dotIdx + 1);
+  }
+  // Step 4b: それでも収まらなければ10文字ずつ削る
+  while (seg.length > 20) {
+    seg = seg.slice(0, -10);
+    const cutAt = Math.max(seg.lastIndexOf('。'), seg.lastIndexOf('」'));
+    const shortened = cutAt > 10 ? seg.slice(0, cutAt + 1) : seg.trimEnd() + '…';
+    render([shortened]);
+    if (!isOverflow()) return;
+  }
 }
 
 function buildFallbackRetsuden(row) {
@@ -5793,10 +6174,8 @@ function buildFallbackRetsuden(row) {
 }
 
 function updateRetsudenFallback(row) {
-  const el = document.getElementById('retsuden-area');
-  if (!el) return;
   const text = buildFallbackRetsuden(row);
-  el.innerHTML = `<strong>【列伝】</strong> ${escapeHtml(text)}`;
+  updateRetsuden(text); // オーバーフロー対応済みの共通関数を使用
 }
 
 function escapeHtml(s) {
