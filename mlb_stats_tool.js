@@ -441,27 +441,25 @@ function ipToOuts(ip) {
   return (parseInt(w) || 0) * 3 + (parseInt(f || 0));
 }
 
-// ── スタミナ計算式 (守備.ods AC3 の等価実装) ──────────────────────────────
-// 守備.ods AC3 の数式:
-//   IFERROR(IFS(V3>=230, ROUND(V3/W3*12.5), V3>=210, ROUND(V3/W3*13.1),
-//               V3>=86,  ROUND(V3/W3*13.5), V3>=65,  ROUND(V3/W3*20),
-//               V3>=50,  ROUND(V3/W3*21),   V3<=49,  ROUND(V3/W3*22)), "")
-// V3 = 換算イニング(K列), W3 = 試合数(G列)
-// GS補正: H列(GS)/G列(試合数) > 0.5 の場合、IP>=65 の係数を 20→13 に変更
+// ── スタミナ計算式 ─────────────────────────────────────────────────────────
+// GS(H列)÷試合数(G列) の比率で係数・最低値を切り替え
+//   ≥0.70: IP/G × 12.5
+//   ≥0.55: IP/G × 13   (下限45)
+//   ≥0.40: IP/G × 14   (下限38)
+//   ≥0.25: IP/G × 16   (下限34)
+//   ≥0.15: IP/G × 19   (下限27)
+//   < 0.15: IP/G × 22
 function calcStaminaFromIP(ip, g, gs) {
   if (!ip || isNaN(ip) || ip < 0) return '';
   if (!g  || isNaN(g)  || g  <= 0) return '';
-  const ratio = ip / g;
-  if (ip >= 230) return Math.round(ratio * 12.5);
-  if (ip >= 210) return Math.round(ratio * 13.1);
-  if (ip >= 86)  return Math.round(ratio * 13.5);
-  // IP 85以下: スタミナ上限 69（先発でも投球回数不足なら上限を設ける）
-  if (ip >= 65) {
-    const mult = (gs > 0 && (gs / g) > 0.5) ? 13 : 20;
-    return Math.min(69, Math.round(ratio * mult));
-  }
-  if (ip >= 50)  return Math.min(69, Math.round(ratio * 21));
-  return Math.min(69, Math.round(ratio * 22));  // ip <= 49
+  const gsRatio = (gs > 0 && g > 0) ? gs / g : 0;
+  const ipPerG  = ip / g;
+  if (gsRatio >= 0.70) return Math.round(ipPerG * 12.5);
+  if (gsRatio >= 0.55) return Math.max(45, Math.round(ipPerG * 13));
+  if (gsRatio >= 0.40) return Math.max(38, Math.round(ipPerG * 14));
+  if (gsRatio >= 0.25) return Math.max(34, Math.round(ipPerG * 16));
+  if (gsRatio >= 0.15) return Math.max(27, Math.round(ipPerG * 19));
+  return Math.round(ipPerG * 22);
 }
 
 // ── 制球計算式 (守備.ods AC2 の等価実装) ─────────────────────────────────────
