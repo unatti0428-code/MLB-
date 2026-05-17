@@ -5379,61 +5379,61 @@ const HTML = `<!DOCTYPE html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Meiryo UI','Meiryo','Yu Gothic UI',sans-serif;background:#f0e8f5;
-  min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:30px 20px}
+  min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:10px 16px}
 .card{background:white;border-radius:12px;box-shadow:0 4px 20px rgba(112,48,160,.15);
-  padding:32px;width:100%;max-width:640px}
-h1{color:#7030A0;font-size:20px;margin-bottom:12px}
-.mode-toggle{display:flex;gap:8px;margin-bottom:20px}
-.mode-btn{padding:8px 20px;border:2px solid #7030A0;border-radius:20px;cursor:pointer;
-  font-size:14px;font-weight:bold;background:white;color:#7030A0;transition:all .15s}
+  padding:18px 22px;width:100%;max-width:640px}
+h1{color:#7030A0;font-size:18px;margin-bottom:8px}
+.mode-toggle{display:flex;gap:8px;margin-bottom:10px}
+.mode-btn{padding:6px 16px;border:2px solid #7030A0;border-radius:20px;cursor:pointer;
+  font-size:13px;font-weight:bold;background:white;color:#7030A0;transition:all .15s}
 .mode-btn.active{background:#7030A0;color:white}
 .mode-btn:hover:not(.active){background:#f3e5f5}
 .mode-panel{display:none}.mode-panel.active{display:block}
-.tabs{display:flex;gap:0;margin-bottom:24px;border-bottom:2px solid #e0c8f0}
-.tab{padding:10px 22px;cursor:pointer;font-size:14px;font-weight:bold;color:#999;
+.tabs{display:flex;gap:0;margin-bottom:12px;border-bottom:2px solid #e0c8f0}
+.tab{padding:7px 18px;cursor:pointer;font-size:13px;font-weight:bold;color:#999;
   border-bottom:3px solid transparent;margin-bottom:-2px;transition:all .15s}
 .tab.active{color:#7030A0;border-bottom-color:#7030A0}
 .tab:hover:not(.active){color:#555}
 .panel{display:none}.panel.active{display:block}
-.sec{margin-bottom:16px}
-label{display:block;font-size:12px;font-weight:bold;color:#555;margin-bottom:5px}
-input{width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;
-  font-size:14px;font-family:inherit}
+.sec{margin-bottom:10px}
+label{display:block;font-size:12px;font-weight:bold;color:#555;margin-bottom:3px}
+input{width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:6px;
+  font-size:13px;font-family:inherit}
 input:focus{outline:none;border-color:#7030A0}
-.row{display:flex;gap:10px}.row>div{flex:1}
-button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
-  font-size:14px;font-family:inherit;font-weight:bold;transition:all .15s}
+.row{display:flex;gap:8px}.row>div{flex:1}
+button{padding:8px 18px;border:none;border-radius:6px;cursor:pointer;
+  font-size:13px;font-family:inherit;font-weight:bold;transition:all .15s}
 .btn-s{background:#555;color:white;white-space:nowrap}
 .btn-s:hover{background:#333}
 .btn-p{background:#7030A0;color:white}
 .btn-p:hover:not(:disabled){background:#5a1e85}
 .btn-p:disabled{background:#bbb;cursor:not-allowed}
-.ri{padding:8px 12px;background:#f8f8f8;border:1px solid #eee;border-radius:4px;
-  cursor:pointer;margin-bottom:4px;font-size:13px;transition:background .1s}
+.ri{padding:6px 10px;background:#f8f8f8;border:1px solid #eee;border-radius:4px;
+  cursor:pointer;margin-bottom:3px;font-size:13px;transition:background .1s}
 .ri:hover{background:#f0e8f5;border-color:#ce93d8}
 .ri .n{font-weight:bold;color:#333}.ri .m{color:#888;font-size:11px;margin-left:8px}
-.results{margin-top:8px}
-.file-area{border:2px dashed #ce93d8;border-radius:8px;padding:16px;min-height:56px;
-  display:flex;align-items:center;gap:12px;background:#faf5ff;margin-bottom:12px}
+.results{margin-top:5px}
+.file-area{border:2px dashed #ce93d8;border-radius:8px;padding:10px 12px;min-height:44px;
+  display:flex;align-items:center;gap:10px;background:#faf5ff;margin-bottom:8px}
 .file-area.sel{border-color:#7030A0;background:#f3e5f5}
-.file-icon{font-size:26px;flex-shrink:0}
+.file-icon{font-size:22px;flex-shrink:0}
 .file-path{font-size:13px;color:#888;flex:1;word-break:break-all}
 .file-path.has{color:#4a1470;font-weight:bold}
-.pbox{margin-top:16px;padding:14px 16px;background:#f9f5ff;border:1px solid #ce93d8;
+.pbox{margin-top:8px;padding:8px 12px;background:#f9f5ff;border:1px solid #ce93d8;
   border-radius:8px;display:none}
 .ptxt{font-size:13px;color:#555}
 .sp{display:inline-block;width:12px;height:12px;border:2px solid #ddd;
   border-top-color:#7030A0;border-radius:50%;animation:spin .7s linear infinite;
   vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
-.done{margin-top:14px;padding:14px 16px;background:#e8f5e9;border:1px solid #a5d6a7;
-  border-radius:8px;display:none;font-size:14px;color:#2e7d32}
-.err{margin-top:14px;padding:14px 16px;background:#ffebee;border:1px solid #ef9a9a;
-  border-radius:8px;display:none;font-size:14px;color:#c62828;white-space:pre-wrap}
-.note{font-size:11px;color:#aaa;margin-top:14px;line-height:1.7}
-.badge-row{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:16px}
+.done{margin-top:8px;padding:10px 14px;background:#e8f5e9;border:1px solid #a5d6a7;
+  border-radius:8px;display:none;font-size:13px;color:#2e7d32}
+.err{margin-top:8px;padding:10px 14px;background:#ffebee;border:1px solid #ef9a9a;
+  border-radius:8px;display:none;font-size:13px;color:#c62828;white-space:pre-wrap}
+.note{font-size:10px;color:#aaa;margin-top:8px;line-height:1.6}
+.badge-row{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
 .badge{background:#f3e5f5;color:#7030A0;border:1px solid #ce93d8;border-radius:4px;
-  padding:3px 8px;font-size:11px;font-weight:bold}
+  padding:2px 7px;font-size:10px;font-weight:bold}
 .badge.red{background:#fce4ec;color:#c00060;border-color:#f48fb1}
 .opt-label{font-size:11px;color:#888;margin-left:6px;font-weight:normal}
 </style>
@@ -5468,11 +5468,11 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
           <div><label>英語スラッグ</label><input id="pslug" type="text" placeholder="yoshinobu-yamamoto"></div>
           <div><label>MLB ID</label><input id="ppid" type="number" placeholder="808982"></div>
         </div>
-        <div class="row" style="margin-top:10px">
+        <div class="row" style="margin-top:6px">
           <div><label>日本語名（ファイル名）</label><input id="pjaName" type="text" placeholder="山本由伸"></div>
           <div><label>英語フルネーム</label><input id="pfullName" type="text" placeholder="Yoshinobu Yamamoto"></div>
         </div>
-        <div class="row" style="margin-top:10px">
+        <div class="row" style="margin-top:6px">
           <div><label>開始年</label><input id="py1" type="number" placeholder="2024"></div>
           <div><label>終了年</label><input id="py2" type="number" placeholder="2026"></div>
         </div>
@@ -5497,19 +5497,14 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
       <div class="done" id="pcDone"></div>
       <div class="err"  id="pcErr"></div>
       <div class="note">
-        ※ Chromeが自動起動します（Baseball Savant へのアクセス）<br>
-        ※ pre-2017年は <strong>FanGraphs</strong>（2002+・API key不要）→ MLB The Show → Claude の順で球種を補完<br>
-        ※ AY=スタミナ・AZ=制球・BA=精神・BB=奪三振・BC=重さ・BD=対左・BE=対盗塁 を自動追加<br>
-        ※ 出力先: このツールと同じフォルダ
+        ※ Chromeが自動起動 / pre-2017年は FanGraphs→MLB The Show→Claude の順で補完 / AY〜BE 自動追加 / 出力先: 同フォルダ
       </div>
     </div>
     <div id="panel-p-info" class="panel">
       <div class="sec">
-        <p style="font-size:13px;color:#555;line-height:1.8;margin-top:8px">
-          <strong>投手モード</strong>は Baseball Savant・FanGraphs・MLB The Show のデータを<br>
-          組み合わせて投手の球種・制球・スタミナ能力値を自動作成します。<br><br>
-          球種データが取得できない選手（pre-2017年など）は<br>
-          Claude API キーを入力することで推定データを補完できます。
+        <p style="font-size:13px;color:#555;line-height:1.7;margin-top:4px">
+          <strong>投手モード</strong>は Baseball Savant・FanGraphs・MLB The Show のデータを組み合わせて球種・制球・スタミナ能力値を自動作成します。<br>
+          球種データが取得できない選手（pre-2017年など）は Claude API キーを入力することで推定データを補完できます。
         </p>
       </div>
     </div>
@@ -5537,11 +5532,11 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
           <div><label>英語スラッグ</label><input id="bslug" type="text" placeholder="masataka-yoshida"></div>
           <div><label>MLB ID</label><input id="bpid" type="number" placeholder="807799"></div>
         </div>
-        <div class="row" style="margin-top:10px">
+        <div class="row" style="margin-top:6px">
           <div><label>日本語名（ファイル名）</label><input id="bjaName" type="text" placeholder="吉田正尚"></div>
           <div><label>FanGraphs 表示名（英語）</label><input id="bfullName" type="text" placeholder="Masataka Yoshida"></div>
         </div>
-        <div class="row" style="margin-top:10px">
+        <div class="row" style="margin-top:6px">
           <div><label>開始年</label><input id="by1" type="number" placeholder="2023"></div>
           <div><label>終了年</label><input id="by2" type="number" placeholder="2026"></div>
         </div>
@@ -5561,8 +5556,7 @@ button{padding:10px 22px;border:none;border-radius:6px;cursor:pointer;
       <div class="pbox" id="bcPbox"><div class="ptxt" id="bcPtxt"><span class="sp"></span>処理中...</div></div>
       <div class="done" id="bcDone"></div>
       <div class="err"  id="bcErr"></div>
-      <div class="note">※ Chromeが自動起動します（Baseball Savant / FanGraphsへのアクセス）<br>
-        ※ 出力先: このツールと同じフォルダ</div>
+      <div class="note">※ Chromeが自動起動（Baseball Savant / FanGraphs） / 出力先: 同フォルダ</div>
     </div>
     <div id="panel-b-add" class="panel">
       <div class="sec">
