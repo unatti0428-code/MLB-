@@ -1185,11 +1185,17 @@ const TEAM_ABBR_NORMALIZE = {
 };
 function normalizeTeamAbbr(raw) {
   if (!raw) return raw;
-  const mapped = TEAM_ABBR_NORMALIZE[raw];
-  if (mapped) return mapped;
-  if (raw.length <= 3) return raw;
-  // 未登録のフル名は先頭3文字で代替（例: "Boston Braves" → "BOS"）
-  return raw.slice(0, 3).toUpperCase();
+  const trimmed = String(raw).trim();
+  // フルネームは大文字小文字混在のままマップ検索（"San Francisco Giants" など）
+  const mappedFull = TEAM_ABBR_NORMALIZE[trimmed];
+  if (mappedFull) return mappedFull;
+  // 略称は大文字に統一してマップ検索（"sfg" → "SFG" → "SF"）
+  const upper = trimmed.toUpperCase();
+  const mappedUp = TEAM_ABBR_NORMALIZE[upper];
+  if (mappedUp) return mappedUp;
+  // 未登録の略称はそのまま返す（≤3文字）、フル名は先頭3文字
+  if (upper.length <= 3) return upper;
+  return upper.slice(0, 3);
 }
 
 // ── Pitching stats fetch ──────────────────────────────────────────────────────
