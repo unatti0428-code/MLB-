@@ -462,6 +462,42 @@ function calcStaminaFromIP(ip, g, gs) {
   return Math.round(ipPerG * 22);
 }
 
+// ── 回復量計算式 ───────────────────────────────────────────────────────────
+// GS/G ≥ 0.3（先発系）と < 0.3（中継ぎ・抑え系）で閾値テーブルを切り替え
+function calcKaifukuryo(ip, g, gs) {
+  if (!ip || isNaN(ip) || ip < 0) return '';
+  if (!g  || isNaN(g)  || g  <= 0) return '';
+  const gsRatio = (gs > 0 && g > 0) ? gs / g : 0;
+  if (gsRatio >= 0.3) {
+    if (ip >= 270) return 20;
+    if (ip >= 250) return 19;
+    if (ip >= 230) return 18;
+    if (ip >= 200) return 17;
+    if (ip >= 180) return 16;
+    if (ip >= 165) return 15;
+    if (ip >= 150) return 14;
+    if (ip >= 130) return 13;
+    if (ip >= 110) return 12;
+    if (ip >= 90)  return 11;
+    if (ip >= 80)  return 10;
+    if (ip >= 70)  return 9;
+    return 8;
+  } else {
+    if (ip >= 180) return 14;
+    if (ip >= 165) return 13;
+    if (ip >= 150) return 12;
+    if (ip >= 130) return 11;
+    if (ip >= 110) return 10;
+    if (ip >= 90)  return 9;
+    if (ip >= 80)  return 8;
+    if (ip >= 70)  return 7;
+    if (ip >= 60)  return 6;
+    if (ip >= 40)  return 5;
+    if (ip >= 20)  return 4;
+    return 3;
+  }
+}
+
 // ── 制球計算式 (守備.ods AC2 の等価実装) ─────────────────────────────────────
 // 守備.ods AC2 の数式:
 //   IFERROR(IFS(V2>=4.2, ROUND(60-(V2-4.2)/0.16),
@@ -575,7 +611,7 @@ const PITCH_GROUPS = [
   { idx: 5, name: 'シンカー',       startCol: 43 },  // ← 'ツーシーム' から修正（PITCH_NAMES_JA[5] と統一）
   { idx: 6, name: 'スプリット',     startCol: 47 },
 ];
-const PITCH_ABILITY_START_COL = 59;
+const PITCH_ABILITY_START_COL = 60; // BH列開始（BG=回復量追加によりシフト）
 
 function calcKyuSoku(velo) {
   if (velo == null || isNaN(velo) || velo < 10) return '';
@@ -820,7 +856,8 @@ const SEISIN_COL    = 54;
 const SANSHIN_COL   = 55;
 const OMOSA_COL     = 56;
 const TAILEFT_COL   = 57;
-const TAITOURUI_COL = 58;
+const TAITOURUI_COL  = 58;
+const KAIFUKURYO_COL = 59;  // BG列 = 回復量（BG以降が変化球情報のためBH=60へシフト）
 
 async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides = {}, extraOptions = {}) {
   // extraOptions:
@@ -840,7 +877,8 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
   purpleCell(ws.getCell(1, SANSHIN_COL),   '奪三振',   fontSize);
   purpleCell(ws.getCell(1, OMOSA_COL),     '重さ',     fontSize);
   purpleCell(ws.getCell(1, TAILEFT_COL),   '対左',     fontSize);
-  purpleCell(ws.getCell(1, TAITOURUI_COL), '対盗塁',   fontSize);
+  purpleCell(ws.getCell(1, TAITOURUI_COL),  '対盗塁', fontSize);
+  purpleCell(ws.getCell(1, KAIFUKURYO_COL), '回復量', fontSize);
 
   const dataRows = [];
   const pitchActiveSet = new Set();
@@ -966,6 +1004,9 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
 
     const taitourui = calcTaiTouruiFromSBData(sb, pk, ip, cs);
     if (taitourui !== '') purpleCell(ws.getCell(rn, TAITOURUI_COL), taitourui, fontSize);
+
+    const kaifuku = calcKaifukuryo(ip, g, gs);
+    if (kaifuku !== '') purpleCell(ws.getCell(rn, KAIFUKURYO_COL), kaifuku, fontSize);
 
     // 球種能力値
     activePitchList.forEach((pg, i) => {
