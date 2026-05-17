@@ -1104,7 +1104,8 @@ async function fetchBRefData(brefId, isPitcher) {
       if (!tableEl) return;
       tableEl.querySelectorAll('tbody tr').forEach(tr => {
         if (tr.classList.contains('thead') || tr.classList.contains('minors_table')) return;
-        const yearTh = tr.querySelector('th[data-stat="year_ID"]');
+        // 新旧BRefフォーマット両対応（year_ID / year_id）
+        const yearTh = tr.querySelector('th[data-stat="year_ID"], th[data-stat="year_id"], [data-stat="year_ID"], [data-stat="year_id"]');
         const year   = yearTh ? yearTh.textContent.replace(/\D/g, '').trim() : '';
         if (!year || year.length !== 4) return;
 
@@ -1112,10 +1113,10 @@ async function fetchBRefData(brefId, isPitcher) {
           const td = tr.querySelector(`td[data-stat="${stat}"]`);
           return td ? td.textContent.trim() : null;
         };
-        // チーム列：複数チーム在籍年の「TOT」合計行を最優先
-        const teamTd   = tr.querySelector('td[data-stat="team_ID"]');
-        const teamText = (teamTd ? teamTd.textContent.trim() : '').toUpperCase();
-        const isTot    = teamText === 'TOT';
+        // チーム列：新旧両フォーマット対応（team_ID / team_name_abbr）
+        const teamTd   = tr.querySelector('td[data-stat="team_ID"], td[data-stat="team_name_abbr"], td[data-stat="team_id"]');
+        const teamText = (teamTd ? teamTd.textContent.trim() : '').toUpperCase().replace(/\s+/g, '');
+        const isTot    = teamText === 'TOT' || /^\d+(TM|TMS|TEAMS?)$/i.test(teamText);
 
         if (!_brefCache[brefId][year]) _brefCache[brefId][year] = {};
         getStats(year, get, isTot);
@@ -1126,12 +1127,16 @@ async function fetchBRefData(brefId, isPitcher) {
     // ── WAR を含むテーブルを全探索（テーブルIDに依存しない堅牢な方式） ──
     // BRef は batting_value / pitching_value 等に WAR 列があるが ID が変わる場合があるため
     // すべてのテーブルを走査して data-stat="WAR" セルを持つものを使用する
+    // WAR列の候補stat名（新旧BRefフォーマット両対応）
+    const _proxyWarStats = ['WAR', 'b_war', 'p_war', 'WAR_bat', 'rWAR', 'bWAR'];
     let warFound = false;
     for (const tbl of Array.from(doc2.querySelectorAll('table'))) {
-      if (!tbl.querySelector('td[data-stat="WAR"]')) continue;
-      console.log('[BRef] WAR列テーブル発見: id=', tbl.id || '(no id)');
+      const warStatEl = tbl.querySelector(_proxyWarStats.map(s => `td[data-stat="${s}"]`).join(', '));
+      if (!warStatEl) continue;
+      const warStatName = warStatEl.getAttribute('data-stat');
+      console.log('[BRef] WAR列テーブル発見: id=', tbl.id || '(no id)', 'stat=', warStatName);
       parseStatsTable(tbl, (year, get, isTot) => {
-        const war = get('WAR');
+        const war = get(warStatName);
         if (war && war !== '' && (isTot || !_brefCache[brefId][year].war)) {
           _brefCache[brefId][year].war = war;
           warFound = true;
@@ -2749,8 +2754,8 @@ function _parseBRefPastedHtml(content, brefId, isPitcher) {
     if (!tableEl) return;
     tableEl.querySelectorAll('tbody tr').forEach(tr => {
       if (tr.classList.contains('thead') || tr.classList.contains('minors_table')) return;
-      // th と td の両方を探す（2TM合算行は td を使う場合がある）
-      const yearEl = tr.querySelector('[data-stat="year_ID"]');
+      // th と td の両方を探す（新旧BRefフォーマット両対応: year_ID / year_id）
+      const yearEl = tr.querySelector('[data-stat="year_ID"], [data-stat="year_id"]');
       const year = yearEl ? yearEl.textContent.replace(/\D/g, '').trim() : '';
       if (!year || year.length !== 4) return;
       const get = stat => {
@@ -2758,8 +2763,8 @@ function _parseBRefPastedHtml(content, brefId, isPitcher) {
         return td ? td.textContent.trim() : null;
       };
       // "TOT" / "2TM" / "3TM" / "2 Teams" / "2 TM" 等すべてを合算行と判定
-      // ※ th/td 両方を探す（合算行が th を使う場合に備える）
-      const teamRaw = (tr.querySelector('[data-stat="team_ID"]')?.textContent ?? '')
+      // 新BRefフォーマット: team_name_abbr / 旧: team_ID
+      const teamRaw = (tr.querySelector('[data-stat="team_ID"], [data-stat="team_name_abbr"], [data-stat="team_id"]')?.textContent ?? '')
         .trim().toUpperCase().replace(/\s+/g, '');
       const isTotRow = teamRaw === 'TOT' || /^\d+(TM|TMS|TEAMS?)$/i.test(teamRaw);
       callback(year, get, isTotRow);
@@ -2771,21 +2776,26 @@ function _parseBRefPastedHtml(content, brefId, isPitcher) {
   // batting_value が先に来ると打撃WARを拾ってしまうため、投手時は pitching_value を優先する。
   // 優先順: ① id が "pitching_value" / "batting_value" / "fielding_value" のいずれかに合致するテーブル
   //         ② それ以外の WAR 含有テーブル（フォールバック）
-  const warStatNames = ['WAR', 'WAR_bat', 'rWAR', 'bWAR'];
+  // 新BRefフォーマット: b_war(野手) / p_war(投手)  旧: WAR / WAR_bat / rWAR / bWAR
+  const warStatNames = ['WAR', 'WAR_bat', 'rWAR', 'bWAR', 'b_war', 'p_war'];
   let warCount = 0;
   let warStatUsed = '';
 
-  // 投手の場合は pitching_value を最優先、次に batting_value 以外の value テーブル
-  // 野手の場合は batting_value を最優先
+  // 投手: players_value_pitching / pitching_value を優先、野手: players_value_batting / batting_value を優先
+  // 新旧両フォーマットに対応
   const allTables = Array.from(doc.querySelectorAll('table'));
-  const preferredId = isPitcher ? 'pitching_value' : 'batting_value';
-  const excludedId  = isPitcher ? 'batting_value'  : 'pitching_value';
+  const preferredIds = isPitcher
+    ? ['pitching_value', 'players_value_pitching']
+    : ['batting_value',  'players_value_batting'];
+  const excludedIds  = isPitcher
+    ? ['batting_value',  'players_value_batting']
+    : ['pitching_value', 'players_value_pitching'];
 
-  // 候補テーブルを「優先ID → その他」の順に並べる
+  // 候補テーブルを「優先ID → その他 → 除外ID」の順に並べる
   const sortedTables = [
-    ...allTables.filter(t => t.id === preferredId),
-    ...allTables.filter(t => t.id !== preferredId && t.id !== excludedId),
-    ...allTables.filter(t => t.id === excludedId),
+    ...allTables.filter(t =>  preferredIds.includes(t.id)),
+    ...allTables.filter(t => !preferredIds.includes(t.id) && !excludedIds.includes(t.id)),
+    ...allTables.filter(t =>  excludedIds.includes(t.id)),
   ];
 
   outer: for (const tbl of sortedTables) {
