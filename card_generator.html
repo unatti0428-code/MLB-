@@ -663,14 +663,13 @@ async function mlbSelectPlayer(id, fullName, pos, team) {
   };
 
   // ── MLB CDN に実写真があるかバックグラウンドでチェック ──
-  // シルエット（ジェネリック画像）かどうかを事前判定し、カード生成時の初期写真選択に利用する
+  // d_フォールバックなしURLを使用: 実写真あり→onload / なし→404→onerror で即座判定
+  // 【注意】寸法比較は使わない: c_fit後の実写真もシルエットと同じ188×282になり得るため誤判定する
   (async () => {
-    const genericDims = await _getGenericFingerprint();
-    // "current" 年の URL（d_ フォールバックなし）で判定
     const testUrl = `https://img.mlbstatic.com/mlb-photos/image/upload/w_213,h_282,c_fit,q_auto:best/v1/people/${id}/headshot/67/current`;
-    const isReal = await _testHeadshotUrl(testUrl, 6000, genericDims);
+    const isReal = await _testHeadshotUrl(testUrl, 6000);
     g_mlbHasRealPhoto = isReal;
-    console.log(`[Photo] MLB実写真チェック(ID:${id}): ${isReal ? '✅ 実写真あり' : '❌ シルエットのみ'}`);
+    console.log(`[Photo] MLB実写真チェック(ID:${id}): ${isReal ? '✅ 実写真あり' : '❌ 実写真なし(404)'}`);
   })();
   document.getElementById('mlb-selected-name-label').textContent = fullName;
   document.getElementById('mlb-selected-meta-label').textContent =
@@ -6549,7 +6548,11 @@ function _testImageUrl(url, timeoutMs = 4000) {
  * @param {number} timeoutMs
  * @returns {Promise<boolean>}
  */
-function _testHeadshotUrl(rawUrl, timeoutMs = 4000, excludeDims = null) {
+// 【シルエット判定方針】
+// d_フォールバックなしURLを使う: 実写真あり→onload(true) / なし→404→onerror(false)
+// 寸法比較は廃止: c_fit後に実写真もシルエット(188×282)と同じ寸法になり得るため誤判定が発生する
+// 例: Judge 2016年写真(縦長原画) → c_fit処理後 188×282 = シルエットと同じ → 誤って拒否
+function _testHeadshotUrl(rawUrl, timeoutMs = 4000) {
   return new Promise(resolve => {
     const img = new Image();
     const timer = setTimeout(() => { img.src = ''; resolve(false); }, timeoutMs);
@@ -6558,13 +6561,8 @@ function _testHeadshotUrl(rawUrl, timeoutMs = 4000, excludeDims = null) {
       const w = img.naturalWidth, h = img.naturalHeight;
       if (!w || !h) { resolve(false); return; }
       const ratio = h / w;
-      // 0.85〜1.65: 証明写真として許容する比率範囲
+      // 0.85〜1.65: 証明写真として許容する比率範囲（横長アクション写真などを除外）
       if (ratio < 0.85 || ratio > 1.65) { resolve(false); return; }
-      // ジェネリック画像（シルエット）と同じ寸法なら除外
-      if (excludeDims && w === excludeDims.w && h === excludeDims.h) {
-        console.log('[Photo] ジェネリック画像を検出 → スキップ');
-        resolve(false); return;
-      }
       resolve(true);
     };
     img.onerror = () => { clearTimeout(timer); resolve(false); };
@@ -6745,10 +6743,10 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
   if (g_mlbHasRealPhoto === false) {
     console.log('[Photo] MLB シルエット確認済 → CDNスキャンをスキップ、BRef直接取得へ');
   } else {
-    // ジェネリック画像（シルエット）フィンガープリントを並列取得しておく
-    const genericDims = await _getGenericFingerprint();
+    // d_フォールバックなしURLで試す: 実写真あり→onload(true) / なし→404→onerror(false)
+    // 寸法比較は廃止(c_fit後の実写真とシルエットが同寸法になり得るため誤判定する)
     for (const testYr of mlbScanYears) {
-      if (await _testHeadshotUrl(makeUrl(testYr), 4000, genericDims)) {
+      if (await _testHeadshotUrl(makeUrl(testYr), 4000)) {
         found = makeUrl(testYr);
         const label = testYr === yr
           ? `${testYr}年`
@@ -7074,9 +7072,7 @@ window._injectTestData = function(rows, isPitcher, isCatcher, peakYear) {
   _doGenerate(null);
 };
 
-// ── ページロード時にジェネリック画像フィンガープリントをプリウォーム ──
-// 写真スキャン開始前にキャッシュしておくことで、スキャン時の待機を最小化する
-_getGenericFingerprint();
+// (フィンガープリントによるシルエット寸法判定は廃止: d_なしURL+404検出に一本化)
 </script>
 </body>
 </html>
