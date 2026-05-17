@@ -2164,10 +2164,11 @@ function calcPitcherOverall(row, fipValue = null, warValue = null) {
   const baseScore = baseRaw  !== null ? 50 + baseRaw  * 2.5 : null;
 
   // ── 総合球威: 球威 × 投球割合 の加重平均（7球種）× 1.25 ──
+  // 球種データ: row[59+i*3]=球速, row[60+i*3]=球威, row[61+i*3]=割合 (BG列=回復量追加に伴い+1シフト)
   let pwrWSum = 0, pwrWTotal = 0;
   for (let i = 0; i < 7; i++) {
-    const pwr  = parseFloat(row[59 + i * 3]) || 0;
-    const rate = parseFloat(row[60 + i * 3]) || 0;
+    const pwr  = parseFloat(row[60 + i * 3]) || 0;
+    const rate = parseFloat(row[61 + i * 3]) || 0;
     if (pwr > 0 && rate > 0) {
       pwrWSum   += pwr * rate;
       pwrWTotal += rate;
@@ -2292,17 +2293,18 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
         ment   = row[53] || 0, strk   = row[54] || 0, heavy  = row[55] || 0;
 
   // 球種名: 各スロットのヘッダーを優先し、なければデフォルト名にフォールバック
+  // 球種データ: row[59+i*3]=球速, row[60+i*3]=球威, row[61+i*3]=割合 (BG列=回復量追加に伴い+1シフト)
   const pitchNames = ['フォーシーム','スライダー','チェンジアップ','カーブ','カットボール','ツーシーム','スプリット'];
   const finalPitchNames = pitchNames.map((def, i) => {
-    const h = headers[0][58 + i * 3];
+    const h = headers[0][59 + i * 3];
     return (h != null && String(h).trim()) ? String(h).trim() : def;
   });
 
   const pitches = [];
   for (let i = 0; i < 7; i++) {
-    const speed = row[58 + i * 3];
-    const power = row[59 + i * 3];
-    const rate  = parseFloat(row[60 + i * 3]) || 0;
+    const speed = row[59 + i * 3];
+    const power = row[60 + i * 3];
+    const rate  = parseFloat(row[61 + i * 3]) || 0;
     if (rate > 0) {
       pitches.push({ name: finalPitchNames[i] || pitchNames[i], speed, power, rate });
     }
@@ -2335,6 +2337,7 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
 
   const leftVal  = safeNum(row[56]);
   const baseVal  = safeNum(row[57]);
+  const recovVal = safeNum(row[58]);  // 回復量 (BG列)
 
   // 上段（4列1行）: コアステータス
   const statBoxesTop = [
@@ -2350,9 +2353,9 @@ function buildPitcherCard(row, headers, photoURL, t, isPeakYear, nameEn) {
   ].join('');
   const statBoxesMini =
     `<div class="stats-mini-group">` +
-      buildStatBoxMini('対　左', leftVal, false) +
-      buildStatBoxMini('対盗塁', baseVal, false) +
-      buildStatBoxMini('回復量', null,    false) +
+      buildStatBoxMini('対　左', leftVal,  false) +
+      buildStatBoxMini('対盗塁', baseVal,  false) +
+      buildStatBoxMini('回復量', recovVal, false) +
     `</div>`;
 
   const pitchRows = pitches.map(p => {
@@ -4494,11 +4497,11 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
       const _hdr0c = (g_headers && g_headers[0]) ? g_headers[0] : [];
       const _pitchesC = [];
       for (let _pi = 0; _pi < 7; _pi++) {
-        const _pspd  = parseFloat(row[58 + _pi * 3]);
-        const _ppwr  = safeNum(row[59 + _pi * 3]) ?? 0;
-        const _prate = parseFloat(row[60 + _pi * 3]) || 0;
-        const _ppn   = (_hdr0c[58 + _pi * 3] != null && String(_hdr0c[58 + _pi * 3]).trim())
-                       ? String(_hdr0c[58 + _pi * 3]).trim() : _pnDefsC[_pi];
+        const _pspd  = parseFloat(row[59 + _pi * 3]);
+        const _ppwr  = safeNum(row[60 + _pi * 3]) ?? 0;
+        const _prate = parseFloat(row[61 + _pi * 3]) || 0;
+        const _ppn   = (_hdr0c[59 + _pi * 3] != null && String(_hdr0c[59 + _pi * 3]).trim())
+                       ? String(_hdr0c[59 + _pi * 3]).trim() : _pnDefsC[_pi];
         if (_prate > 0) _pitchesC.push({ name: _ppn, speed: _pspd, power: isNaN(_ppwr) ? 0 : _ppwr, rate: _prate });
       }
       _pitchesC.sort((a, b) => b.power - a.power || b.rate - a.rate);
@@ -4542,19 +4545,20 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   }
 
   // ── シングルシーズン ──
-  // 球種データを読み込む（row[58+i*3]=球速km/h, row[59+i*3]=球威, row[60+i*3]=使用率）
+  // 球種データを読み込む（row[59+i*3]=球速km/h, row[60+i*3]=球威, row[61+i*3]=使用率）
+  // ※ BG列（row[58]）に回復量を追加したため全球種列が+1シフト
   // 球種名はExcelヘッダーを優先（g_headers経由）
   const _pnDefaults = ['フォーシーム','スライダー','チェンジアップ','カーブ','カットボール','ツーシーム','スプリット'];
   const _hdr0 = (g_headers && g_headers[0]) ? g_headers[0] : [];
   const pitchNames = _pnDefaults.map((def, i) => {
-    const h = _hdr0[58 + i * 3];
+    const h = _hdr0[59 + i * 3];
     return (h != null && String(h).trim()) ? String(h).trim() : def;
   });
   const pitches = [];
   for (let i = 0; i < 7; i++) {
-    const spd  = parseFloat(row[58 + i * 3]);
-    const pwr  = safeNum(row[59 + i * 3]) ?? 0;
-    const rate = parseFloat(row[60 + i * 3]) || 0;
+    const spd  = parseFloat(row[59 + i * 3]);
+    const pwr  = safeNum(row[60 + i * 3]) ?? 0;
+    const rate = parseFloat(row[61 + i * 3]) || 0;
     if (rate > 0) pitches.push({
       name:  pitchNames[i],
       speed: (!isNaN(spd) && spd >= 100 && spd <= 175) ? spd : null,  // km/hとして妥当な範囲のみ
