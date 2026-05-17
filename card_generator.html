@@ -539,6 +539,7 @@ const _BREF_HASHES = {
   'ambrech01': '7376a930',  // Chip Ambres
   // ── 日本人選手 ──
   'takatsh01': '18669f7b',  // 高津臣吾 (Shingo Takatsu)
+  'tagucso01': '26c834ff',  // 田口壮 (So Taguchi)
 };
 
 /**
@@ -2747,6 +2748,34 @@ function _parseBRefPastedHtml(content, brefId, isPitcher) {
   if (h1El && h1El.textContent.trim().length > 2) {
     _brefCache[brefId].nameEn = h1El.textContent.trim();
     console.log('[BRef貼り付け] 選手名:', _brefCache[brefId].nameEn);
+  }
+
+  // ── 選手写真URL抽出（貼り付けHTMLにheadshot imgが含まれる場合に自動取得） ──
+  // BRef URL例: https://www.baseball-reference.com/req/2025011210/images/headshots/2/26c834ff_sabr.jpg
+  // 優先タイプ: sabr > br > mlbam > davis（より良質な写真を優先）
+  // ※ _BREF_HASHES 未登録の選手でもBRefページ貼り付けで写真URLを自動取得できる
+  if (!_brefCache[brefId].photoUrl) {
+    const TYPE_PRIORITY = ['sabr', 'br', 'mlbam', 'davis', 'milb'];
+    let bestPhoto = null;
+    let bestPriority = Infinity;
+    // DOMParser の img.src はベースURLが about:blank のため getAttribute を使用
+    doc.querySelectorAll('img[src]').forEach(img => {
+      const raw = img.getAttribute('src') || '';
+      // クリップボードHTMLには通常絶対URL, ソース貼り付け時はパスのみの場合もある
+      const m = raw.match(/(?:https?:\/\/www\.baseball-reference\.com)?\/req\/\d+\/images\/headshots\/[0-9a-f]\/([0-9a-f]{8})_(\w+)\.jpg/i);
+      if (!m) return;
+      const type = m[2].toLowerCase();
+      const pri = TYPE_PRIORITY.indexOf(type);
+      if (pri !== -1 && pri < bestPriority) {
+        bestPriority = pri;
+        // 相対パスの場合は絶対URLに変換
+        bestPhoto = raw.startsWith('http') ? raw : `https://www.baseball-reference.com${raw}`;
+      }
+    });
+    if (bestPhoto) {
+      _brefCache[brefId].photoUrl = bestPhoto;
+      console.log('[BRef貼り付け] 写真URL自動取得:', bestPhoto);
+    }
   }
 
   // テーブル行パースヘルパー
