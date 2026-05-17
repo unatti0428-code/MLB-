@@ -5579,21 +5579,22 @@ async function doSearch(mode) {
     const data = await r.json();
     if (!data.length) { el.innerHTML = '<div style="font-size:12px;color:#888">見つかりませんでした</div>'; return; }
     el.innerHTML = data.map(p =>
-      '<div class="ri" data-mode="' + mode + '" data-id="' + p.id + '" data-name="' + p.name.replace(/"/g,'&quot;') + '" onclick="pickEl(this)">' +
+      '<div class="ri" data-mode="' + mode + '" data-id="' + p.id + '" data-name="' + p.name.replace(/"/g,'&quot;') + '" data-debut="' + p.debut + '" onclick="pickEl(this)">' +
       '<span class="n">' + p.name + '</span>' +
       '<span class="m">' + p.position + ' · debut ' + p.debut + ' · ID: ' + p.id + '</span></div>'
     ).join('');
   } catch(e) { el.innerHTML = '<div style="font-size:12px;color:#c00">エラー: '+e.message+'</div>'; }
 }
 
-function pickEl(el) { pick(el.dataset.mode, parseInt(el.dataset.id), el.dataset.name); }
-function pick(mode, id, name) {
+function pickEl(el) { pick(el.dataset.mode, parseInt(el.dataset.id), el.dataset.name, el.dataset.debut); }
+function pick(mode, id, name, debut) {
   const prefix = mode === 'pitcher' ? 'p' : 'b';
   document.getElementById(prefix+'pid').value      = id;
   document.getElementById(prefix+'fullName').value = name;
   document.getElementById(prefix+'slug').value     = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  const debutStr = debut ? '、' + debut + '年デビュー' : '';
   document.getElementById(prefix+'results').innerHTML =
-    '<div style="font-size:12px;color:#7030A0">✓ ' + name + '（ID: ' + id + '）</div>';
+    '<div style="font-size:12px;color:#7030A0">✓ ' + name + '（ID: ' + id + debutStr + '）</div>';
 }
 
 async function doCreate(mode) {
