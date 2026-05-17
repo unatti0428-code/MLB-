@@ -6903,14 +6903,21 @@ async function _doGenerate(photoInput) {
       cardContent = buildHitterCard(selectedRow, g_rows, '__PHOTO__', theme, g_isCatcher, isPeakRow, nameEn);
     }
 
-    // 写真の即時差し込み（カードを素早く表示するため、まず手元にある写真を使用）
+    // ══ 写真の即時差し込み ══
     // 優先順位（即時）:
     //   ① 手動アップロード
-    //   ② MLB current（実写真確認済みの場合）
-    //   ③ BRef（MLBがシルエットと判明している場合、またはMLB IDなし）
-    //   ④ MLB current with generic fallback（未確認の場合の暫定表示）
-    //   ⑤ なし
-    // ※ 年度別写真への差し替えは DOM注入後に resolveYearPhotoAsync が非同期で行う
+    //   ② MLB CDN 実写真（確認済み: g_mlbHasRealPhoto === true）
+    //   ③ BRef写真（MLBがシルエット確認済み OR MLB IDなし）
+    //      キャッシュ済みURL → _directBRefPhoto → resolveYearPhotoAsync 委譲
+    //   ④ BRefキャッシュあり（MLB未確認: null）→ BRefを暫定使用
+    //      resolveYearPhotoAsync が後でMLB実写真があれば差し替える
+    //   ⑤ MLB CDN（genericフォールバック付き）暫定表示（BRefなし・未確認）
+    //   ⑥ 写真なし
+    //
+    // シルエット判定方法:
+    //   mlbSelectPlayer() 実行時に「d_ フォールバックなし」のURLを試し
+    //   404→onerror なら g_mlbHasRealPhoto=false、ロード成功なら true を設定
+    //   （日本人など旧選手は MLB CDN に写真がなく即座に false 判定）
     const brPhoto = g_brefId ? _brefCache[g_brefId]?.photoUrl : null;
     const _isManualPhoto = !!(photoInput && photoInput.files && photoInput.files[0]);
     const mlbCurrent = g_mlbId
@@ -6922,35 +6929,46 @@ async function _doGenerate(photoInput) {
       const photoURL = URL.createObjectURL(photoInput.files[0]);
       cardContent = cardContent.replace(/__PHOTO__/g, photoURL);
       g_resolvedPhotoUrl = photoURL;
+
     } else if (g_mlbId && g_mlbHasRealPhoto === true) {
-      // ② MLB実写真が確認済み → MLB URLを使用
+      // ② MLB実写真が確認済み → MLB CDN使用（最良品質）
       cardContent = cardContent.replace(/__PHOTO__/g, mlbCurrent);
       g_resolvedPhotoUrl = mlbCurrent;
-    } else if (g_mlbHasRealPhoto === false) {
-      // ③ MLBがシルエットと確認済み → BRef写真を取得して即時使用
-      // キャッシュ済みURL → _directBRefPhoto 直接取得 → 諦めてシルエット の順
+      console.log('[Photo] MLB実写真確認済 → MLB CDN使用');
+
+    } else if (g_mlbHasRealPhoto === false || !g_mlbId) {
+      // ③ MLBシルエット確認済み OR MLB IDなし → BRef写真を優先
+      // BRefキャッシュ済みURL → _directBRefPhoto → 見つからなければmlbCurrent(シルエット)
       const _yr = parseInt(String(selectedRow[1] ?? '')) || 2000;
       const _isOld = _yr < 2010;
       const _types = _isOld ? ['sabr','br','milb','mlbam','davis'] : ['sabr','br','mlbam','davis'];
-      let _brefPhoto = brPhoto; // まずキャッシュ済みURLを確認
+      let _brefPhoto = brPhoto;
       if (!_brefPhoto && g_brefId) {
-        console.log('[Photo] MLB シルエット確認済 → BRef直接取得中...');
+        const reason = g_mlbHasRealPhoto === false ? 'MLBシルエット確認済' : 'MLB IDなし';
+        console.log(`[Photo] ${reason} → BRef直接取得中...`);
         _brefPhoto = await _directBRefPhoto(g_brefId, _types);
-        if (_brefPhoto) console.log('[Photo] BRef直接取得成功(初期表示):', _brefPhoto);
-        else console.log('[Photo] BRef直接取得も失敗 → resolveYearPhotoAsyncに委譲');
+        if (_brefPhoto) console.log('[Photo] BRef直接取得成功:', _brefPhoto);
+        else            console.log('[Photo] BRef直接取得も失敗 → resolveYearPhotoAsyncに委譲');
+      } else if (_brefPhoto) {
+        console.log('[Photo] BRefキャッシュ使用:', _brefPhoto);
       }
       const _useUrl = _brefPhoto || mlbCurrent || '';
       cardContent = cardContent.replace(/__PHOTO__/g, _useUrl);
       g_resolvedPhotoUrl = _useUrl;
-    } else if (!g_mlbId && brPhoto) {
-      // ④ MLB IDなし + BRef写真キャッシュあり
-      console.log('[Photo] BRef 写真を即時表示:', brPhoto);
+
+    } else if (brPhoto) {
+      // ④ MLB未確認(null) + BRefキャッシュあり → BRefを暫定使用
+      // resolveYearPhotoAsync がMLB実写真を確認できれば後で差し替える
+      console.log('[Photo] MLB未確認 → BRefキャッシュを暫定使用:', brPhoto);
       cardContent = cardContent.replace(/__PHOTO__/g, brPhoto);
       g_resolvedPhotoUrl = brPhoto;
+
     } else if (mlbCurrent) {
-      // ⑤ MLB未確認(null) → generic fallback付きURLで暫定表示（resolveYearPhotoAsyncが後で差し替え）
+      // ⑤ MLB未確認(null) + BRefなし → genericフォールバック付きURLで暫定表示
+      // resolveYearPhotoAsync が後で差し替える
       cardContent = cardContent.replace(/__PHOTO__/g, mlbCurrent);
       g_resolvedPhotoUrl = mlbCurrent;
+
     } else {
       // ⑥ 写真なし
       cardContent = cardContent.replace(/__PHOTO__/g, '');
