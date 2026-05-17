@@ -894,6 +894,22 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
   // { outs: number, kyuiByI: { [pitchListIdx]: number } }
   const yearKyuiStore = [];
 
+  // ── Wiki最高球速アンカー: ff(idx=0)/si(idx=5) の FG球速ピーク値を事前集計 ─────
+  // wikiCapKmh が設定されている場合、高球速年 × 好成績年を161km/hとし
+  // 球速差・ERA/BAA/HR9 に基づいて ±2-3km/h 可変させる（後述アンカーロジック参照）。
+  const _peakFgVeloByIdx = {};
+  if (wikiCapKmh && wikiCapKmh >= 150) {
+    for (const { pitchData: _pd0 } of dataRows) {
+      for (const _pg0 of activePitchList) {
+        if (_pg0.idx !== 0 && _pg0.idx !== 5) continue;
+        const _v0 = parseFloat(String(_pd0[_pg0.idx]?.velo || ''));
+        if (!isNaN(_v0) && _v0 > 0 && _v0 < 105) {
+          if ((_peakFgVeloByIdx[_pg0.idx] ?? 0) < _v0) _peakFgVeloByIdx[_pg0.idx] = _v0;
+        }
+      }
+    }
+  }
+
   let count = 0;
   for (const { rn, yr, ipRaw, g, gs, bb, eraRaw, hr, so, avgRaw, vsLRaw, sb, pk, cs, pitchData } of dataRows) {
     const ip = parseIP(ipRaw);
@@ -996,15 +1012,31 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
         }
       }
       let kyusoku = calcKyuSoku(isNaN(_bgVeloNum) ? _bgVeloNum : _bgVeloNum + _starterBoostMph);
-      // ── Wikipedia 最高球速 km/h キャップ（BG列表示上限）──────────────────────────
-      // Wikipedia が最高球速（例: 100mph=161km/h）を明記している場合、
-      // ゲームスケール換算(×1.6+4)の誤差でキャップを超えることがあるため実変換値で上限を設定。
-      // ff(idx=0)・si(idx=5) の主速球グループにのみ適用する。
+      // ── Wikipedia 最高球速 km/h アンカー可変ロジック ────────────────────────────
+      // wikiCapKmh(例:161km/h) を最高球速年のアンカーとし、各年を最大±3km/h可変する。
+      // 条件: ff(idx=0)/si(idx=5) かつ wikiCapKmh≥150 のみ適用。
+      // ① FG球速がwikiCapKmh-4km/h以内の年 → アンカーロジック
+      //    球速差ペナルティ: ピーク比で1mph落ち=-1, 2mph以上落ち=-2 (最大-2)
+      //    成績ペナルティ: ERA/BAA/HR9が低調(calcPerfBoost<-3)=-1, それ以外=0
+      //    → target = wikiCapKmh - 球速差pen - 成績pen (下限 wikiCapKmh-3)
+      //    → kyusoku = min(wikiCapKmh, max(rawKmh, target))  ※raw以下には下げない
+      // ② それ以外(FG球速が低い年/非FGデータ年) → 従来の上限キャップのみ
       // ★ 閾値: wikiCapKmh < 150（≒93mph未満）は適用しない。
-      //   Wikipediaが低速度のみ言及（変化球・晩年球速等）している場合に
-      //   本来の速球BGが誤って下げられる問題を防ぐ。
-      if (wikiCapKmh && wikiCapKmh >= 150 && kyusoku !== '' && (pg.idx === 0 || pg.idx === 5) && Number(kyusoku) > wikiCapKmh) {
-        kyusoku = wikiCapKmh;
+      if (wikiCapKmh && wikiCapKmh >= 150 && kyusoku !== '' && (pg.idx === 0 || pg.idx === 5)) {
+        const _rawKmh = Number(kyusoku);
+        if (!isNaN(_rawKmh)) {
+          const _peakMph = _peakFgVeloByIdx[pg.idx] ?? 0;
+          const _yearMph = parseFloat(String(pd.velo || ''));
+          if (_rawKmh >= wikiCapKmh - 4 && _peakMph > 0 && !isNaN(_yearMph)) {
+            // FG球速がwikiCapKmh付近の年 → アンカー可変ロジック適用
+            const _veloPen = Math.min(2, Math.floor(Math.max(0, _peakMph - _yearMph)));
+            const _perfPen = calcPerfBoost(perfEra, perfBaa1000, perfHr9) < -3 ? 1 : 0;
+            const _target  = Math.max(wikiCapKmh - 3, wikiCapKmh - _veloPen - _perfPen);
+            kyusoku = Math.min(wikiCapKmh, Math.max(_rawKmh, _target));
+          } else if (_rawKmh > wikiCapKmh) {
+            kyusoku = wikiCapKmh; // FG球速が低い年 or 非FGデータ年: 上限のみ
+          }
+        }
       }
       if (kyusoku !== '') redPurpleCell(ws.getCell(rn, base + 0), kyusoku, fontSize);
 
