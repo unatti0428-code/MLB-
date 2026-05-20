@@ -1149,30 +1149,38 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
               const A = Number(kyui);
               let base = 95, threshold = 95, mult = null;
 
-              if (ip >= 200 && ip <= 270) {
-                if      (eraNum >= 3.70)              { threshold = 95; mult = 0.4; }
-                else if (eraNum >= 2.70)              { threshold = 95; mult = 0.5; }
-                else if (eraNum >= 1.70)              { threshold = 95; mult = 0.6; }
-              } else if (ip >= 151 && ip < 200) {
-                if      (eraNum >= 3.30)              { threshold = 95; mult = 0.4; }
-                else if (eraNum >= 2.30)              { threshold = 95; mult = 0.5; }
-                else if (eraNum >= 1.30)              { threshold = 95; mult = 0.6; }
-              } else if (ip >= 100 && ip <= 150) {
-                if      (eraNum >= 3.00)              { threshold = 95; mult = 0.4; }
-                else if (eraNum >= 2.00)              { threshold = 95; mult = 0.5; }
+              if (ip >= 200 && ip <= 350) {
+                if      (eraNum >= 3.70)              { threshold = 95; mult = 0.3; }
+                else if (eraNum >= 2.70)              { threshold = 95; mult = 0.4; }
+                else if (eraNum >= 1.70)              { threshold = 95; mult = 0.5; }
                 else if (eraNum >= 1.00)              { threshold = 95; mult = 0.6; }
-              } else if (ip >= 75 && ip < 100) {
-                if      (eraNum >= 2.80)              { threshold = 95; mult = 0.4; }
-                else if (eraNum >= 1.80)              { threshold = 95; mult = 0.5; }
+              } else if (ip >= 151 && ip < 200) {
+                if      (eraNum >= 3.30)              { threshold = 95; mult = 0.3; }
+                else if (eraNum >= 2.30)              { threshold = 95; mult = 0.4; }
+                else if (eraNum >= 1.30)              { threshold = 95; mult = 0.5; }
                 else if (eraNum >= 0.80)              { threshold = 95; mult = 0.6; }
-              } else if (ip >= 35 && ip < 75) {
-                if      (eraNum >= 2.50)              { threshold = 95; mult = 0.4; }
-                else if (eraNum >= 1.50)              { threshold = 95; mult = 0.5; }
+              } else if (ip >= 100 && ip <= 150) {
+                if      (eraNum >= 3.00)              { threshold = 95; mult = 0.3; }
+                else if (eraNum >= 2.00)              { threshold = 95; mult = 0.4; }
+                else if (eraNum >= 1.00)              { threshold = 95; mult = 0.5; }
+                else if (eraNum >= 0.60)              { threshold = 95; mult = 0.6; }
+              } else if (ip >= 75 && ip < 100) {
+                if      (eraNum >= 2.80)              { threshold = 95; mult = 0.3; }
+                else if (eraNum >= 1.80)              { threshold = 95; mult = 0.4; }
+                else if (eraNum >= 0.80)              { threshold = 95; mult = 0.5; }
                 else if (eraNum >= 0.50)              { threshold = 95; mult = 0.6; }
+              } else if (ip >= 35 && ip < 75) {
+                if      (eraNum >= 2.50)              { threshold = 95; mult = 0.3; }
+                else if (eraNum >= 1.50)              { threshold = 95; mult = 0.4; }
+                else if (eraNum >= 0.50)              { threshold = 95; mult = 0.5; }
+                else if (eraNum >= 0.30)              { threshold = 95; mult = 0.6; }
               } else if (ip >= 0 && ip < 35) {
                 base = 90;
-                if      (eraNum >= 1.50)              { threshold = 90; mult = 0.4; }
-                else if (eraNum >= 0.00)              { threshold = 90; mult = 0.5; }
+                if      (eraNum >= 2.00)              { threshold = 90; mult = 0.3;  }
+                else if (eraNum >= 1.50)              { threshold = 90; mult = 0.4;  }
+                else if (eraNum >= 1.00)              { threshold = 90; mult = 0.5;  }
+                else if (eraNum >= 0.50)              { threshold = 90; mult = 0.65; }
+                else if (eraNum >= 0.00)              { threshold = 90; mult = 0.8;  }
               }
 
               if (mult !== null && A >= threshold) {
