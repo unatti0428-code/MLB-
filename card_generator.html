@@ -3345,7 +3345,75 @@ function awardToJa(award) {
     return lg ? `${lg}最優秀監督賞` : '最優秀監督賞';
   if (n.includes('batting title'))        return '首位打者';
   if (n.includes('home run') && n.includes('leader')) return '本塁打王';
-  // ⑦ 未変換は元の英語名をそのまま返す
+
+  // ⑧ Players Choice Awards（MLBPA 選手投票による賞）
+  // "ML Players Choice AL Outstanding Pitcher" 等の形式に対応
+  const isPC = n.includes('players choice') || n.includes('players association') || n.includes('mlbpa');
+  if (isPC || n.includes('outstanding pitcher') || n.includes('outstanding player') ||
+      n.includes('outstanding rookie') || n.includes('outstanding reliever') ||
+      n.includes('outstanding dh')) {
+    if (n.includes('outstanding pitcher'))
+      return lg ? `${lg}最優秀投手賞` : '最優秀投手賞';
+    if (n.includes('outstanding player'))
+      return lg ? `${lg}最優秀選手賞` : '最優秀選手賞';
+    if (n.includes('outstanding rookie'))
+      return lg ? `${lg}最優秀新人賞` : '最優秀新人賞';
+    if (n.includes('outstanding reliever'))
+      return lg ? `${lg}最優秀救援投手賞` : '最優秀救援投手賞';
+    if (n.includes('outstanding dh') || (isPC && n.includes('designated')))
+      return lg ? `${lg}最優秀指名打者賞` : '最優秀指名打者賞';
+    if (n.includes('man in baseball'))
+      return '野球界最優秀貢献者賞';
+    if (isPC) return lg ? `${lg}選手会最優秀賞` : '選手会最優秀賞';
+  }
+
+  // ⑨ 人名を冠した各種表彰
+  if (n.includes('warren spahn'))      return 'ウォーレン・スパーン賞';
+  if (n.includes('bob gibson'))        return 'ボブ・ギブソン賞';
+  if (n.includes('roger clemens'))     return 'ロジャー・クレメンス賞';
+  if (n.includes('nolan ryan'))        return 'ノーラン・ライアン賞';
+  if (n.includes('bob feller'))        return 'ボブ・フェラー賞';
+  if (n.includes('sandy koufax'))      return 'サンディ・コーファックス賞';
+  if (n.includes('whitey ford'))       return 'ホワイティ・フォード賞';
+  if (n.includes('tony gwynn'))        return 'トニー・グウィン賞';
+  if (n.includes('mickey mantle'))     return 'ミッキー・マントル賞';
+  if (n.includes('ted williams'))      return 'テッド・ウィリアムズ賞';
+  if (n.includes('dick howser'))       return 'ディック・ハウザー賞';
+  if (n.includes('hutch'))             return 'ハッチ賞';
+  if (n.includes('babe ruth'))         return 'ベーブ・ルース賞';
+  if (n.includes('buck o'))            return 'バック・オニール功労賞';
+  if (n.includes('ford c. frick') || n.includes('ford frick')) return null; // アナウンサー賞は非表示
+  if (n.includes('j.g. taylor spink') || n.includes('spink award')) return null; // 記者賞は非表示
+
+  // ⑩ その他統計・特別表彰
+  if (n.includes('triple crown'))      return '三冠王';
+  if (n.includes('rolaids'))           return 'ロレイズ最優秀救援賞';
+  if (n.includes('trevor hoffman'))    return 'トレバー・ホフマン賞';
+  if (n.includes('mariano rivera') && !n.includes('award')) return null; // オールスター投票等は除外
+  if (n.includes('tony la russa'))     return 'トニー・ラルーサ賞';
+  if (n.includes('joe cronin'))        return 'ジョー・クローニン賞';
+  if (n.includes('roberto') && n.includes('perez')) return null;
+  if (n.includes('sporting news') && n.includes('player'))
+    return lg ? `${lg}スポーティングニュース最優秀選手` : 'スポーティングニュース最優秀選手';
+  if (n.includes('sporting news') && n.includes('pitcher'))
+    return lg ? `${lg}スポーティングニュース最優秀投手` : 'スポーティングニュース最優秀投手';
+  if (n.includes('baseball america') && n.includes('player'))
+    return 'ベースボール・アメリカ最優秀選手';
+  if (n.includes('baseball america') && n.includes('pitcher'))
+    return 'ベースボール・アメリカ最優秀投手';
+  if (n.includes('pitcher of the year'))
+    return lg ? `${lg}年間最優秀投手賞` : '年間最優秀投手賞';
+  if (n.includes('player of the year'))
+    return lg ? `${lg}年間最優秀選手賞` : '年間最優秀選手賞';
+  if (n.includes('reliever of the year') || n.includes('relief man'))
+    return lg ? `${lg}最優秀救援投手賞` : '最優秀救援投手賞';
+  if (n.includes('strikeout') && n.includes('leader')) return '奪三振王';
+  if (n.includes('era') && n.includes('leader'))       return '最優秀防御率';
+  if (n.includes('wins') && n.includes('leader'))      return '最多勝';
+  if (n.includes('saves') && n.includes('leader'))     return '最多セーブ';
+  if (n.includes('rbi') && n.includes('leader'))       return '打点王';
+
+  // ⑪ 未変換は元の英語名をそのまま返す
   return award.name || award.id || '';
 }
 
@@ -6275,6 +6343,57 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
       } else {
         results.push('MVPに輝き、その年のリーグを代表する最高の選手として球史にその名を刻んだ。');
       }
+      continue;
+    }
+
+    // Players Choice Awards / 最優秀投手賞（選手投票）
+    if (/Players(?:'|\s+)Choice|Players(?:'|\s+)Association\s+Award/i.test(s) &&
+        !results.some(r => r.includes('最優秀') || r.includes('選手投票'))) {
+      const _isAL2 = /american league|\bAL\b/i.test(s);
+      const _isNL2 = /national league|\bNL\b/i.test(s);
+      const _lg2   = _isAL2 ? 'AL' : _isNL2 ? 'NL' : '';
+      if (/outstanding pitcher/i.test(s)) {
+        results.push(`${_lg2 ? _lg2 + ' ' : ''}最優秀投手賞を選手投票で受賞し、同僚から認められた真の実力者として球史にその名を刻んだ。`);
+        continue;
+      }
+      if (/outstanding player/i.test(s)) {
+        results.push(`${_lg2 ? _lg2 + ' ' : ''}最優秀選手賞を選手投票で受賞し、グラウンドで戦う仲間たちから最高の評価を勝ち取った。`);
+        continue;
+      }
+      if (/outstanding reliever/i.test(s)) {
+        results.push(`${_lg2 ? _lg2 + ' ' : ''}最優秀救援投手賞を選手投票で受賞し、ブルペンの絶対的守護神として公式に認められた。`);
+        continue;
+      }
+      if (/outstanding rookie/i.test(s)) {
+        results.push(`${_lg2 ? _lg2 + ' ' : ''}最優秀新人賞を選手投票で受賞し、仲間の投票による最高の新人として球界デビューを飾った。`);
+        continue;
+      }
+      results.push('MLBPAの選手投票による最優秀賞に輝き、同僚から最高の評価を受けた選手としてその名を残した。');
+      continue;
+    }
+
+    // ウォーレン・スパーン賞（最優秀左腕投手）
+    if (/Warren Spahn Award/i.test(s) && !results.some(r => r.includes('スパーン') || r.includes('左腕'))) {
+      results.push('ウォーレン・スパーン賞を受賞し、その年のメジャーリーグ最優秀左腕投手として公式に認定された栄誉。');
+      continue;
+    }
+
+    // 三冠王
+    if (/triple crown/i.test(s) && /won|earned|captured|clinch/i.test(s) && !results.some(r => r.includes('三冠'))) {
+      results.push('打率・本塁打・打点の三冠王を獲得し、その年のリーグ最強打者として球史に不滅の足跡を刻んだ。');
+      continue;
+    }
+
+    // Bob Gibson賞 / Cy Youngに準ずる投手賞
+    if (/Bob Gibson Award/i.test(s) && !results.some(r => r.includes('ギブソン'))) {
+      results.push('ボブ・ギブソン賞を受賞し、その年のリーグ最高右腕投手として球界全体から認められた栄誉。');
+      continue;
+    }
+
+    // Sporting News / Baseball America 年間賞
+    if (/Sporting News.{0,30}(?:Player|Pitcher) of the Year/i.test(s) && !results.some(r => r.includes('スポーティングニュース'))) {
+      const isSNP = /pitcher/i.test(s);
+      results.push(`スポーティングニュース誌の年間最優秀${isSNP ? '投手' : '選手'}賞を受賞し、メディアからも折り紙付きの最高の評価を得た。`);
       continue;
     }
 
