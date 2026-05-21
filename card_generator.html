@@ -5165,6 +5165,41 @@ function _parseJaWikiEpisodes(text, isPitcher) {
   return results;
 }
 
+/**
+ * ローマ字都道府県名 → 漢字（都/道/府/県付き）変換
+ * @param {string} name  ローマ字表記（例: "Hyogo", "Tokyo", "Osaka"）
+ * @returns {string|null}  漢字表記（例: "兵庫県", "東京都"）または null（未対応）
+ */
+function _jakenFromRomaji(name) {
+  if (!name) return null;
+  const n = name.trim().toLowerCase().replace(/[ōo]/g, 'o').replace(/[ūu]/g, 'u');
+  const MAP = {
+    // 都
+    'tokyo':'東京都',
+    // 道
+    'hokkaido':'北海道', 'hokkaidô':'北海道',
+    // 府
+    'osaka':'大阪府', 'kyoto':'京都府', 'kyôto':'京都府',
+    // 県（あいうえお順）
+    'aichi':'愛知県', 'akita':'秋田県', 'aomori':'青森県',
+    'chiba':'千葉県', 'ehime':'愛媛県', 'fukui':'福井県',
+    'fukuoka':'福岡県', 'fukushima':'福島県', 'gifu':'岐阜県',
+    'gunma':'群馬県', 'gumma':'群馬県', 'hiroshima':'広島県',
+    'hyogo':'兵庫県', 'hyôgo':'兵庫県', 'ibaraki':'茨城県',
+    'ishikawa':'石川県', 'iwate':'岩手県', 'kagawa':'香川県',
+    'kagoshima':'鹿児島県', 'kanagawa':'神奈川県', 'kochi':'高知県',
+    'kumamoto':'熊本県', 'mie':'三重県', 'miyagi':'宮城県',
+    'miyazaki':'宮崎県', 'nagano':'長野県', 'nagasaki':'長崎県',
+    'nara':'奈良県', 'niigata':'新潟県', 'oita':'大分県',
+    'okayama':'岡山県', 'okinawa':'沖縄県', 'saga':'佐賀県',
+    'saitama':'埼玉県', 'shiga':'滋賀県', 'shimane':'島根県',
+    'shizuoka':'静岡県', 'tochigi':'栃木県', 'tokushima':'徳島県',
+    'tottori':'鳥取県', 'toyama':'富山県', 'wakayama':'和歌山県',
+    'yamagata':'山形県', 'yamaguchi':'山口県', 'yamanashi':'山梨県',
+  };
+  return MAP[n] || null;
+}
+
 function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
   if (!text) return [];
   // 日本語テキストは専用パーサーへ
@@ -5390,7 +5425,13 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
     if (birthM && !results.some(r => r.includes('生まれ') || r.includes('出身'))) {
       const city  = birthM[1].trim();
       const state = birthM[2].trim().replace(/[),.]+$/, '');
-      results.push(`${state}州${city}出身。地元で磨いた野球センスがプロの世界で確かに開花した。`);
+      if (/^Japan$/i.test(state)) {
+        // 日本出身: city部分を都道府県として漢字変換
+        const prefKanji = _jakenFromRomaji(city) || `${city}（日本）`;
+        results.push(`${prefKanji}出身。地元で磨いた野球センスがプロの世界で確かに開花した。`);
+      } else {
+        results.push(`${state}州${city}出身。地元で磨いた野球センスがプロの世界で確かに開花した。`);
+      }
       continue;
     }
 
@@ -5554,16 +5595,22 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
     if (bornM && !results.some(r => r.includes('出身'))) {
       const city  = bornM[1].trim();
       const state = bornM[2].trim();
-      // 国名・日本語変換（主要州のみ）
-      const stateJa = { 'California':'カリフォルニア州','Texas':'テキサス州','Florida':'フロリダ州',
-        'New York':'ニューヨーク州','Ohio':'オハイオ州','Georgia':'ジョージア州',
-        'North Carolina':'ノースカロライナ州','South Carolina':'サウスカロライナ州',
-        'Arizona':'アリゾナ州','Pennsylvania':'ペンシルベニア州','Illinois':'イリノイ州',
-        'Michigan':'ミシガン州','Virginia':'バージニア州','Louisiana':'ルイジアナ州',
-        'Dominican Republic':'ドミニカ共和国','Venezuela':'ベネズエラ','Cuba':'キューバ',
-        'Puerto Rico':'プエルトリコ','Panama':'パナマ','Mexico':'メキシコ','Japan':'日本' };
-      const stateStr = stateJa[state] || state;
-      results.push(`${stateStr}${city}出身で、生まれ育った地でプロへの夢を育み、メジャーリーグで頂点へと駆け上がった。`);
+      if (/^Japan$/i.test(state)) {
+        // 日本出身: city部分を都道府県として漢字変換
+        const prefKanji = _jakenFromRomaji(city) || `${city}（日本）`;
+        results.push(`${prefKanji}出身で、生まれ育った地でプロへの夢を育み、メジャーリーグで頂点へと駆け上がった。`);
+      } else {
+        // 国名・日本語変換（主要州のみ）
+        const stateJa = { 'California':'カリフォルニア州','Texas':'テキサス州','Florida':'フロリダ州',
+          'New York':'ニューヨーク州','Ohio':'オハイオ州','Georgia':'ジョージア州',
+          'North Carolina':'ノースカロライナ州','South Carolina':'サウスカロライナ州',
+          'Arizona':'アリゾナ州','Pennsylvania':'ペンシルベニア州','Illinois':'イリノイ州',
+          'Michigan':'ミシガン州','Virginia':'バージニア州','Louisiana':'ルイジアナ州',
+          'Dominican Republic':'ドミニカ共和国','Venezuela':'ベネズエラ','Cuba':'キューバ',
+          'Puerto Rico':'プエルトリコ','Panama':'パナマ','Mexico':'メキシコ' };
+        const stateStr = stateJa[state] || state;
+        results.push(`${stateStr}${city}出身で、生まれ育った地でプロへの夢を育み、メジャーリーグで頂点へと駆け上がった。`);
+      }
       continue;
     }
 
