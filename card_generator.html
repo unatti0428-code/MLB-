@@ -2511,6 +2511,7 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
   }
   const posJa = { 'C':'捕手','1B':'一塁手','2B':'二塁手','3B':'三塁手','SS':'遊撃手','LF':'左翼手','CF':'中堅手','RF':'右翼手' };
   const posBadge = isCatcher ? '捕手' : (posJa[primaryPos] || '野手');
+  console.log('[POS DEBUG] year='+String(row[1])+' drsData='+JSON.stringify(drsData)+' g_mlbPos='+g_mlbPos+' careerRowYear='+(g_dataRows&&g_dataRows.find(r=>!/^\d{4}$/.test(String(r[1]??'').trim()))?g_dataRows.find(r=>!/^\d{4}$/.test(String(r[1]??'').trim()))[1]:'none')+' primaryPos='+primaryPos+' posBadge='+posBadge);
 
   const realWar = resolveWAREffective(row, headers[0], false);  // 実測値 or 推定値（通算行は加重平均）
   const overallScore = calcHitterOverall(row, isCatcher, realWar);
