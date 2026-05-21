@@ -5286,6 +5286,93 @@ function _parseJaWikiEpisodes(text, isPitcher) {
 }
 
 /**
+ * 英語大学名 → 日本語大学名変換
+ * Wikipedia英語版に掲載される日本の大学名（英語表記）→正式日本語名
+ * @param {string} engName  英語表記（例: "Kwansei Gakuin", "Waseda"）
+ * @returns {string|null}  日本語正式名（例: "関西学院大学"）または null
+ */
+function _univEngToJa(engName) {
+  if (!engName) return null;
+  // 正規化: 小文字・連続スペース除去・ハイフン/アポストロフィ→スペース
+  const n = engName.trim().toLowerCase()
+    .replace(/[-']/g, ' ').replace(/\s+/g, ' ')
+    .replace(/\s*university\s*/g, '').replace(/\s*college\s*/g, '')
+    .replace(/\s*gakuin\s*/g, ' gakuin ').trim();
+
+  // key: 正規化済み英語 → value: 日本語正式大学名（大学名まで含む）
+  const MAP = {
+    // ── 東京六大学・関東 ──
+    'waseda':                  '早稲田大学',
+    'keio':                    '慶應義塾大学',
+    'meiji':                   '明治大学',
+    'hosei':                   '法政大学',
+    'rikkyo':                  '立教大学',
+    'chuo':                    '中央大学',
+    'toyo':                    '東洋大学',
+    'senshu':                  '専修大学',
+    'nihon':                   '日本大学',
+    'kokushikan':              '国士舘大学',
+    'tokai':                   '東海大学',
+    'aoyama gakuin':           '青山学院大学',
+    'tokyo':                   '東京大学',
+    'sophia':                  '上智大学',
+    'international budo':      '国際武道大学',
+    'bunkyo':                  '文京学院大学',
+    'jobu':                    '上武大学',
+    'juntendo':                '順天堂大学',
+    'teikyo':                  '帝京大学',
+    'asia':                    '亜細亜大学',
+    'nippon sport science':    '日本体育大学',
+    'nittai':                  '日本体育大学',
+    // ── 東北・北海道 ──
+    'tohoku':                  '東北大学',
+    'tohoku fukushi':          '東北福祉大学',
+    'sapporo':                 '札幌大学',
+    'hokkaido':                '北海道大学',
+    // ── 中部・甲信越 ──
+    'nagoya':                  '名古屋大学',
+    'chubu':                   '中部大学',
+    'nagano':                  '長野大学',
+    // ── 関西 ──
+    'kyoto':                   '京都大学',
+    'doshisha':                '同志社大学',
+    'ritsumeikan':             '立命館大学',
+    'osaka':                   '大阪大学',
+    'kinki':                   '近畿大学',
+    'kindai':                  '近畿大学',
+    'kansai':                  '関西大学',
+    'kwansei gakuin':          '関西学院大学',
+    'kwansei':                 '関西学院大学',
+    'kobe':                    '神戸大学',
+    'tenri':                   '天理大学',
+    'nara':                    '奈良大学',
+    'osaka touin':             '大阪桐蔭大学',
+    'hannan':                  '阪南大学',
+    'otemon gakuin':           '追手門学院大学',
+    'tezukayama gakuin':       '帝塚山学院大学',
+    'osaka sangyo':            '大阪産業大学',
+    'osaka university of commerce': '大阪商業大学',
+    'osaka gakuin':            '大阪学院大学',
+    // ── 中国・四国・九州 ──
+    'hiroshima':               '広島大学',
+    'fukuoka':                 '福岡大学',
+    'kyushu':                  '九州大学',
+    'kagoshima':               '鹿児島大学',
+    'kanazawa':                '金沢大学',
+    'okayama':                 '岡山大学',
+  };
+
+  // 完全一致 → 即返す
+  if (MAP[n]) return MAP[n];
+
+  // 前後スペースを無視した部分一致（例: "kwansei gakuin university" → "kwansei gakuin"）
+  for (const [key, val] of Object.entries(MAP)) {
+    if (n === key || n.includes(key) || key.includes(n)) return val;
+  }
+  return null;
+}
+
+/**
  * ローマ字都道府県名 → 漢字（都/道/府/県付き）変換
  * @param {string} name  ローマ字表記（例: "Hyogo", "Tokyo", "Osaka"）
  * @returns {string|null}  漢字表記（例: "兵庫県", "東京都"）または null（未対応）
@@ -5570,7 +5657,9 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
     const multiSportM = s.match(/(?:letter of intent|committed?|offer(?:ed)?)\s+(?:to\s+)?(?:play\s+)?(?:football|basketball|soccer)\s+(?:at|for)\s+([A-Z][a-zA-Z\s&]{3,30})/i)
       || s.match(/play\s+(?:football|basketball)\s+(?:at|for)\s+([A-Z][a-zA-Z\s&]{3,30})/i);
     if (multiSportM && !results.some(r => r.includes('野球を選') || r.includes('フットボール') || r.includes('バスケ'))) {
-      const univ = multiSportM[1].trim()
+      const _rawUniv = multiSportM[1].trim();
+      const _jaUniv = _univEngToJa(_rawUniv);
+      const univ = _jaUniv || _rawUniv
         .replace(/\s+University$/i, '大学').replace(/\s+College$/i, 'カレッジ').replace(/\s+State$/i, '州立大');
       const sport = /football/i.test(s) ? 'フットボール' : 'バスケットボール';
       results.push(`${univ}への${sport}奨学金を蹴って野球の道を選んだ経歴は、身体能力の高さと野球への強い信念を物語る。`);
@@ -5747,8 +5836,10 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
       if (univM && !results.some(r => r.includes('大学') || r.includes('カレッジ'))) {
         const univ = univM[1].trim();
         const isCC = /community|junior|JC/i.test(s);
+        const jaUniv = !isCC && _univEngToJa(univ);
         const suffix = isCC ? 'コミュニティカレッジ' : '大学';
-        results.push(`${univ}${suffix}出身で、学生時代から将来を嘱望されたエリートプレーヤーとしてプロの世界へと飛び込んだ。`);
+        const univDisp = jaUniv || `${univ}${suffix}`;
+        results.push(`${univDisp}出身で、学生時代から将来を嘱望されたエリートプレーヤーとしてプロの世界へと飛び込んだ。`);
         continue;
       }
     }
