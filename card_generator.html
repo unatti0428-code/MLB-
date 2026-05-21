@@ -2458,7 +2458,21 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
   }
 
   let primaryPos = 'RF';
-  if (drsData.length > 0) {
+  if (_isCareerRow && g_dataRows) {
+    // 通算年: 全シーズン行のイニング数をポジション別に合計して最多ポジションを決定
+    const innByPos = {};
+    g_dataRows
+      .filter(r => /^\d{4}$/.test(String(r[1] ?? '').trim()))
+      .forEach(r => {
+        for (let i = 0; i < 8; i++) {
+          const inn = parseFloat(r[28 + i * 2]) || 0;
+          if (inn > 0) innByPos[posLabels[i]] = (innByPos[posLabels[i]] || 0) + inn;
+        }
+      });
+    const topPos = Object.entries(innByPos).sort((a, b) => b[1] - a[1])[0];
+    if (topPos) primaryPos = topPos[0];
+  } else if (drsData.length > 0) {
+    // 単年: その年でイニングが最多のポジション
     primaryPos = drsData.reduce((a, b) => parseFloat(a.inn) >= parseFloat(b.inn) ? a : b).pos;
   }
   const posJa = { 'C':'捕手','1B':'一塁手','2B':'二塁手','3B':'三塁手','SS':'遊撃手','LF':'左翼手','CF':'中堅手','RF':'右翼手' };
