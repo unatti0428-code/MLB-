@@ -3234,6 +3234,31 @@ async function _fetchAndCacheAllAwards(mlbId) {
 }
 
 // ── 受賞名（英語）→日本語変換 ────────────────────────────────
+// 米国・中南米の州名/国名 英語→日本語マップ（birthplace 翻訳用・共用）
+const _STATE_JA_MAP = {
+  'Alabama':'アラバマ州','Alaska':'アラスカ州','Arizona':'アリゾナ州','Arkansas':'アーカンソー州',
+  'California':'カリフォルニア州','Colorado':'コロラド州','Connecticut':'コネチカット州',
+  'Delaware':'デラウェア州','Florida':'フロリダ州','Georgia':'ジョージア州','Hawaii':'ハワイ州',
+  'Idaho':'アイダホ州','Illinois':'イリノイ州','Indiana':'インディアナ州','Iowa':'アイオワ州',
+  'Kansas':'カンザス州','Kentucky':'ケンタッキー州','Louisiana':'ルイジアナ州','Maine':'メイン州',
+  'Maryland':'メリーランド州','Massachusetts':'マサチューセッツ州','Michigan':'ミシガン州',
+  'Minnesota':'ミネソタ州','Mississippi':'ミシシッピ州','Missouri':'ミズーリ州','Montana':'モンタナ州',
+  'Nebraska':'ネブラスカ州','Nevada':'ネバダ州','New Hampshire':'ニューハンプシャー州',
+  'New Jersey':'ニュージャージー州','New Mexico':'ニューメキシコ州','New York':'ニューヨーク州',
+  'North Carolina':'ノースカロライナ州','North Dakota':'ノースダコタ州','Ohio':'オハイオ州',
+  'Oklahoma':'オクラホマ州','Oregon':'オレゴン州','Pennsylvania':'ペンシルベニア州',
+  'Rhode Island':'ロードアイランド州','South Carolina':'サウスカロライナ州',
+  'South Dakota':'サウスダコタ州','Tennessee':'テネシー州','Texas':'テキサス州','Utah':'ユタ州',
+  'Vermont':'バーモント州','Virginia':'バージニア州','Washington':'ワシントン州',
+  'West Virginia':'ウェストバージニア州','Wisconsin':'ウィスコンシン州','Wyoming':'ワイオミング州',
+  // 国名（中南米・カリブ海）
+  'Dominican Republic':'ドミニカ共和国','Venezuela':'ベネズエラ','Cuba':'キューバ',
+  'Puerto Rico':'プエルトリコ','Panama':'パナマ','Mexico':'メキシコ','Nicaragua':'ニカラグア',
+  'Colombia':'コロンビア','Brazil':'ブラジル','Curacao':'キュラソー','Bahamas':'バハマ',
+  'Jamaica':'ジャマイカ','Canada':'カナダ','Australia':'オーストラリア',
+  'Japan':'日本','South Korea':'韓国','Korea':'韓国','Taiwan':'台湾',
+};
+
 // チーム名英語→日本語マップ（awardToJa・_parseWikiEpisodes 共用）
 const _TEAM_JA_MAP = {
   'yankees':'ヤンキース', 'red sox':'レッドソックス', 'blue jays':'ブルージェイズ',
@@ -5142,36 +5167,49 @@ async function fetchWikipediaEpisodes(playerNameEn, isPitcher) {
   g_wikiCharacteristics = null; // 前回の特徴情報をリセット
   if (!playerNameEn) return [];
   try {
-    // ── Step 1: 英語Wikipedia（exintro は使わず exsentences=30 で先頭30文を取得）──
-    // exintro=true だと最初の段落のみになり高校・ドラフト情報が別セクションの場合に取れない
-    const title = encodeURIComponent(playerNameEn.trim());
-    const url = `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exsentences=30&explaintext=true&format=json&origin=*&titles=${title}`;
-    const res = await fetch(url);
+    // ── Step 0: "(baseball)" 限定タイトルを先に試みる（同名異人のdisambig回避）──
+    // 例: "Michael Young" → "Michael Young (baseball)" で正しい選手ページを取得
+    const _enFetch = async (titleStr) => {
+      const r = await fetch(`https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exsentences=30&explaintext=true&format=json&origin=*&titles=${encodeURIComponent(titleStr)}`);
+      if (!r.ok) return null;
+      const d = await r.json();
+      const p = Object.values(d?.query?.pages || {})[0];
+      // missing / disambig（"may refer to" を含む）は無効とする
+      if (!p || p.missing !== undefined || !p.extract) return null;
+      if (/may refer to:|may also refer to:|disambiguation/i.test(p.extract.slice(0, 300))) return null;
+      // 野球に無関係な記事は無効（先頭300文字で判定）
+      if (!/baseball|pitcher|outfield|infield|shortstop|catcher|batter|MLB|major league/i.test(p.extract.slice(0, 600))) return null;
+      return p.extract;
+    };
+
+    let enExtract = await _enFetch(`${playerNameEn.trim()} (baseball)`);
+    if (enExtract) {
+      console.log('[Wikipedia] EN (baseball) タイトルで取得成功:', enExtract.length, '文字');
+    } else {
+      // "(baseball)" で取れない場合は通常タイトルでも試みる
+      enExtract = await _enFetch(playerNameEn.trim());
+      if (enExtract) console.log('[Wikipedia] EN 通常タイトルで取得成功:', enExtract.length, '文字');
+    }
+
+    // ── Step 1: 英語Wikipediaを解析 ──
     let enEpisodes = [];
     let jaTitle = null;
-    if (res.ok) {
-      const data  = await res.json();
-      const pages = data?.query?.pages || {};
-      const page  = Object.values(pages)[0];
-      if (page && page.missing === undefined && page.extract) {
-        const extract = page.extract;
-        console.log('[Wikipedia] EN 取得文字数:', extract.length);
-        console.log('[Wikipedia] EN テキスト先頭500字:', extract.slice(0, 500));
-        enEpisodes = _parseWikiEpisodes(extract, isPitcher, false);
-        if (enEpisodes.length) {
-          console.log('[Wikipedia] EN エピソード取得:', enEpisodes.length, '件:', enEpisodes);
-          // EN エピソードがあっても JA「特徴」セクション取得を並行実施
-          jaTitle = await _wikidataJaTitle(playerNameEn);
-          if (jaTitle) {
-            const charWikitext = await _fetchJaWikiCharacteristics(jaTitle);
-            g_wikiCharacteristics = _parseJaWikiCharacteristics(charWikitext, isPitcher);
-          }
-          return enEpisodes;
+    if (enExtract) {
+      console.log('[Wikipedia] EN テキスト先頭500字:', enExtract.slice(0, 500));
+      enEpisodes = _parseWikiEpisodes(enExtract, isPitcher, false);
+      if (enEpisodes.length) {
+        console.log('[Wikipedia] EN エピソード取得:', enEpisodes.length, '件:', enEpisodes);
+        // EN エピソードがあっても JA「特徴」セクション取得を並行実施
+        jaTitle = await _wikidataJaTitle(playerNameEn);
+        if (jaTitle) {
+          const charWikitext = await _fetchJaWikiCharacteristics(jaTitle);
+          g_wikiCharacteristics = _parseJaWikiCharacteristics(charWikitext, isPitcher);
         }
-        console.log('[Wikipedia] EN 記事あり・エピソード0件 → JA Wikiを試みます');
-      } else {
-        console.log('[Wikipedia] EN 記事なし (missing:', page?.missing, ') → JA Wikiを試みます');
+        return enEpisodes;
       }
+      console.log('[Wikipedia] EN 記事あり・エピソード0件 → JA Wikiを試みます');
+    } else {
+      console.log('[Wikipedia] EN 記事なし → JA Wikiを試みます');
     }
 
     // ── Step 2: Wikidata経由でJA-Wikipedia記事タイトルを特定（1件ずつ確認） ──
@@ -5211,16 +5249,27 @@ async function fetchWikipediaEpisodes(playerNameEn, isPitcher) {
 /** Wikidata経由で選手の日本語Wikipedia記事タイトルを取得（| を使わず1件ずつ照会） */
 async function _wikidataJaTitle(playerNameEn) {
   try {
-    // Wikidataで英語名を検索
-    const wdUrl = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(playerNameEn)}&language=en&type=item&format=json&origin=*&limit=5`;
+    // Wikidataで英語名を検索（最大8件取得）
+    const wdUrl = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(playerNameEn)}&language=en&type=item&format=json&origin=*&limit=8`;
     const wdRes = await fetch(wdUrl);
     if (!wdRes.ok) return null;
     const wdData = await wdRes.json();
     const hits   = wdData?.search || [];
     if (!hits.length) { console.log('[Wikidata] 検索結果なし'); return null; }
 
-    // 上位3件を1件ずつ照会（| を使わないためバッチにしない）
-    for (const hit of hits.slice(0, 3)) {
+    // 野球選手に関連するdescriptionを持つhitを優先ソート
+    // （"baseball player", "MLB", "pitcher" 等を含むものを上位に）
+    const _isBaseballHit = (h) =>
+      /baseball|MLB|pitcher|outfield|infield|shortstop|catcher|野球/i.test(
+        (h.description || '') + ' ' + (h.label || '')
+      );
+    const sortedHits = [...hits.slice(0, 8)].sort((a, b) =>
+      (_isBaseballHit(b) ? 1 : 0) - (_isBaseballHit(a) ? 1 : 0)
+    );
+    console.log('[Wikidata] ヒット:', sortedHits.slice(0, 4).map(h => `${h.id}(${h.description || ''})`).join(', '));
+
+    // 野球選手優先で最大5件を照会
+    for (const hit of sortedHits.slice(0, 5)) {
       const id   = hit.id;
       const slUrl = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${id}&props=sitelinks&sitefilter=jawiki&format=json&origin=*`;
       const slRes = await fetch(slUrl);
@@ -5228,7 +5277,7 @@ async function _wikidataJaTitle(playerNameEn) {
       const slData = await slRes.json();
       const jaT = slData?.entities?.[id]?.sitelinks?.jawiki?.title;
       if (jaT) {
-        console.log('[Wikidata] JA記事タイトル特定:', jaT, '(', id, ')');
+        console.log('[Wikidata] JA記事タイトル特定:', jaT, '(', id, hit.description || '', ')');
         return jaT;
       }
     }
@@ -5728,13 +5777,19 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
     const birthM = s.match(/born(?:[^.]*?,\s*\d{4}[^.]*?)?\s+in\s+([A-Z][a-zA-Z\s]+?),\s+([A-Z][a-zA-Z\s]+?)(?:\s+on|\s*[,.)\s]|$)/i);
     if (birthM && !results.some(r => r.includes('生まれ') || r.includes('出身'))) {
       const city  = birthM[1].trim();
-      const state = birthM[2].trim().replace(/[),.]+$/, '');
+      // "Covina, Los Angeles County, California" のように途中に "County" が挟まる場合は
+      // state として "Los Angeles County" が取れてしまうため、County部分を除去して再取得する
+      const rawState = birthM[2].trim().replace(/[),.]+$/, '');
+      // "Los Angeles County" → "California" が文中に続く場合を考慮して County を無視
+      const countyStripM = s.match(/,\s*[A-Z][a-zA-Z\s]+County,\s*([A-Z][a-zA-Z\s]+?)(?:\s*[,.)]\s*|$)/i);
+      const state = (countyStripM ? countyStripM[1].trim().replace(/[),.]+$/, '') : rawState);
       if (/^Japan$/i.test(state)) {
         // 日本出身: city部分を都道府県として漢字変換
         const prefKanji = _jakenFromRomaji(city) || `${city}（日本）`;
         results.push(`${prefKanji}出身。地元で磨いた野球センスがプロの世界で確かに開花した。`);
       } else {
-        results.push(`${state}州${city}出身。地元で磨いた野球センスがプロの世界で確かに開花した。`);
+        const stateJa = _STATE_JA_MAP[state] || `${state}州`;
+        results.push(`${stateJa}${city}出身。地元で磨いた野球センスがプロの世界で確かに開花した。`);
       }
       continue;
     }
@@ -5906,15 +5961,8 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
         const prefKanji = _jakenFromRomaji(city) || `${city}（日本）`;
         results.push(`${prefKanji}出身で、生まれ育った地でプロへの夢を育み、メジャーリーグで頂点へと駆け上がった。`);
       } else {
-        // 国名・日本語変換（主要州のみ）
-        const stateJa = { 'California':'カリフォルニア州','Texas':'テキサス州','Florida':'フロリダ州',
-          'New York':'ニューヨーク州','Ohio':'オハイオ州','Georgia':'ジョージア州',
-          'North Carolina':'ノースカロライナ州','South Carolina':'サウスカロライナ州',
-          'Arizona':'アリゾナ州','Pennsylvania':'ペンシルベニア州','Illinois':'イリノイ州',
-          'Michigan':'ミシガン州','Virginia':'バージニア州','Louisiana':'ルイジアナ州',
-          'Dominican Republic':'ドミニカ共和国','Venezuela':'ベネズエラ','Cuba':'キューバ',
-          'Puerto Rico':'プエルトリコ','Panama':'パナマ','Mexico':'メキシコ' };
-        const stateStr = stateJa[state] || state;
+        // 州名・国名を日本語に変換（_STATE_JA_MAP を共用）
+        const stateStr = _STATE_JA_MAP[state] || `${state}州`;
         results.push(`${stateStr}${city}出身で、生まれ育った地でプロへの夢を育み、メジャーリーグで頂点へと駆け上がった。`);
       }
       continue;
