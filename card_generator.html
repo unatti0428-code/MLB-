@@ -3234,6 +3234,29 @@ async function _fetchAndCacheAllAwards(mlbId) {
 }
 
 // ── 受賞名（英語）→日本語変換 ────────────────────────────────
+// チーム名英語→日本語マップ（awardToJa・_parseWikiEpisodes 共用）
+const _TEAM_JA_MAP = {
+  'yankees':'ヤンキース', 'red sox':'レッドソックス', 'blue jays':'ブルージェイズ',
+  'orioles':'オリオールズ', 'rays':'レイズ', 'devil rays':'デビルレイズ',
+  'white sox':'ホワイトソックス', 'indians':'インディアンズ', 'guardians':'ガーディアンズ',
+  'tigers':'タイガース', 'royals':'ロイヤルズ', 'twins':'ツインズ',
+  'astros':'アストロズ', 'angels':'エンゼルス', "athletics":"アスレチックス",
+  "a's":'アスレチックス', 'mariners':'マリナーズ', 'rangers':'レンジャーズ',
+  'dodgers':'ドジャース', 'giants':'ジャイアンツ', 'padres':'パドレス',
+  'rockies':'ロッキーズ', 'diamondbacks':'ダイヤモンドバックス', 'd-backs':'ダイヤモンドバックス',
+  'braves':'ブレーブス', 'mets':'メッツ', 'phillies':'フィリーズ',
+  'nationals':'ナショナルズ', 'marlins':'マーリンズ', 'expos':'エクスポズ',
+  'cubs':'カブス', 'cardinals':'カーディナルス', 'brewers':'ブルワーズ',
+  'reds':'レッズ', 'pirates':'パイレーツ',
+};
+function _teamEngToJa(str) {
+  const s = (str || '').toLowerCase();
+  for (const [k, v] of Object.entries(_TEAM_JA_MAP)) {
+    if (s.includes(k)) return v;
+  }
+  return null;
+}
+
 function awardToJa(award) {
   const n = (award.name || award.id || '').toLowerCase();
 
@@ -3263,7 +3286,13 @@ function awardToJa(award) {
     return lg ? `${lg} MVP` : 'MVP';
   }
 
-  // ⑤ その他タイトル・表彰
+  // ⑤ MLBPAA ハート・アンド・ハッスル賞（チーム別）
+  if (n.includes('heart and hustle')) {
+    const teamJa = _teamEngToJa(n);
+    return teamJa ? `MLBPAA ${teamJa} ハート・アンド・ハッスル賞` : 'ハート・アンド・ハッスル賞';
+  }
+
+  // ⑥ その他タイトル・表彰
   if (n.includes('cy young'))
     return lg ? `${lg}サイ・ヤング賞` : 'サイ・ヤング賞';
   // 'rookie of the year' を優先、それ以外は'month'を含まない場合のみ年間新人王とみなす
@@ -3271,12 +3300,27 @@ function awardToJa(award) {
     return lg ? `${lg}新人王` : '新人王';
   if (n.includes('gold glove'))           return 'ゴールドグラブ賞';
   if (n.includes('silver slugger'))       return 'シルバースラッガー賞';
+  if (n.includes('platinum glove'))       return 'プラチナグラブ賞';
+  if (n.includes('fielding bible'))       return 'フィールディング・バイブル賞';
+  if (n.includes('wilson defensive'))     return 'ウィルソン守備賞';
   if (n.includes('hank aaron'))           return 'ハンク・アーロン賞';
   if (n.includes('roberto clemente'))     return 'ロベルト・クレメンテ賞';
+  if (n.includes('lou gehrig'))           return 'ルー・ゲーリッグ記念賞';
+  if (n.includes('tony conigliaro'))      return 'トニー・コニリアロ賞';
+  if (n.includes('branch rickey'))        return 'ブランチ・リッキー賞';
+  if (n.includes('marvin miller'))        return 'マービン・ミラー賞';
+  if (n.includes('edgar martinez'))       return 'エドガー・マルティネス賞';
+  if (n.includes('jackie robinson'))      return 'ジャッキー・ロビンソン賞';
+  if (n.includes('willie mays'))          return 'ウィリー・メイズ賞';
+  if (n.includes('joe torre'))            return 'ジョー・トーレ賞';
+  if (n.includes('commissioner') && n.includes('historic')) return 'コミッショナー歴史的功績賞';
   if (n.includes('comeback player'))      return 'カムバック賞';
   if (n.includes('reliever'))             return 'リリーバー賞';
+  if (n.includes('manager of the year'))
+    return lg ? `${lg}最優秀監督賞` : '最優秀監督賞';
   if (n.includes('batting title'))        return '首位打者';
   if (n.includes('home run') && n.includes('leader')) return '本塁打王';
+  // ⑦ 未変換は元の英語名をそのまま返す
   return award.name || award.id || '';
 }
 
@@ -5460,6 +5504,59 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
     // リリーバー・オブ・ザ・イヤー / クローザー賞
     if (/Reliever of the Year|Relief.*Award|Mariano Rivera Award/i.test(s) && !results.some(r => r.includes('リリーバー') || r.includes('クローザー'))) {
       results.push('リリーバー・オブ・ザ・イヤーに輝き、その年のリーグ最高のリリーフ投手として公式に認められた栄誉。');
+      continue;
+    }
+
+    // ハート・アンド・ハッスル賞（MLBPAA）
+    if (/Heart and Hustle/i.test(s) && !results.some(r => r.includes('ハート・アンド・ハッスル'))) {
+      const teamJa = _teamEngToJa(s);
+      if (teamJa) {
+        results.push(`MLBPAAが選ぶ${teamJa} ハート・アンド・ハッスル賞を受賞し、プロ意識と全力プレーが球界から公式に認められた。`);
+      } else {
+        results.push('MLBPAAが選ぶハート・アンド・ハッスル賞を受賞し、プロ意識と全力プレーが球界全体から公式に認められた。');
+      }
+      continue;
+    }
+
+    // ロベルト・クレメンテ賞
+    if (/Roberto Clemente/i.test(s) && /award|winner|won|recipient/i.test(s) && !results.some(r => r.includes('クレメンテ'))) {
+      results.push('ロベルト・クレメンテ賞を受賞し、野球を通じた地域貢献・慈善活動がMLB全体から最高の評価を受けた。');
+      continue;
+    }
+
+    // ハンク・アーロン賞
+    if (/Hank Aaron Award/i.test(s) && !results.some(r => r.includes('ハンク・アーロン'))) {
+      results.push('ハンク・アーロン賞を受賞し、リーグ最高の打者として公式に認定された名誉は球史に輝く勲章。');
+      continue;
+    }
+
+    // ルー・ゲーリッグ記念賞
+    if (/Lou Gehrig.*Award|Gehrig.*Memorial/i.test(s) && !results.some(r => r.includes('ゲーリッグ'))) {
+      results.push('ルー・ゲーリッグ記念賞を受賞し、グラウンド内外における高い人格と社会貢献がMLBから最高の評価を受けた。');
+      continue;
+    }
+
+    // ブランチ・リッキー賞
+    if (/Branch Rickey Award/i.test(s) && !results.some(r => r.includes('リッキー'))) {
+      results.push('ブランチ・リッキー賞を受賞し、地域社会への貢献と野球の発展への尽力が高く評価された。');
+      continue;
+    }
+
+    // マービン・ミラー賞
+    if (/Marvin Miller.*Year|Marvin Miller.*Award/i.test(s) && !results.some(r => r.includes('マービン'))) {
+      results.push('マービン・ミラー賞を受賞し、選手組合と野球界全体への貢献が球界から最高の評価を受けた。');
+      continue;
+    }
+
+    // エドガー・マルティネス賞（最優秀DH賞）
+    if (/Edgar Martinez.*Award|Outstanding.*DH Award/i.test(s) && !results.some(r => r.includes('マルティネス') || r.includes('DH'))) {
+      results.push('エドガー・マルティネス賞を受賞し、その年のリーグ最高の指名打者として公式に認定された栄誉。');
+      continue;
+    }
+
+    // プラチナグラブ賞
+    if (/Platinum Glove/i.test(s) && !results.some(r => r.includes('プラチナグラブ'))) {
+      results.push('プラチナグラブ賞を受賞し、両リーグを通じた最高の守備選手として球界全体から認められた至高の名誉。');
       continue;
     }
 
