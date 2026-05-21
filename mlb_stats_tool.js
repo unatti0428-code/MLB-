@@ -372,6 +372,167 @@ async function searchPlayers(name) {
   }));
 }
 
+// ── 47都道府県 ローマ字→漢字マップ ──────────────────────────────────────────
+const JAPAN_PREFECTURE_MAP = {
+  // 都
+  'Tokyo': '東京都',
+  // 道
+  'Hokkaido': '北海道',
+  // 府
+  'Osaka': '大阪府',   'Kyoto': '京都府',
+  // 県（43）
+  'Aichi': '愛知県',   'Akita': '秋田県',    'Aomori': '青森県',
+  'Chiba': '千葉県',   'Ehime': '愛媛県',    'Fukui': '福井県',
+  'Fukuoka': '福岡県', 'Fukushima': '福島県','Gifu': '岐阜県',
+  'Gunma': '群馬県',   'Hiroshima': '広島県','Hyogo': '兵庫県',
+  'Ibaraki': '茨城県', 'Ishikawa': '石川県', 'Iwate': '岩手県',
+  'Kagawa': '香川県',  'Kagoshima': '鹿児島県','Kanagawa': '神奈川県',
+  'Kochi': '高知県',   'Kumamoto': '熊本県', 'Mie': '三重県',
+  'Miyagi': '宮城県',  'Miyazaki': '宮崎県', 'Nagano': '長野県',
+  'Nagasaki': '長崎県','Nara': '奈良県',     'Niigata': '新潟県',
+  'Oita': '大分県',    'Okayama': '岡山県',  'Okinawa': '沖縄県',
+  'Saga': '佐賀県',    'Saitama': '埼玉県',  'Shiga': '滋賀県',
+  'Shimane': '島根県', 'Shizuoka': '静岡県', 'Tochigi': '栃木県',
+  'Tokushima': '徳島県','Tottori': '鳥取県', 'Toyama': '富山県',
+  'Wakayama': '和歌山県','Yamagata': '山形県','Yamaguchi': '山口県',
+  'Yamanashi': '山梨県',
+};
+
+// 市区町村名→都道府県（birthStateProvince が "Japan" 等の場合に birthCity から推定）
+const JAPAN_CITY_TO_PREFECTURE = {
+  'Sapporo': '北海道',  'Hakodate': '北海道', 'Asahikawa': '北海道', 'Kushiro': '北海道',
+  'Aomori': '青森県',   'Hirosaki': '青森県',
+  'Morioka': '岩手県',  'Hanamaki': '岩手県', 'Oshu': '岩手県',
+  'Sendai': '宮城県',   'Ishinomaki': '宮城県',
+  'Akita': '秋田県',
+  'Yamagata': '山形県', 'Tsuruoka': '山形県',
+  'Fukushima': '福島県','Koriyama': '福島県',  'Iwaki': '福島県',
+  'Mito': '茨城県',     'Tsukuba': '茨城県',   'Hitachi': '茨城県',
+  'Utsunomiya': '栃木県','Nikko': '栃木県',
+  'Maebashi': '群馬県', 'Takasaki': '群馬県',  'Kiryu': '群馬県',
+  'Saitama': '埼玉県',  'Kawagoe': '埼玉県',   'Omiya': '埼玉県',    'Tokorozawa': '埼玉県',
+  'Chiba': '千葉県',    'Matsudo': '千葉県',   'Funabashi': '千葉県', 'Ichikawa': '千葉県',
+  'Tokyo': '東京都',    'Shinjuku': '東京都',  'Shibuya': '東京都',   'Hachioji': '東京都',
+  'Yokohama': '神奈川県','Kawasaki': '神奈川県','Sagamihara': '神奈川県','Fujisawa': '神奈川県',
+  'Niigata': '新潟県',  'Nagaoka': '新潟県',
+  'Toyama': '富山県',   'Takaoka': '富山県',
+  'Kanazawa': '石川県', 'Komatsu': '石川県',
+  'Fukui': '福井県',
+  'Kofu': '山梨県',
+  'Nagano': '長野県',   'Matsumoto': '長野県',
+  'Shizuoka': '静岡県', 'Hamamatsu': '静岡県', 'Fuji': '静岡県',
+  'Nagoya': '愛知県',   'Toyota': '愛知県',    'Kasugai': '愛知県',   'Okazaki': '愛知県',
+  'Tsu': '三重県',      'Yokkaichi': '三重県',
+  'Otsu': '滋賀県',
+  'Kyoto': '京都府',    'Uji': '京都府',
+  'Osaka': '大阪府',    'Sakai': '大阪府',     'Higashiosaka': '大阪府',
+  'Kobe': '兵庫県',     'Himeji': '兵庫県',    'Amagasaki': '兵庫県', 'Nishinomiya': '兵庫県',
+  'Nara': '奈良県',
+  'Wakayama': '和歌山県',
+  'Tottori': '鳥取県',
+  'Matsue': '島根県',
+  'Okayama': '岡山県',  'Kurashiki': '岡山県',
+  'Hiroshima': '広島県','Fukuyama': '広島県',
+  'Yamaguchi': '山口県','Shimonoseki': '山口県',
+  'Tokushima': '徳島県',
+  'Takamatsu': '香川県','Marugame': '香川県',
+  'Matsuyama': '愛媛県',
+  'Kochi': '高知県',
+  'Fukuoka': '福岡県',  'Kitakyushu': '福岡県','Kita-Kyushu': '福岡県',
+  'Saga': '佐賀県',
+  'Nagasaki': '長崎県', 'Sasebo': '長崎県',
+  'Kumamoto': '熊本県',
+  'Oita': '大分県',     'Beppu': '大分県',
+  'Miyazaki': '宮崎県',
+  'Kagoshima': '鹿児島県',
+  'Naha': '沖縄県',     'Okinawa': '沖縄県',
+};
+
+/** MLB Stats API から選手の出生地情報を取得する */
+async function fetchPlayerBirthInfo(playerId) {
+  try {
+    const data = await mlbGet(`https://statsapi.mlb.com/api/v1/people/${playerId}`);
+    const p = data.people?.[0];
+    if (!p) return null;
+    return {
+      birthCity:          p.birthCity          || '',
+      birthStateProvince: p.birthStateProvince || '',
+      birthCountry:       p.birthCountry       || '',
+    };
+  } catch { return null; }
+}
+
+/**
+ * 出生地情報から都道府県（漢字）を解決する。
+ * birthCountry が "Japan" の場合のみ非nullを返す。
+ * ① birthStateProvince が47都道府県のいずれかに一致 → そのまま漢字変換
+ * ② birthStateProvince が "Japan"（または空）→ birthCity から推定
+ */
+function resolveBirthPrefecture(birthInfo) {
+  if (!birthInfo || birthInfo.birthCountry !== 'Japan') return null;
+  const sp = birthInfo.birthStateProvince || '';
+  // ① 都道府県名として直接マッチ
+  if (sp && sp !== 'Japan') {
+    const k = JAPAN_PREFECTURE_MAP[sp];
+    if (k) return k;
+  }
+  // ② birthCity から推定
+  const city = birthInfo.birthCity || '';
+  if (city) {
+    const byCityPref = JAPAN_CITY_TO_PREFECTURE[city];
+    if (byCityPref) return byCityPref;
+    // prefマップに市名そのものが含まれるケースも確認
+    const byCityKanji = JAPAN_PREFECTURE_MAP[city];
+    if (byCityKanji) return byCityKanji;
+  }
+  return null;
+}
+
+/** ExcelJS ワークブックに「列伝」シートを追加する */
+function addRetsudenSheet(ejWb, birthInfo) {
+  const ws = ejWb.addWorksheet('列伝');
+  // ヘッダ行
+  const hRow = ws.addRow(['項目', '内容']);
+  hRow.font = { bold: true, size: 11 };
+  hRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7030A0' } };
+  hRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7030A0' } };
+  hRow.getCell(1).font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+  hRow.getCell(2).font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+
+  const addDataRow = (label, value) => {
+    const r = ws.addRow([label, value]);
+    r.font = { size: 11 };
+    r.getCell(1).font = { bold: true, size: 11 };
+  };
+
+  if (birthInfo) {
+    const isJapanese = birthInfo.birthCountry === 'Japan';
+    const prefecture = resolveBirthPrefecture(birthInfo);
+    const sp         = birthInfo.birthStateProvince || '';
+    const city       = birthInfo.birthCity          || '';
+    const country    = birthInfo.birthCountry       || '';
+
+    addDataRow('出身国', isJapanese ? '日本' : (country || '--'));
+    if (isJapanese) {
+      if (prefecture) {
+        addDataRow('出身都道府県', prefecture);
+      } else if (sp && sp !== 'Japan') {
+        // 未知の州名はローマ字のまま表示
+        addDataRow('出身都道府県（未変換）', sp);
+      }
+      addDataRow('出身市', city || '--');
+    } else {
+      if (sp) addDataRow('出身州', sp);
+      addDataRow('出身市', city || '--');
+    }
+  } else {
+    addDataRow('出身地情報', '取得できませんでした');
+  }
+
+  ws.getColumn(1).width = 22;
+  ws.getColumn(2).width = 32;
+}
+
 // ── Rate formatting helpers ───────────────────────────────────────────────────
 // .275 → "275"
 function fmtAvg(val) {
@@ -3613,7 +3774,7 @@ async function pitFetchBrowserData(slug, id, years, onProgress, playerName = '',
 }
 
 // ── Excel build ───────────────────────────────────────────────────────────────
-async function pitBuildExcel(playerName, years, basic, vsLeftByYear, rawPitch) {
+async function pitBuildExcel(playerName, years, basic, vsLeftByYear, rawPitch, playerId = null) {
   const N_MAIN = 22;
   const N_SUB  = 4;
 
@@ -3789,6 +3950,11 @@ async function pitBuildExcel(playerName, years, basic, vsLeftByYear, rawPitch) {
   const ejWb = new ExcelJS.Workbook();
   await ejWb.xlsx.readFile(outFile);
   ejWb.worksheets[0].views = [{ state:'frozen', xSplit:2, ySplit:2, topLeftCell:'C3', activeCell:'C3' }];
+  // 列伝シート追加（出生地情報）
+  if (playerId) {
+    const birthInfo = await fetchPlayerBirthInfo(playerId);
+    addRetsudenSheet(ejWb, birthInfo);
+  }
   await ejWb.xlsx.writeFile(outFile);
 
   return outFile;
@@ -3805,7 +3971,7 @@ async function pitRunCreateJob(jobId, params) {
     const { rawPitch, showKyuiMap, pitchNameOverrides, wikiProfile } = await pitFetchBrowserData(params.slug, params.id, years, upd, params.name, apiKey, params.fullName || '', basic);
 
     upd('Excel ファイルを生成中...');
-    const outFile = await pitBuildExcel(params.name, years, basic, vsLeftByYear, rawPitch);
+    const outFile = await pitBuildExcel(params.name, years, basic, vsLeftByYear, rawPitch, params.id);
 
     upd('スタミナ・制球を計算中...');
     let abilityRows = 0;
@@ -4813,7 +4979,7 @@ function innToOuts(s) {
   return parseInt(f) * 3 + parseInt(r || 0);
 }
 
-async function batBuildExcel(playerName, years, basic, splitsRaw, sprintSpeed, mlbTheShowSpeed, rawPitch, fieldingByYear) {
+async function batBuildExcel(playerName, years, basic, splitsRaw, sprintSpeed, mlbTheShowSpeed, rawPitch, fieldingByYear, playerId = null) {
   const splits = {};
   for (const yr of years) {
     const d = splitsRaw[yr];
@@ -4965,6 +5131,11 @@ async function batBuildExcel(playerName, years, basic, splitsRaw, sprintSpeed, m
   const ejWb = new ExcelJS.Workbook();
   await ejWb.xlsx.readFile(outFile);
   ejWb.worksheets[0].views = [{ state:'frozen', xSplit:2, ySplit:2, topLeftCell:'C3', activeCell:'C3' }];
+  // 列伝シート追加（出生地情報）
+  if (playerId) {
+    const birthInfo = await fetchPlayerBirthInfo(playerId);
+    addRetsudenSheet(ejWb, birthInfo);
+  }
   await ejWb.xlsx.writeFile(outFile);
 
   return outFile;
@@ -5506,7 +5677,7 @@ async function batRunCreateJob(jobId, params) {
     }
 
     upd('Excel ファイルを生成中...');
-    const outFile = await batBuildExcel(params.name, years, basic, splitsRaw, sprintSpeed, mlbTheShowSpeed, rawPitch, fieldingByYear);
+    const outFile = await batBuildExcel(params.name, years, basic, splitsRaw, sprintSpeed, mlbTheShowSpeed, rawPitch, fieldingByYear, params.id);
 
     upd('能力値を計算・追加中...');
     const catcherData = buildCatcherData(catcherFielding, catcherFraming);
