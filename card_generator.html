@@ -2253,8 +2253,10 @@ function buildPitchPointBox(label, value) {
 
 function buildDrsSection(drsData) {
   if (!drsData || drsData.length === 0) return '';
-  // 最大8ポジションまで表示（4列×2行）。イニング上位から選ぶ
-  const displayData = drsData.slice(0, 8);
+  // イニング降順で並べ替えてから最大8ポジションまで表示（4列×2行）
+  const displayData = [...drsData]
+    .sort((a, b) => parseFloat(b.inn) - parseFloat(a.inn))
+    .slice(0, 8);
   const isMulti = displayData.length >= 5;
   const barClass = isMulti ? 'drs-bar drs-multi' : 'drs-bar drs-single';
   drsData = displayData;
