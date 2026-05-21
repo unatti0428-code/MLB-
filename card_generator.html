@@ -2457,61 +2457,8 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
     }
   }
 
-  // ポジション決定の優先順位（高 → 低）:
-  //   ①-a 通算カード: 全シーズン行のイニング合計が最多のポジション
-  //   ①-b 単年カード: その年のイニングが最多のポジション（DRSデータあり）
-  //   ②   通算行DRS: 通算イニングが最多のポジション（単年DRS未入力時のフォールバック）
-  //   ③   MLB API の primaryPosition（上記すべて未入力のフォールバック）
-  //   ④   'RF'（最終フォールバック）
-
-  // ④ 最終フォールバック
-  let primaryPos = 'RF';
-
-  // ③ MLB APIポジション（②で上書きされる）
-  if (g_mlbPos) {
-    const mp = g_mlbPos.toUpperCase().replace(/\s/g, '');
-    if (posLabels.includes(mp)) primaryPos = mp;
-  }
-
-  // ② 通算行DRS → 単年DRS未入力時に使う（①で上書きされる）
-  // 選手が複数ポジションを経験しても、通算で最も守ったポジションが正しく反映される
-  if (g_dataRows) {
-    const careerRow = g_dataRows.find(r => !/^\d{4}$/.test(String(r[1] ?? '').trim()));
-    if (careerRow) {
-      const careerDrs = [];
-      for (let i = 0; i < 8; i++) {
-        const inn = careerRow[28 + i * 2];
-        if (inn && inn !== '--' && inn !== null && inn !== '') {
-          careerDrs.push({ pos: posLabels[i], inn: parseFloat(inn) || 0 });
-        }
-      }
-      if (careerDrs.length > 0) {
-        const topCareer = careerDrs.reduce((a, b) => a.inn >= b.inn ? a : b);
-        primaryPos = topCareer.pos;
-      }
-    }
-  }
-
-  // ①-a 通算カード: 全シーズン行のイニング数をポジション別に合計して最多ポジションを決定
-  if (_isCareerRow && g_dataRows) {
-    const innByPos = {};
-    g_dataRows
-      .filter(r => /^\d{4}$/.test(String(r[1] ?? '').trim()))
-      .forEach(r => {
-        for (let i = 0; i < 8; i++) {
-          const inn = parseFloat(r[28 + i * 2]) || 0;
-          if (inn > 0) innByPos[posLabels[i]] = (innByPos[posLabels[i]] || 0) + inn;
-        }
-      });
-    const topPos = Object.entries(innByPos).sort((a, b) => b[1] - a[1])[0];
-    if (topPos) primaryPos = topPos[0];
-  } else if (drsData.length > 0) {
-    // ①-b 単年: その年でイニングが最多のポジション
-    primaryPos = drsData.reduce((a, b) => parseFloat(a.inn) >= parseFloat(b.inn) ? a : b).pos;
-  }
-  const posJa = { 'C':'捕手','1B':'一塁手','2B':'二塁手','3B':'三塁手','SS':'遊撃手','LF':'左翼手','CF':'中堅手','RF':'右翼手' };
-  const posBadge = isCatcher ? '捕手' : (posJa[primaryPos] || '野手');
-  console.log('[POS DEBUG] year='+String(row[1])+' drsData='+JSON.stringify(drsData)+' g_mlbPos='+g_mlbPos+' careerRowYear='+(g_dataRows&&g_dataRows.find(r=>!/^\d{4}$/.test(String(r[1]??'').trim()))?g_dataRows.find(r=>!/^\d{4}$/.test(String(r[1]??'').trim()))[1]:'none')+' primaryPos='+primaryPos+' posBadge='+posBadge);
+  // ポジションバッジ: _getPrimaryPosJa() で DRS優先・通算DRSフォールバック・MLB API の順で決定
+  const posBadge = isCatcher ? '捕手' : (_getPrimaryPosJa(row) || '野手');
 
   const realWar = resolveWAREffective(row, headers[0], false);  // 実測値 or 推定値（通算行は加重平均）
   const overallScore = calcHitterOverall(row, isCatcher, realWar);
@@ -3336,11 +3283,8 @@ function awardToJa(award) {
 // ── 通算カード専用の称号ロジック ──────────────────────────────
 // 通算統計は単年統計と閾値が全く異なるため、賞歴の「回数」を優先して称号を決める
 function _buildCareerCardType(row, awardsJa) {
-  const hr  = parseInt(row[9])  || 0;
-  const pos = g_mlbPos || '';
-  const posMap = { P:'投手',C:'捕手','1B':'一塁手','2B':'二塁手','3B':'三塁手',
-    SS:'遊撃手',LF:'左翼手',CF:'中堅手',RF:'右翼手',DH:'指名打者',OF:'外野手' };
-  const posJa = posMap[pos.toUpperCase()] || '';
+  const hr    = parseInt(row[9])  || 0;
+  const posJa = _getPrimaryPosJa(row); // DRS優先・g_mlbPosフォールバック
   const hand  = (g_pitchHand === 'L') ? '左腕' : '右腕';
   const avg   = parseFloat(String(fmtRate(row[15])).replace(/^\./,'0.')) || 0;
   const sb    = getSB(row);
@@ -3442,6 +3386,67 @@ function _buildCareerCardType(row, awardsJa) {
   return posJa || '野手';
 }
 
+// ── ポジション日本語名を取得（DRS優先・g_mlbPosフォールバック） ──────────
+// buildHitterCard / buildCardType 共通ロジック
+function _getPrimaryPosJa(row) {
+  const posLabels = ['C','1B','2B','3B','SS','LF','CF','RF'];
+  const posMap    = { C:'捕手','1B':'一塁手','2B':'二塁手','3B':'三塁手','SS':'遊撃手','LF':'左翼手','CF':'中堅手','RF':'右翼手' };
+  const posMapFull = { P:'投手',C:'捕手','1B':'一塁手','2B':'二塁手','3B':'三塁手',
+    SS:'遊撃手',LF:'左翼手',CF:'中堅手',RF:'右翼手',DH:'指名打者',OF:'外野手' };
+
+  const _isCareer = !/^\d{4}$/.test(String(row[1] ?? '').trim());
+
+  // ①-a 通算カード: 全シーズン行イニング合計
+  if (_isCareer && g_dataRows) {
+    const innByPos = {};
+    g_dataRows
+      .filter(r => /^\d{4}$/.test(String(r[1] ?? '').trim()))
+      .forEach(r => {
+        for (let i = 0; i < 8; i++) {
+          const inn = parseFloat(r[28 + i * 2]) || 0;
+          if (inn > 0) innByPos[posLabels[i]] = (innByPos[posLabels[i]] || 0) + inn;
+        }
+      });
+    const top = Object.entries(innByPos).sort((a, b) => b[1] - a[1])[0];
+    if (top) return posMap[top[0]] || '';
+  }
+
+  // ①-b 単年カード: その年のDRSイニング最多
+  const drsData = [];
+  for (let i = 0; i < 8; i++) {
+    const inn = row[28 + i * 2];
+    if (inn && inn !== '--' && inn !== null && inn !== '') {
+      drsData.push({ pos: posLabels[i], inn: parseFloat(inn) || 0 });
+    }
+  }
+  if (!_isCareer && drsData.length > 0) {
+    const top = drsData.reduce((a, b) => a.inn >= b.inn ? a : b);
+    return posMap[top.pos] || '';
+  }
+
+  // ② 通算行DRSをフォールバック（単年DRS未入力時）
+  if (g_dataRows) {
+    const careerRow = g_dataRows.find(r => !/^\d{4}$/.test(String(r[1] ?? '').trim()));
+    if (careerRow) {
+      const cDrs = [];
+      for (let i = 0; i < 8; i++) {
+        const inn = careerRow[28 + i * 2];
+        if (inn && inn !== '--' && inn !== null && inn !== '') {
+          cDrs.push({ pos: posLabels[i], inn: parseFloat(inn) || 0 });
+        }
+      }
+      if (cDrs.length > 0) {
+        const top = cDrs.reduce((a, b) => a.inn >= b.inn ? a : b);
+        return posMap[top.pos] || '';
+      }
+    }
+  }
+
+  // ③ MLB API フォールバック
+  const mp = (g_mlbPos || '').toUpperCase().replace(/\s/g, '');
+  return posMapFull[mp] || '';
+}
+
 // ── 称号（cardType）を決定 ────────────────────────────────────
 function buildCardType(row, awardsJa) {
   // 通算行（年度が4桁でない）は専用ロジックへ
@@ -3457,11 +3462,8 @@ function buildCardType(row, awardsJa) {
   const isStarter = g_isPitcher && gs >= tg * 0.5;
   // 投球腕は g_pitchHand（'L'/'R'）を使用。row[57]は数値（対左補正値）のため誤り
   const hand = (g_pitchHand === 'L') ? '左腕' : '右腕';
-  const ops  = parseFloat(fmtOPS(row[17])) || 0;
-  const pos  = g_mlbPos || '';
-  const posMap = { P:'投手',C:'捕手','1B':'一塁手','2B':'二塁手','3B':'三塁手',
-    SS:'遊撃手',LF:'左翼手',CF:'中堅手',RF:'右翼手',DH:'指名打者',OF:'外野手' };
-  const posJa = posMap[pos.toUpperCase()] || '';
+  const ops   = parseFloat(fmtOPS(row[17])) || 0;
+  const posJa = _getPrimaryPosJa(row); // DRS優先・g_mlbPosフォールバック
 
   const mvp  = awardsJa.find(a => a.includes('MVP') && !a.includes('ワールドシリーズ') && !a.includes('リーグ優勝'));
   const cy   = awardsJa.find(a => a.includes('サイ・ヤング'));
