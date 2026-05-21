@@ -3383,6 +3383,44 @@ function _buildCareerCardType(row, awardsJa) {
   if (sb >= 400) return `通算${sb}盗塁の俊足選手`;
   if (rbi >= 1500) return `通算${rbi}打点の勝負強打者`;
 
+  // ⑫ ポジション＋通算能力値で称号
+  {
+    // 通算能力値はシーズン行の平均をそのまま使用（通算行は加重値なので列[45][46][48]を参照）
+    const _spd = parseInt(row[46]) || 0;
+    const _pow = parseInt(row[45]) || 0;
+    const _eye = parseInt(row[48]) || 0;
+
+    // ユーティリティ判定（全シーズン行のイニングを集計）
+    const _posLabels8 = ['C','1B','2B','3B','SS','LF','CF','RF'];
+    const _innByPos   = {};
+    if (g_dataRows) {
+      g_dataRows
+        .filter(r => /^\d{4}$/.test(String(r[1] ?? '').trim()))
+        .forEach(r => {
+          for (let i = 0; i < 8; i++) {
+            const inn = parseFloat(r[28 + i * 2]) || 0;
+            if (inn > 0) _innByPos[_posLabels8[i]] = (_innByPos[_posLabels8[i]] || 0) + inn;
+          }
+        });
+    }
+    const _totalEntries = Object.keys(_innByPos).length;
+    const _maxCareerInn = _totalEntries > 0 ? Math.max(...Object.values(_innByPos)) : 0;
+    const _multiPos = _maxCareerInn > 0
+      ? Object.entries(_innByPos).filter(([, v]) => v >= _maxCareerInn * 0.35)
+      : [];
+    const _isOF = ['左翼手','中堅手','右翼手'].includes(posJa);
+    const _isIF = ['一塁手','二塁手','三塁手','遊撃手'].includes(posJa);
+    const _isMultiOF = _multiPos.length >= 2 && _multiPos.every(([p]) => ['LF','CF','RF'].includes(p));
+    const _isUtil    = _multiPos.length >= 3;
+
+    if (_isUtil)            return 'ユーティリティ選手';
+    if (_isMultiOF)         return 'ユーティリティ外野手';
+    if (_spd >= 80 && _isOF) return '俊足外野手';
+    if (_spd >= 75 && _isOF) return `俊足${posJa}`;
+    if (_pow >= 90 && _isIF) return `強打${posJa}`;
+    if (_pow >= 85)          return `長打力の${posJa || '野手'}`;
+    if (_eye >= 85)          return `出塁型${posJa || '野手'}`;
+  }
   return posJa || '野手';
 }
 
@@ -3564,7 +3602,36 @@ function buildCardType(row, awardsJa) {
     if (sb >= 20 && hasEnoughGames) return `${sb}盗塁の俊足選手`;
     if (avg >= 0.300 && hasEnoughGames) return `打率${fmtRate(row[15])}の巧打者`;
 
-    // ⑤ 試合数不足 or 特徴なし → ポジション名
+    // ⑤ ポジション＋能力値を組み合わせた称号（試合数不足・特徴なし時も含む）
+    {
+      const _spd   = parseInt(row[46]) || 0;
+      const _pow   = parseInt(row[45]) || 0;
+      const _eye   = parseInt(row[48]) || 0;
+      const _steal = parseInt(row[51]) || 0;
+
+      // ユーティリティ判定（イニング最大値の40%以上を守ったポジション数）
+      const _posLabels8 = ['C','1B','2B','3B','SS','LF','CF','RF'];
+      const _drsInn = [];
+      for (let i = 0; i < 8; i++) {
+        const inn = parseFloat(row[28 + i * 2]) || 0;
+        if (inn > 0) _drsInn.push({ pos: _posLabels8[i], inn });
+      }
+      const _maxInn   = _drsInn.length > 0 ? Math.max(..._drsInn.map(d => d.inn)) : 0;
+      const _multiPos = _maxInn > 0 ? _drsInn.filter(d => d.inn >= _maxInn * 0.4) : [];
+      const _isOF     = ['左翼手','中堅手','右翼手'].includes(posJa);
+      const _isIF     = ['一塁手','二塁手','三塁手','遊撃手'].includes(posJa);
+      const _isMultiOF = _multiPos.length >= 2 && _multiPos.every(d => ['LF','CF','RF'].includes(d.pos));
+      const _isUtil   = _multiPos.length >= 3;
+
+      if (_isUtil)                          return 'ユーティリティ選手';
+      if (_isMultiOF)                       return 'ユーティリティ外野手';
+      if (_spd >= 80 && _isOF)              return '俊足外野手';
+      if (_spd >= 75 && _isOF)              return `俊足${posJa}`;
+      if (_pow >= 90 && _isIF)              return `強打${posJa}`;
+      if (_pow >= 85)                       return `長打力の${posJa || '野手'}`;
+      if (_eye >= 85)                       return `出塁型${posJa || '野手'}`;
+      if (_steal >= 15 && _spd >= 70 && _isOF) return `走塁型外野手`;
+    }
     return posJa || '野手';
   } else {
     const hasKTitle   = awardsJa.some(a => a.includes('奪三振王'));
