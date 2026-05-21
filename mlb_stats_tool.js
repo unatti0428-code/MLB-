@@ -5102,13 +5102,26 @@ function parseDRS(val) {
 }
 function calcDefMain(inn, drs) {
   if (inn == null || drs == null) return null;
-  return inn > 699 ? drs / inn * 1000 : inn < 700 ? drs * 1.5 : null;
+  return inn > 649 ? drs / inn * 1000 : drs * 1.5;
 }
-function calcDefSub(inn, drs, mainInn) {
+// 同グループポジション（転向しやすい組み合わせ）: ペナルティを1/3に軽減
+const DEF_POS_GROUPS = [
+  ['CF', 'LF', 'RF'],   // 外野3ポジション
+  ['2B', '3B', 'SS'],   // 中間内野
+  ['1B', '3B'],         // コーナー内野重複
+];
+function sameDefGroup(posA, posB) {
+  return DEF_POS_GROUPS.some(g => g.includes(posA) && g.includes(posB));
+}
+function calcDefSub(inn, drs, mainInn, mainPos, subPos) {
   if (inn == null || drs == null || !mainInn) return null;
-  const pct = inn / mainInn * 100, penalty = pct < 20 ? 20 - pct : 0;
-  if (inn > 499 || pct >= 50) return inn > 699 ? drs / inn * 1000 : inn < 700 ? drs * 1.5 : null;
-  return drs < 0 ? drs * 500 / inn - penalty : drs - penalty;
+  const pct = inn / mainInn * 100;
+  if (inn > 499 || pct >= 50) return calcDefMain(inn, drs);
+  const penalty    = pct < 20 ? 20 - pct : 0;
+  const effPenalty = (mainPos && subPos && sameDefGroup(mainPos, subPos))
+    ? penalty / 3
+    : penalty;
+  return drs < 0 ? drs * 2 - effPenalty : drs - effPenalty;
 }
 
 
@@ -5297,7 +5310,9 @@ async function processFile(filePath, catcherData = null) {
             // 個別出場比率 < 2% → 非表示（端的すぎる守備）
             const defInnPct = yp.inn / ((ab + walks) * 2) * 100;
             if (defInnPct < 2) return;
-            const rating = yp === yearPos[0] ? calcDefMain(yp.inn, yp.drs) : calcDefSub(yp.inn, yp.drs, mainInn);
+            const rating = yp === yearPos[0]
+              ? calcDefMain(yp.inn, yp.drs)
+              : calcDefSub(yp.inn, yp.drs, mainInn, yearPos[0].label, yp.label);
             if (rating != null) {
               const raw = Math.round(rating) + dhPenalty;
               // DH専属でない年のみ -30 下限補正（DH専属年は補正なし）
