@@ -2457,18 +2457,42 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
     }
   }
 
-  // ポジション決定の優先順位:
-  //   ① 単年: Excelのイニング数が最多のポジション（DRSデータあり）
-  //      通算: 全シーズン行のイニング合計が最多のポジション
-  //   ② MLB API の primaryPosition（DRSデータ未入力のフォールバック）
-  //   ③ 'RF'（最終フォールバック）
+  // ポジション決定の優先順位（高 → 低）:
+  //   ①-a 通算カード: 全シーズン行のイニング合計が最多のポジション
+  //   ①-b 単年カード: その年のイニングが最多のポジション（DRSデータあり）
+  //   ②   通算行DRS: 通算イニングが最多のポジション（単年DRS未入力時のフォールバック）
+  //   ③   MLB API の primaryPosition（上記すべて未入力のフォールバック）
+  //   ④   'RF'（最終フォールバック）
+
+  // ④ 最終フォールバック
   let primaryPos = 'RF';
-  // ② MLB APIポジションをデフォルトとして設定（①で上書きされる）
+
+  // ③ MLB APIポジション（②で上書きされる）
   if (g_mlbPos) {
     const mp = g_mlbPos.toUpperCase().replace(/\s/g, '');
     if (posLabels.includes(mp)) primaryPos = mp;
   }
-  // ①-a 通算年: 全シーズン行のイニング数をポジション別に合計して最多ポジションを決定
+
+  // ② 通算行DRS → 単年DRS未入力時に使う（①で上書きされる）
+  // 選手が複数ポジションを経験しても、通算で最も守ったポジションが正しく反映される
+  if (g_dataRows) {
+    const careerRow = g_dataRows.find(r => !/^\d{4}$/.test(String(r[1] ?? '').trim()));
+    if (careerRow) {
+      const careerDrs = [];
+      for (let i = 0; i < 8; i++) {
+        const inn = careerRow[28 + i * 2];
+        if (inn && inn !== '--' && inn !== null && inn !== '') {
+          careerDrs.push({ pos: posLabels[i], inn: parseFloat(inn) || 0 });
+        }
+      }
+      if (careerDrs.length > 0) {
+        const topCareer = careerDrs.reduce((a, b) => a.inn >= b.inn ? a : b);
+        primaryPos = topCareer.pos;
+      }
+    }
+  }
+
+  // ①-a 通算カード: 全シーズン行のイニング数をポジション別に合計して最多ポジションを決定
   if (_isCareerRow && g_dataRows) {
     const innByPos = {};
     g_dataRows
