@@ -3299,6 +3299,12 @@ function awardToJa(award) {
   const isNL = n.includes('national league')  || n.includes(' nl ') || n.startsWith('nl ');
   const lg   = isAL ? 'AL' : isNL ? 'NL' : '';
 
+  // ② チーム名識別（チーム固有賞のプレフィクスに使用）
+  // リーグ略称や人名由来賞との混同を避けるため、チーム名が含まれるか専用マップで判定
+  const awardTeamJa = _teamEngToJa(n);
+  // チーム名が検出されてもリーグMVP・サイ・ヤング等の全球団共通賞には使わない
+  // （pitcherOfYear等のチーム内賞にのみ適用）
+
   // ③ 具体的なMVP種別を「リーグMVP」より先にチェック（順序が重要！）
   if (n.includes('world series') && n.includes('mvp'))  return 'ワールドシリーズMVP';
   if (n.includes('championship series'))                return 'リーグ優勝シリーズMVP';
@@ -3321,8 +3327,10 @@ function awardToJa(award) {
   if (n.includes('cy young'))
     return lg ? `${lg}サイ・ヤング賞` : 'サイ・ヤング賞';
   // 'rookie of the year' を優先、それ以外は'month'を含まない場合のみ年間新人王とみなす
-  if (n.includes('rookie of the year') || (n.includes('rookie') && !n.includes('month')))
+  if (n.includes('rookie of the year') || (n.includes('rookie') && !n.includes('month'))) {
+    if (awardTeamJa && !isAL && !isNL) return `${awardTeamJa}新人賞`; // チーム独自新人賞
     return lg ? `${lg}新人王` : '新人王';
+  }
   if (n.includes('gold glove'))           return 'ゴールドグラブ賞';
   if (n.includes('silver slugger'))       return 'シルバースラッガー賞';
   if (n.includes('platinum glove'))       return 'プラチナグラブ賞';
@@ -3340,7 +3348,10 @@ function awardToJa(award) {
   if (n.includes('joe torre'))            return 'ジョー・トーレ賞';
   if (n.includes('commissioner') && n.includes('historic')) return 'コミッショナー歴史的功績賞';
   if (n.includes('comeback player'))      return 'カムバック賞';
-  if (n.includes('reliever'))             return 'リリーバー賞';
+  if (n.includes('reliever')) {
+    if (awardTeamJa) return `${awardTeamJa}最優秀救援投手賞`; // チーム固有救援賞
+    return lg ? `${lg}リリーバー賞` : 'リリーバー賞';
+  }
   if (n.includes('manager of the year'))
     return lg ? `${lg}最優秀監督賞` : '最優秀監督賞';
   if (n.includes('batting title'))        return '首位打者';
@@ -3401,12 +3412,39 @@ function awardToJa(award) {
     return 'ベースボール・アメリカ最優秀選手';
   if (n.includes('baseball america') && n.includes('pitcher'))
     return 'ベースボール・アメリカ最優秀投手';
-  if (n.includes('pitcher of the year'))
-    return lg ? `${lg}年間最優秀投手賞` : '年間最優秀投手賞';
-  if (n.includes('player of the year'))
-    return lg ? `${lg}年間最優秀選手賞` : '年間最優秀選手賞';
-  if (n.includes('reliever of the year') || n.includes('relief man'))
-    return lg ? `${lg}最優秀救援投手賞` : '最優秀救援投手賞';
+  // ⑩-b チーム固有の年間賞（チーム名付き）
+  // 例: "Brewers Pitcher of the Year" → "ブルワーズ年間最優秀投手賞"
+  //     "Yankees Player of the Year"  → "ヤンキース年間最優秀選手賞"
+  if (n.includes('pitcher of the year')) {
+    const pfx = awardTeamJa || (lg || '');
+    return `${pfx}年間最優秀投手賞`;
+  }
+  if (n.includes('player of the year') || n.includes('hitter of the year')) {
+    const pfx = awardTeamJa || (lg || '');
+    return `${pfx}年間最優秀選手賞`;
+  }
+  if (n.includes('reliever of the year') || n.includes('relief man')) {
+    const pfx = awardTeamJa || (lg || '');
+    return `${pfx}最優秀救援投手賞`;
+  }
+  if (n.includes('rookie of the year') && awardTeamJa) {
+    // チーム独自の新人賞（リーグ新人王と区別）
+    return `${awardTeamJa}新人賞`;
+  }
+  // チーム内コミュニティ・地域貢献賞
+  if (awardTeamJa && (n.includes('community') || n.includes('good guy') ||
+      n.includes('humanitarian') || n.includes('civic'))) {
+    return `${awardTeamJa}地域貢献賞`;
+  }
+  // チーム内その他の年間賞（"Award" "Trophy" が含まれるもの）
+  if (awardTeamJa && (n.includes(' award') || n.includes(' trophy')) &&
+      !n.includes('cy young') && !n.includes('gold glove') &&
+      !n.includes('silver slugger') && !n.includes('mvp') && !n.includes('heart')) {
+    // 人名由来賞（例: "Bob Robertson Award"）はそのまま人名を使う
+    const personM = (award.name || '').match(/^(?:[A-Z][a-z]+ )+[A-Z][a-z]+\s+(Award|Trophy)/);
+    if (personM) return `${awardTeamJa} ${award.name}`;
+    return `${awardTeamJa}球団賞`;
+  }
   if (n.includes('strikeout') && n.includes('leader')) return '奪三振王';
   if (n.includes('era') && n.includes('leader'))       return '最優秀防御率';
   if (n.includes('wins') && n.includes('leader'))      return '最多勝';
