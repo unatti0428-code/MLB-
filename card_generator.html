@@ -5379,90 +5379,416 @@ function _parseJaWikiEpisodes(text, isPitcher) {
 }
 
 /**
- * 英語大学名 → 日本語大学名変換
- * Wikipedia英語版に掲載される日本の大学名（英語表記）→正式日本語名
- * @param {string} engName  英語表記（例: "Kwansei Gakuin", "Waseda"）
- * @returns {string|null}  日本語正式名（例: "関西学院大学"）または null
+ * 英語大学名 → 日本語大学名変換（日本・アメリカ両対応）
+ * @param {string} engName  英語表記（例: "Florida State", "Kwansei Gakuin"）
+ * @returns {string|null}  日本語正式名 または null
  */
 function _univEngToJa(engName) {
   if (!engName) return null;
-  // 正規化: 小文字・連続スペース除去・ハイフン/アポストロフィ→スペース
-  const n = engName.trim().toLowerCase()
+  const raw     = engName.trim();
+  const rawL    = raw.toLowerCase().replace(/\s+/g, ' ');
+
+  // ── ① "[State] State [University/College]" 自動パターン ──
+  // 例: "Florida State" / "Florida State University" → "フロリダ州立大学"
+  const ssM = rawL.match(/^([a-z ]+?)\s+state(?:\s+(?:university|college|u)\b)?$/);
+  if (ssM) {
+    const sk = ssM[1].trim();
+    const entry = Object.entries(_STATE_JA_MAP).find(([k]) => k.toLowerCase() === sk);
+    if (entry) return entry[1] + '立大学'; // "フロリダ州" + "立大学" = "フロリダ州立大学"
+  }
+
+  // ── ② "University of [State/Institution]" パターン ──
+  // 例: "University of Florida" → "フロリダ大学"
+  const uofM = rawL.match(/^university of\s+(.+)$/);
+  if (uofM) {
+    const inst = uofM[1].trim().replace(/[,\s]+(?:campus|at|main).*$/i, '');
+    const stEntry = Object.entries(_STATE_JA_MAP).find(([k]) => k.toLowerCase() === inst);
+    if (stEntry) return stEntry[1].replace(/州$/, '') + '大学';
+    // 非州名機関（Southern California, Miami 等）は ③ へ
+  }
+
+  // ── ③ 個別US大学マップ ──
+  const US_MAP = {
+    // Ivy League / 名門私立
+    'harvard':'ハーバード大学', 'yale':'エール大学', 'princeton':'プリンストン大学',
+    'columbia':'コロンビア大学', 'cornell':'コーネル大学', 'dartmouth':'ダートマス大学',
+    'brown':'ブラウン大学', 'penn':'ペンシルベニア大学', 'university of pennsylvania':'ペンシルベニア大学',
+    'stanford':'スタンフォード大学', 'mit':'マサチューセッツ工科大学',
+    'duke':'デューク大学', 'vanderbilt':'バンダービルト大学', 'notre dame':'ノートルダム大学',
+    'university of notre dame':'ノートルダム大学',
+    'northwestern':'ノースウェスタン大学', 'rice':'ライス大学',
+    'tulane':'チューレン大学', 'emory':'エモリー大学', 'georgetown':'ジョージタウン大学',
+    'wake forest':'ウェイクフォレスト大学',
+    // USC / UC系
+    'usc':'南カリフォルニア大学', 'university of southern california':'南カリフォルニア大学',
+    'southern california':'南カリフォルニア大学',
+    'ucla':'カリフォルニア大学ロサンゼルス校',
+    'university of california los angeles':'カリフォルニア大学ロサンゼルス校',
+    'uc berkeley':'カリフォルニア大学バークレー校', 'cal':'カリフォルニア大学バークレー校',
+    'uc santa barbara':'カリフォルニア大学サンタバーバラ校',
+    'uc san diego':'カリフォルニア大学サンディエゴ校',
+    'uc riverside':'カリフォルニア大学リバーサイド校',
+    'ucf':'セントラルフロリダ大学', 'central florida':'セントラルフロリダ大学',
+    'university of central florida':'セントラルフロリダ大学',
+    'florida international':'フロリダ国際大学', 'fiu':'フロリダ国際大学',
+    'florida atlantic':'フロリダ・アトランティック大学',
+    // Cal State系
+    'cal state fullerton':'カリフォルニア州立大学フラートン校',
+    'cal state long beach':'カリフォルニア州立大学ロングビーチ校', 'long beach state':'カリフォルニア州立大学ロングビーチ校',
+    'cal state northridge':'カリフォルニア州立大学ノースリッジ校', 'csun':'カリフォルニア州立大学ノースリッジ校',
+    'cal state bakersfield':'カリフォルニア州立大学ベーカーズフィールド校',
+    'fresno state':'カリフォルニア州立大学フレズノ校',
+    'san diego state':'サンディエゴ州立大学', 'sdsu':'サンディエゴ州立大学',
+    'san jose state':'サンノゼ州立大学', 'sjsu':'サンノゼ州立大学',
+    'cal poly':'カリフォルニア州立工科大学', 'cal poly san luis obispo':'カリフォルニア州立工科大学サンルイスオビスポ校',
+    // SEC
+    'lsu':'ルイジアナ州立大学', 'louisiana state':'ルイジアナ州立大学',
+    'university of florida':'フロリダ大学',
+    'university of georgia':'ジョージア大学', 'georgia tech':'ジョージア工科大学',
+    'georgia institute of technology':'ジョージア工科大学',
+    'university of alabama':'アラバマ大学', 'auburn':'オーバーン大学',
+    'university of tennessee':'テネシー大学', 'ole miss':'ミシシッピ大学',
+    'university of mississippi':'ミシシッピ大学',
+    'university of arkansas':'アーカンソー大学', 'university of kentucky':'ケンタッキー大学',
+    'university of south carolina':'サウスカロライナ大学',
+    // ACC
+    'clemson':'クレムソン大学', 'virginia tech':'バージニア工科大学',
+    'virginia polytechnic':'バージニア工科大学', 'university of virginia':'バージニア大学',
+    'north carolina state':'ノースカロライナ州立大学', 'nc state':'ノースカロライナ州立大学',
+    'unc':'ノースカロライナ大学チャペルヒル校', 'university of north carolina':'ノースカロライナ大学',
+    'florida state':'フロリダ州立大学', 'fsu':'フロリダ州立大学',
+    // Big 12 / Big Ten
+    'texas a&m':'テキサスA&M大学', 'texas a & m':'テキサスA&M大学', 'tamu':'テキサスA&M大学',
+    'texas tech':'テキサス工科大学', 'baylor':'ベイラー大学',
+    'tcu':'テキサス・クリスチャン大学', 'texas christian':'テキサス・クリスチャン大学',
+    'smu':'南部メソジスト大学', 'southern methodist':'南部メソジスト大学',
+    'university of texas':'テキサス大学', 'ut austin':'テキサス大学オースティン校',
+    'ohio state':'オハイオ州立大学', 'michigan state':'ミシガン州立大学',
+    'penn state':'ペンシルベニア州立大学', 'pennsylvania state':'ペンシルベニア州立大学',
+    'purdue':'パデュー大学', 'iowa state':'アイオワ州立大学',
+    'university of michigan':'ミシガン大学', 'university of iowa':'アイオワ大学',
+    'indiana university':'インディアナ大学', 'university of illinois':'イリノイ大学',
+    'university of minnesota':'ミネソタ大学', 'university of wisconsin':'ウィスコンシン大学',
+    // Pac-12 / Mountain West
+    'oregon state':'オレゴン州立大学', 'washington state':'ワシントン州立大学',
+    'university of oregon':'オレゴン大学', 'university of washington':'ワシントン大学',
+    'arizona state':'アリゾナ州立大学', 'university of arizona':'アリゾナ大学',
+    'university of utah':'ユタ大学', 'utah state':'ユタ州立大学',
+    'university of colorado':'コロラド大学', 'colorado state':'コロラド州立大学',
+    'university of nevada':'ネバダ大学', 'nevada':' ネバダ大学',
+    'unlv':'ネバダ大学ラスベガス校',
+    // その他主要私立
+    'gonzaga':'ゴンザガ大学', 'creighton':'クレイトン大学', 'villanova':'ビラノバ大学',
+    'xavier':'ザビエル大学', 'butler':'バトラー大学', 'seton hall':'セトンホール大学',
+    'st. johns':'セントジョンズ大学', "st. john's":'セントジョンズ大学',
+    'fordham':'フォーダム大学', 'hofstra':'ホフストラ大学', 'temple':'テンプル大学',
+    'drexel':'ドレクセル大学', 'rutgers':'ラトガース大学',
+    'uconn':'コネチカット大学', 'university of connecticut':'コネチカット大学',
+    'boston college':'ボストン・カレッジ', 'boston university':'ボストン大学',
+    'northeastern':'ノースイースタン大学', 'holy cross':'ホーリークロス大学',
+    'pepperdine':'ペパーダイン大学', 'santa clara':'サンタクララ大学',
+    'san diego':'サンディエゴ大学', 'loyola marymount':'ロヨラ・メリーマウント大学',
+    'liberty':'リバティ大学', 'liberty university':'リバティ大学',
+    'james madison':'ジェームズ・マディソン大学', 'george mason':'ジョージ・メイソン大学',
+    'george washington':'ジョージワシントン大学', 'american university':'アメリカン大学',
+    'pittsburgh':'ピッツバーグ大学', 'university of pittsburgh':'ピッツバーグ大学',
+    'west virginia':'ウェストバージニア大学', 'university of west virginia':'ウェストバージニア大学',
+    'marshall':'マーシャル大学', 'louisville':'ルイビル大学',
+    'university of louisville':'ルイビル大学',
+    'cincinnati':'シンシナティ大学', 'university of cincinnati':'シンシナティ大学',
+    'appalachian state':'アパラチアン州立大学',
+    'east carolina':'東カロライナ大学', 'coastal carolina':'沿岸カロライナ大学',
+    'campbell':'キャンベル大学', 'elon':'イーロン大学',
+    'samford':'サムフォード大学', 'troy':'トロイ大学',
+    'south alabama':'南アラバマ大学', 'jacksonville state':'ジャクソンビル州立大学',
+    'arkansas state':'アーカンソー州立大学',
+    'memphis':'メンフィス大学', 'university of memphis':'メンフィス大学',
+    'oklahoma state':'オクラホマ州立大学', 'university of oklahoma':'オクラホマ大学',
+    'kansas state':'カンザス州立大学', 'university of kansas':'カンザス大学',
+    'wichita state':'ウィチタ州立大学', 'university of houston':'ヒューストン大学',
+    'sam houston':'サムヒューストン州立大学',
+    'lamar':'ラマー大学', 'southeastern louisiana':'東南ルイジアナ大学',
+    'mcneese state':'マクニーズ州立大学', 'nicholls state':'ニコルズ州立大学',
+    'william and mary':'ウィリアム・アンド・メアリー大学',
+    'old dominion':'オールドドミニオン大学', 'vcu':'バージニア・コモンウェルス大学',
+    'university of miami':'マイアミ大学', 'miami':'マイアミ大学',
+    'university of maryland':'メリーランド大学',
+    'umass':'マサチューセッツ大学', 'university of massachusetts':'マサチューセッツ大学',
+    'university of rhode island':'ロードアイランド大学',
+    'stony brook':'ストーニーブルック大学', 'binghamton':'ビンガムトン大学',
+    'suny':'ニューヨーク州立大学',
+    'lehigh':'リーハイ大学', 'bucknell':'バックネル大学',
+    'duquesne':'デュケーン大学',
+    'central michigan':'中央ミシガン大学', 'eastern michigan':'東ミシガン大学',
+    'western michigan':'西ミシガン大学', 'bowling green':'ボウリンググリーン州立大学',
+    'akron':'アクロン大学', 'youngstown state':'ヤングスタウン州立大学',
+    'ball state':'ボールステート大学', 'valparaiso':'バルパライソ大学',
+    'tennessee tech':'テネシー工科大学', 'middle tennessee':'中テネシー州立大学',
+    'belmont':'ベルモント大学', 'lipscomb':'リプスコム大学',
+    'eastern kentucky':'東ケンタッキー大学', 'western kentucky':'西ケンタッキー大学',
+    'morehead state':'モアヘッド州立大学',
+    // Community College / Junior College（「コミュニティカレッジ」接尾辞は呼出元で付与）
+    'santa monica':'サンタモニカ・コミュニティカレッジ',
+    'pasadena city':'パサデナシティ・カレッジ',
+  };
+  if (US_MAP[rawL]) return US_MAP[rawL];
+  // 部分一致（例: "University of Southern California" → "southern california" が含まれる）
+  for (const [key, val] of Object.entries(US_MAP)) {
+    if (rawL.includes(key) || key.includes(rawL)) return val;
+  }
+
+  // ── ④ 日本の大学（正規化してマップ照合）──
+  const n = raw.toLowerCase()
     .replace(/[-']/g, ' ').replace(/\s+/g, ' ')
     .replace(/\s*university\s*/g, '').replace(/\s*college\s*/g, '')
     .replace(/\s*gakuin\s*/g, ' gakuin ').trim();
-
-  // key: 正規化済み英語 → value: 日本語正式大学名（大学名まで含む）
-  const MAP = {
-    // ── 東京六大学・関東 ──
-    'waseda':                  '早稲田大学',
-    'keio':                    '慶應義塾大学',
-    'meiji':                   '明治大学',
-    'hosei':                   '法政大学',
-    'rikkyo':                  '立教大学',
-    'chuo':                    '中央大学',
-    'toyo':                    '東洋大学',
-    'senshu':                  '専修大学',
-    'nihon':                   '日本大学',
-    'kokushikan':              '国士舘大学',
-    'tokai':                   '東海大学',
-    'aoyama gakuin':           '青山学院大学',
-    'tokyo':                   '東京大学',
-    'sophia':                  '上智大学',
-    'international budo':      '国際武道大学',
-    'bunkyo':                  '文京学院大学',
-    'jobu':                    '上武大学',
-    'juntendo':                '順天堂大学',
-    'teikyo':                  '帝京大学',
-    'asia':                    '亜細亜大学',
-    'nippon sport science':    '日本体育大学',
-    'nittai':                  '日本体育大学',
-    // ── 東北・北海道 ──
-    'tohoku':                  '東北大学',
-    'tohoku fukushi':          '東北福祉大学',
-    'sapporo':                 '札幌大学',
-    'hokkaido':                '北海道大学',
-    // ── 中部・甲信越 ──
-    'nagoya':                  '名古屋大学',
-    'chubu':                   '中部大学',
-    'nagano':                  '長野大学',
-    // ── 関西 ──
-    'kyoto':                   '京都大学',
-    'doshisha':                '同志社大学',
-    'ritsumeikan':             '立命館大学',
-    'osaka':                   '大阪大学',
-    'kinki':                   '近畿大学',
-    'kindai':                  '近畿大学',
-    'kansai':                  '関西大学',
-    'kwansei gakuin':          '関西学院大学',
-    'kwansei':                 '関西学院大学',
-    'kobe':                    '神戸大学',
-    'tenri':                   '天理大学',
-    'nara':                    '奈良大学',
-    'osaka touin':             '大阪桐蔭大学',
-    'hannan':                  '阪南大学',
-    'otemon gakuin':           '追手門学院大学',
-    'tezukayama gakuin':       '帝塚山学院大学',
-    'osaka sangyo':            '大阪産業大学',
-    'osaka university of commerce': '大阪商業大学',
-    'osaka gakuin':            '大阪学院大学',
-    // ── 中国・四国・九州 ──
-    'hiroshima':               '広島大学',
-    'fukuoka':                 '福岡大学',
-    'kyushu':                  '九州大学',
-    'kagoshima':               '鹿児島大学',
-    'kanazawa':                '金沢大学',
-    'okayama':                 '岡山大学',
+  const JA_MAP = {
+    'waseda':'早稲田大学','keio':'慶應義塾大学','meiji':'明治大学',
+    'hosei':'法政大学','rikkyo':'立教大学','chuo':'中央大学',
+    'toyo':'東洋大学','senshu':'専修大学','nihon':'日本大学',
+    'kokushikan':'国士舘大学','tokai':'東海大学',
+    'aoyama gakuin':'青山学院大学','tokyo':'東京大学','sophia':'上智大学',
+    'international budo':'国際武道大学','bunkyo':'文京学院大学',
+    'jobu':'上武大学','juntendo':'順天堂大学','teikyo':'帝京大学',
+    'asia':'亜細亜大学','nippon sport science':'日本体育大学','nittai':'日本体育大学',
+    'tohoku':'東北大学','tohoku fukushi':'東北福祉大学',
+    'sapporo':'札幌大学','hokkaido':'北海道大学',
+    'nagoya':'名古屋大学','chubu':'中部大学','nagano':'長野大学',
+    'kyoto':'京都大学','doshisha':'同志社大学','ritsumeikan':'立命館大学',
+    'osaka':'大阪大学','kinki':'近畿大学','kindai':'近畿大学',
+    'kansai':'関西大学','kwansei gakuin':'関西学院大学','kwansei':'関西学院大学',
+    'kobe':'神戸大学','tenri':'天理大学','nara':'奈良大学',
+    'osaka touin':'大阪桐蔭大学','hannan':'阪南大学',
+    'otemon gakuin':'追手門学院大学','tezukayama gakuin':'帝塚山学院大学',
+    'osaka sangyo':'大阪産業大学','osaka university of commerce':'大阪商業大学',
+    'osaka gakuin':'大阪学院大学',
+    'hiroshima':'広島大学','fukuoka':'福岡大学','kyushu':'九州大学',
+    'kagoshima':'鹿児島大学','kanazawa':'金沢大学','okayama':'岡山大学',
   };
-
-  // 完全一致 → 即返す
-  if (MAP[n]) return MAP[n];
-
-  // 前後スペースを無視した部分一致（例: "kwansei gakuin university" → "kwansei gakuin"）
-  for (const [key, val] of Object.entries(MAP)) {
+  if (JA_MAP[n]) return JA_MAP[n];
+  for (const [key, val] of Object.entries(JA_MAP)) {
     if (n === key || n.includes(key) || key.includes(n)) return val;
   }
   return null;
+}
+
+/**
+ * 英語都市名 → カタカナ変換（アメリカ・中南米主要都市対応）
+ * @param {string} city  英語都市名（例: "Leesburg", "Covina"）
+ * @returns {string|null}  カタカナ名 または null
+ */
+function _cityEngToKana(city) {
+  if (!city) return null;
+  const key = city.trim().toLowerCase().replace(/\s+/g, ' ');
+
+  // ── 静的マップ（米国・中南米主要都市）──
+  const MAP = {
+    // 主要メトロ
+    'los angeles':'ロサンゼルス','new york':'ニューヨーク','chicago':'シカゴ',
+    'houston':'ヒューストン','phoenix':'フェニックス','philadelphia':'フィラデルフィア',
+    'san antonio':'サンアントニオ','san diego':'サンディエゴ','dallas':'ダラス',
+    'san jose':'サンノゼ','austin':'オースティン','jacksonville':'ジャクソンビル',
+    'fort worth':'フォートワース','columbus':'コロンバス','charlotte':'シャーロット',
+    'indianapolis':'インディアナポリス','san francisco':'サンフランシスコ',
+    'seattle':'シアトル','denver':'デンバー','nashville':'ナッシュビル',
+    'el paso':'エルパソ','washington':'ワシントン','las vegas':'ラスベガス',
+    'louisville':'ルイビル','portland':'ポートランド','memphis':'メンフィス',
+    'baltimore':'ボルティモア','boston':'ボストン','miami':'マイアミ',
+    'atlanta':'アトランタ','minneapolis':'ミネアポリス','new orleans':'ニューオーリンズ',
+    'cincinnati':'シンシナティ','kansas city':'カンザスシティ','cleveland':'クリーブランド',
+    'tampa':'タンパ','pittsburgh':'ピッツバーグ','sacramento':'サクラメント',
+    'orlando':'オーランド','st. louis':'セントルイス','saint louis':'セントルイス',
+    'detroit':'デトロイト','milwaukee':'ミルウォーキー',
+    'albuquerque':'アルバカーキ','tucson':'ツーソン','fresno':'フレスノ',
+    'omaha':'オマハ','raleigh':'ローリー','birmingham':'バーミンガム',
+    'richmond':'リッチモンド','baton rouge':'バトンルージュ','little rock':'リトルロック',
+    'salt lake city':'ソルトレイクシティ','wichita':'ウィチタ','spokane':'スポケーン',
+    'providence':'プロビデンス','akron':'アクロン','toledo':'トレド',
+    'dayton':'デイトン','greensboro':'グリーンズボロ',
+    'winston-salem':'ウィンストン・セーレム','knoxville':'ノックスビル',
+    'chattanooga':'チャタヌーガ','lexington':'レキシントン',
+    'jackson':'ジャクソン','savannah':'サバンナ','augusta':'オーガスタ',
+    'macon':'メーコン','columbia':'コロンビア','charleston':'チャールストン',
+    'greenville':'グリーンビル','durham':'ダーラム','fayetteville':'フェイエットビル',
+    'wilmington':'ウィルミントン','fort wayne':'フォートウェイン',
+    'evansville':'エバンズビル','south bend':'サウスベンド','ann arbor':'アナーバー',
+    'lansing':'ランシング','flint':'フリント','grand rapids':'グランドラピッズ',
+    'st. paul':'セントポール','saint paul':'セントポール','duluth':'ドゥルース',
+    'green bay':'グリーンベイ','madison':'マディソン','des moines':'デモイン',
+    'cedar rapids':'シーダーラピッズ','sioux city':'スーシティ','lincoln':'リンカーン',
+    'sioux falls':'スーフォールズ','rapid city':'ラピッドシティ','bismarck':'ビスマルク',
+    'fargo':'ファーゴ','billings':'ビリングス','missoula':'ミズーラ',
+    'casper':'キャスパー','cheyenne':'シャイアン','boise':'ボイジー',
+    'reno':'リノ','henderson':'ヘンダーソン','provo':'プロボ',
+    'mesa':'メサ','chandler':'チャンドラー','scottsdale':'スコッツデール',
+    'tempe':'テンペ','glendale':'グレンデール','gilbert':'ギルバート',
+    'flagstaff':'フラッグスタッフ','santa fe':'サンタフェ','lubbock':'ラボック',
+    'irving':'アービング','laredo':'ラレード','garland':'ガーランド',
+    'arlington':'アーリントン','corpus christi':'コーパスクリスティ',
+    'plano':'プレーノ','amarillo':'アマリロ','waco':'ウェーコ',
+    'beaumont':'ボーモント','abilene':'アビリーン','odessa':'オデッサ',
+    'midland':'ミッドランド','shreveport':'シュリーブポート',
+    'lafayette':'ラファイエット','lake charles':'レークチャールズ',
+    'monroe':'モンロー','biloxi':'ビロクシ','gulfport':'ガルフポート',
+    'hattiesburg':'ハッティズバーグ','dothan':'ドーサン','mobile':'モービル',
+    'huntsville':'ハンツビル','montgomery':'モントゴメリー','tuscaloosa':'タスカルーサ',
+    'tallahassee':'タラハシー','fort lauderdale':'フォートローダーデール',
+    'clearwater':'クリアウォーター','gainesville':'ゲインズビル',
+    'pensacola':'ペンサコーラ','sarasota':'サラソータ',
+    'daytona beach':'デイトナビーチ',
+    // カリフォルニア南部
+    'compton':'コンプトン','long beach':'ロングビーチ',
+    'bakersfield':'ベーカーズフィールド','riverside':'リバーサイド',
+    'san bernardino':'サンバーナーディーノ','anaheim':'アナハイム',
+    'stockton':'ストックトン','modesto':'モデスト','oxnard':'オクスナード',
+    'pasadena':'パサデナ','torrance':'トーランス','santa ana':'サンタアナ',
+    'pomona':'ポモナ','fontana':'フォンタナ','corona':'コロナ',
+    'salinas':'サリナス','hayward':'ヘイワード','sunnyvale':'サニーベール',
+    'escondido':'エスコンディード','chula vista':'チュラビスタ',
+    'santa clara':'サンタクララ','concord':'コンコード','vallejo':'バレーホ',
+    'victorville':'ビクタービル','el monte':'エルモンテ',
+    'west covina':'ウェストコビーナ','covina':'コビーナ',
+    'inglewood':'イングルウッド','hawthorne':'ホーソーン',
+    'gardena':'ガーデナ','carson':'カーソン','lakewood':'レイクウッド',
+    // 中西部・その他
+    'peoria':'ピオリア','rockford':'ロックフォード','springfield':'スプリングフィールド',
+    'aurora':'オーロラ','naperville':'ネーパービル','joliet':'ジョリエット',
+    'evanston':'エバンストン','decatur':'ディケーター',
+    // ジョージア州
+    'leesburg':'リーズバーグ','valdosta':'バルドスタ','athens':'アセンズ',
+    'rome':'ローマ','albany':'オールバニ','brunswick':'ブランズウィック',
+    'warner robins':'ワーナーロビンズ','statesboro':'ステーツボロ',
+    'gainesville':'ゲインズビル',
+    // 東海岸
+    'jersey city':'ジャージーシティ','paterson':'パターソン','newark':'ニューアーク',
+    'buffalo':'バッファロー','yonkers':'ヨンカーズ','syracuse':'シラキュース',
+    'rochester':'ロチェスター','binghamton':'ビンガムトン','utica':'ユーティカ',
+    'brooklyn':'ブルックリン','bronx':'ブロンクス',
+    'allentown':'アレンタウン','harrisburg':'ハリスバーグ','scranton':'スクラントン',
+    'erie':'エリー','lancaster':'ランカスター','reading':'レディング',
+    'annapolis':'アナポリス','frederick':'フレデリック','rockville':'ロックビル',
+    'virginia beach':'バージニアビーチ','norfolk':'ノーフォーク',
+    'chesapeake':'チェサピーク','alexandria':'アレクサンドリア','roanoke':'ロアノーク',
+    'newport news':'ニューポートニューズ','hampton':'ハンプトン',
+    'charlottesville':'シャーロッツビル','lynchburg':'リンチバーグ',
+    'harrisonburg':'ハリソンバーグ','huntington':'ハンティントン',
+    'parkersburg':'パーカーズバーグ','wheeling':'ウィーリング',
+    'bridgeport':'ブリッジポート','new haven':'ニューヘイブン',
+    'stamford':'スタムフォード','waterbury':'ウォーターベリー',
+    'hartford':'ハートフォード',
+    'oklahoma city':'オクラホマシティ','tulsa':'タルサ','norman':'ノーマン',
+    'fort smith':'フォートスミス',
+    'topeka':'トピーカ','overland park':'オーバーランドパーク',
+    // 中南米・カリブ海
+    'santo domingo':'サントドミンゴ','santiago':'サンティアゴ',
+    'san pedro de macoris':'サンペドロ・デ・マコリス',
+    'la romana':'ラロマナ','san cristobal':'サンクリストバル',
+    'caracas':'カラカス','maracaibo':'マラカイボ','valencia':'バレンシア',
+    'barquisimeto':'バルキシメト','maracay':'マラカイ',
+    'havana':'ハバナ','san juan':'サンファン','ponce':'ポンセ',
+    'bayamon':'バヤモン','caguas':'カグアス',
+    'panama city':'パナマシティ','toronto':'トロント','montreal':'モントリオール',
+    'vancouver':'バンクーバー','sydney':'シドニー','melbourne':'メルボルン',
+    'seoul':'ソウル','busan':'プサン',
+  };
+  if (MAP[key]) return MAP[key];
+
+  // ── 音声変換フォールバック（静的マップにない場合の近似カタカナ）──
+  return _engWordToKana(city.trim());
+}
+
+/** 英語単語のシンプルなカタカナ近似変換（都市名フォールバック用） */
+function _engWordToKana(word) {
+  if (!word) return word;
+  // スペース・ハイフン区切りで分割して各パーツを変換
+  const parts = word.trim().split(/[\s\-]+/);
+  if (parts.length > 1) return parts.map(_engWordToKana).join('');
+
+  const s = parts[0].toLowerCase();
+
+  // 単語全体のよく出るパターン
+  const FULL = {
+    'new':'ニュー','old':'オールド','north':'ノース','south':'サウス',
+    'east':'イースト','west':'ウェスト','fort':'フォート','lake':'レイク',
+    'park':'パーク','city':'シティ','beach':'ビーチ','island':'アイランド',
+    'river':'リバー','creek':'クリーク','valley':'バレー','grove':'グローブ',
+    'falls':'フォールズ','rapids':'ラピッズ','heights':'ハイツ',
+    'hills':'ヒルズ','point':'ポイント','springs':'スプリングス',
+    'view':'ビュー','ridge':'リッジ','wood':'ウッド','field':'フィールド',
+    'port':'ポート','saint':'セント','st':'セント','san':'サン','santa':'サンタ',
+    'los':'ロス','las':'ラス',
+  };
+  if (FULL[s]) return FULL[s];
+
+  // 末尾パターンを先にハンドル
+  const SUFFIX = [
+    [/ington$/, 'イントン'], [/ington$/, 'イントン'], [/ington$/, 'イントン'],
+    [/ville$/, 'ビル'], [/burg$/, 'バーグ'], [/berg$/, 'バーグ'],
+    [/field$/, 'フィールド'], [/ford$/, 'フォード'], [/port$/, 'ポート'],
+    [/wood$/, 'ウッド'], [/land$/, 'ランド'], [/ridge$/, 'リッジ'],
+    [/ton$/, 'トン'], [/son$/, 'ソン'], [/tion$/, 'ション'],
+    [/ster$/, 'スター'], [/sley$/, 'スリー'], [/ney$/, 'ニー'],
+    [/ley$/, 'リー'], [/ry$/, 'リー'], [/ey$/, 'イー'],
+  ];
+  for (const [re, kana] of SUFFIX) {
+    if (re.test(s)) {
+      const prefix = s.replace(re, '');
+      if (prefix.length >= 2) return _engWordToKana(prefix) + kana;
+    }
+  }
+
+  // 文字ごとの変換テーブル
+  const C_V = {
+    b:['バ','ビ','ブ','ベ','ボ'], c:['カ','キ','ク','ケ','コ'],
+    d:['ダ','ディ','ドゥ','デ','ド'], f:['ファ','フィ','フ','フェ','フォ'],
+    g:['ガ','ギ','グ','ゲ','ゴ'], h:['ハ','ヒ','フ','ヘ','ホ'],
+    j:['ジャ','ジ','ジュ','ジェ','ジョ'], k:['カ','キ','ク','ケ','コ'],
+    l:['ラ','リ','ル','レ','ロ'], m:['マ','ミ','ム','メ','モ'],
+    n:['ナ','ニ','ヌ','ネ','ノ'], p:['パ','ピ','プ','ペ','ポ'],
+    r:['ラ','リ','ル','レ','ロ'], s:['サ','シ','ス','セ','ソ'],
+    t:['タ','ティ','テュ','テ','ト'], v:['バ','ビ','ブ','ベ','ボ'],
+    w:['ワ','ウィ','ウ','ウェ','ウォ'], x:['クス','クス','クス','クス','クス'],
+    y:['ヤ','イ','ユ','イェ','ヨ'], z:['ザ','ジ','ズ','ゼ','ゾ'],
+  };
+  const VI = {a:0,i:1,u:2,e:3,o:4};
+  let result = '';
+  let i = 0;
+  while (i < s.length) {
+    const ch  = s[i];
+    const ch2 = s.slice(i, i+2);
+    const ch3 = s.slice(i, i+3);
+    // 2文字母音
+    if (ch2==='ee'||ch2==='ea') { result+='イー'; i+=2; continue; }
+    if (ch2==='oo') { result+='ウー'; i+=2; continue; }
+    if (ch2==='ai'||ch2==='ay') { result+='エイ'; i+=2; continue; }
+    if (ch2==='au'||ch2==='aw') { result+='オー'; i+=2; continue; }
+    if (ch2==='ou'||ch2==='ow') { result+='オウ'; i+=2; continue; }
+    if (ch2==='oi'||ch2==='oy') { result+='オイ'; i+=2; continue; }
+    if (ch2==='ie') { result+='イー'; i+=2; continue; }
+    if (ch2==='ur'||ch2==='er') { result+='アー'; i+=2; continue; }
+    // 子音クラスタ
+    if (ch3==='tch') { result+='チ'; i+=3; continue; }
+    if (ch2==='ch') { const v=s[i+2]; result+=(v&&VI[v]!==undefined)?['チャ','チ','チュ','チェ','チョ'][VI[v]]:'チ'; i+=v&&VI[v]!==undefined?3:2; continue; }
+    if (ch2==='sh') { const v=s[i+2]; result+=(v&&VI[v]!==undefined)?['シャ','シ','シュ','シェ','ショ'][VI[v]]:'シュ'; i+=v&&VI[v]!==undefined?3:2; continue; }
+    if (ch2==='th') { result+='ス'; i+=2; continue; }
+    if (ch2==='ph') { const v=s[i+2]; result+=(v&&VI[v]!==undefined)?C_V.f[VI[v]]:'フ'; i+=v&&VI[v]!==undefined?3:2; continue; }
+    if (ch2==='wh') { const v=s[i+2]; result+=(v&&VI[v]!==undefined)?C_V.w[VI[v]]:'ウ'; i+=v&&VI[v]!==undefined?3:2; continue; }
+    if (ch2==='ng') { result+='ング'; i+=2; continue; }
+    if (ch2==='nk') { result+='ンク'; i+=2; continue; }
+    if (ch2==='ck') { result+='ック'; i+=2; continue; }
+    if (ch2==='gh') { i+=2; continue; } // silent
+    if ('bcdfghjklmnpqrstvwxyz'.includes(ch) && ch===s[i+1]) { i++; continue; } // double cons → skip first
+    // 子音＋母音
+    if (C_V[ch] && VI[s[i+1]]!==undefined) { result+=C_V[ch][VI[s[i+1]]]; i+=2; continue; }
+    // 単独母音
+    if (VI[ch]!==undefined) { result+=['ア','イ','ウ','エ','オ'][VI[ch]]; i++; continue; }
+    // 末尾 e（サイレント）
+    if (ch==='e' && i===s.length-1) { i++; continue; }
+    // 残余子音
+    if (C_V[ch]) { result+=C_V[ch][2]; i++; continue; } // fallback to 'u' vowel
+    i++;
+  }
+  return result || null;
 }
 
 /**
@@ -5788,8 +6114,9 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
         const prefKanji = _jakenFromRomaji(city) || `${city}（日本）`;
         results.push(`${prefKanji}出身。地元で磨いた野球センスがプロの世界で確かに開花した。`);
       } else {
-        const stateJa = _STATE_JA_MAP[state] || `${state}州`;
-        results.push(`${stateJa}${city}出身。地元で磨いた野球センスがプロの世界で確かに開花した。`);
+        const stateJa  = _STATE_JA_MAP[state] || `${state}州`;
+        const cityDisp = _cityEngToKana(city) || city;
+        results.push(`${stateJa}${cityDisp}出身。地元で磨いた野球センスがプロの世界で確かに開花した。`);
       }
       continue;
     }
@@ -5962,8 +6289,9 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
         results.push(`${prefKanji}出身で、生まれ育った地でプロへの夢を育み、メジャーリーグで頂点へと駆け上がった。`);
       } else {
         // 州名・国名を日本語に変換（_STATE_JA_MAP を共用）
-        const stateStr = _STATE_JA_MAP[state] || `${state}州`;
-        results.push(`${stateStr}${city}出身で、生まれ育った地でプロへの夢を育み、メジャーリーグで頂点へと駆け上がった。`);
+        const stateStr  = _STATE_JA_MAP[state] || `${state}州`;
+        const cityDisp2 = _cityEngToKana(city) || city;
+        results.push(`${stateStr}${cityDisp2}出身で、生まれ育った地でプロへの夢を育み、メジャーリーグで頂点へと駆け上がった。`);
       }
       continue;
     }
