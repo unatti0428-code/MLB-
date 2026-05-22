@@ -3850,10 +3850,18 @@ function buildCardType(row, awardsJa) {
     // ⑤ クローザー実績（タイトルなし）
     if (!isStarter && era < 2.20) return '不滅の守護神';
     // ⑥ その他のタイトルがあれば手腕を付けて整形
+    // 「ワールドシリーズ優勝」は「受賞」でなく「制覇」なので別途処理
     if (awardsJa.length) {
-      const a = awardsJa[0];
-      return (a.includes('右腕') || a.includes('左腕') || a.includes('投手'))
-        ? a : `${a}の${hand}`;
+      const hasWsChamp = awardsJa.some(a => a === 'ワールドシリーズ優勝');
+      // WS優勝以外の個人賞を優先して称号化
+      const nonWsAward = awardsJa.find(a => a !== 'ワールドシリーズ優勝');
+      if (nonWsAward) {
+        const a = nonWsAward;
+        return (a.includes('右腕') || a.includes('左腕') || a.includes('投手'))
+          ? a : `${a}の${hand}`;
+      }
+      // WS優勝のみの場合 → 自然な表現で返す
+      if (hasWsChamp) return `WS制覇に貢献した${hand}`;
     }
     // ⑦ タイトルなし → 勝利数＋手腕
     return `${wins}勝${hand}投手`;
