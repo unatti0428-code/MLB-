@@ -3308,6 +3308,12 @@ function awardToJa(award) {
   // ③ 具体的なMVP種別を「リーグMVP」より先にチェック（順序が重要！）
   if (n.includes('world series') && n.includes('mvp'))  return 'ワールドシリーズMVP';
   if (n.includes('championship series'))                return 'リーグ優勝シリーズMVP';
+  // ワールドシリーズ制覇（優勝リング）- MVPと区別して「優勝」として返す
+  if (n.includes('world series') &&
+      (n.includes('championship') || n.includes('champion') ||
+       n.includes('ring') || n.includes('winner') || n.includes('title'))) {
+    return 'ワールドシリーズ優勝';
+  }
   if (n.includes('all-star') || n.includes('allstar'))  return null; // オールスター選出は表示しない
 
   // ④ リーグMVP（シーズンMVPのみ）
@@ -4550,7 +4556,15 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
       const suffix = ldStr ? `${ldStr}とともに、` : '';
       lines.push(`${csStr}はリーグNo.1の鉄壁守備で走者を封じ、${suffix}投手陣の柱として攻守両面でチームを牽引した。`);
     } else if (awardsJaSorted.length > 0) {
-      lines.push(`${awardsJaSorted.slice(0,3).join('・')}を受賞し、リーグ最高の打者として名を刻んだシーズン。`);
+      const _wsChamp    = awardsJaSorted.some(a => a === 'ワールドシリーズ優勝');
+      const _realAwards = awardsJaSorted.filter(a => a !== 'ワールドシリーズ優勝');
+      if (_wsChamp && _realAwards.length > 0) {
+        lines.push(`${_realAwards.slice(0,2).join('・')}を受賞し、ワールドシリーズ制覇も達成した歴史的シーズン。`);
+      } else if (_wsChamp) {
+        lines.push('ワールドシリーズ制覇を達成し、チームの栄光に打撃でも最大の貢献を果たした。');
+      } else {
+        lines.push(`${_realAwards.slice(0,3).join('・')}を受賞し、リーグ最高の打者として名を刻んだシーズン。`);
+      }
     } else if (hr >= 50) {
       lines.push(`${hr}本塁打という圧倒的な長打力でリーグ全投手を震え上がらせた。`);
     } else if (opsN >= 1.10) {
@@ -4573,7 +4587,15 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
       lines.push(`出塁率・長打率ともにリーグ水準を大きく上回り、打線の核として機能したシーズン。`);
     }
   } else if (awardsJaSorted.length > 0) {
-    lines.push(`${awardsJaSorted.slice(0,3).join('・')}を受賞し、リーグ最高の打者として名を刻んだシーズン。`);
+    const _wsChamp2    = awardsJaSorted.some(a => a === 'ワールドシリーズ優勝');
+    const _realAwards2 = awardsJaSorted.filter(a => a !== 'ワールドシリーズ優勝');
+    if (_wsChamp2 && _realAwards2.length > 0) {
+      lines.push(`${_realAwards2.slice(0,2).join('・')}を受賞し、ワールドシリーズ制覇も達成した歴史的シーズン。`);
+    } else if (_wsChamp2) {
+      lines.push('ワールドシリーズ制覇を達成し、チームの栄光に打撃でも最大の貢献を果たした。');
+    } else {
+      lines.push(`${_realAwards2.slice(0,3).join('・')}を受賞し、リーグ最高の打者として名を刻んだシーズン。`);
+    }
   }
 
   // 行3：記録・スタイル（少出場時は省略）
@@ -4891,7 +4913,15 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   // 行2：受賞歴 OR 特筆成績（確実なデータのみ使用・APIリーグ順位は使わない）
   {
     if (awardsJa.length > 0) {
-      lines.push(`${awardsJa.slice(0,3).join('・')}を受賞し、リーグ最高の${isStarter ? '先発' : 'リリーフ'}投手として認められたシーズン。`);
+      const _wsChampP    = awardsJa.some(a => a === 'ワールドシリーズ優勝');
+      const _realAwardsP = awardsJa.filter(a => a !== 'ワールドシリーズ優勝');
+      if (_wsChampP && _realAwardsP.length > 0) {
+        lines.push(`${_realAwardsP.slice(0,2).join('・')}を受賞し、ワールドシリーズ制覇にも貢献した歴史的シーズン。`);
+      } else if (_wsChampP) {
+        lines.push(`ワールドシリーズ制覇を達成し、${isStarter ? '先発' : 'リリーフ'}としてチームの頂点に大きく貢献した。`);
+      } else {
+        lines.push(`${_realAwardsP.slice(0,3).join('・')}を受賞し、リーグ最高の${isStarter ? '先発' : 'リリーフ'}投手として認められたシーズン。`);
+      }
     } else if (k >= 300) {
       lines.push(`${k}奪三振はリーグ記録に迫る歴史的数字で、打者を三振の山に沈め続けた。`);
     } else if (wins >= 25) {
