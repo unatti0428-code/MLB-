@@ -4456,8 +4456,12 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
           if (brefEntry?.xrefId) {
             bbSlug = String(brefEntry.xrefId).trim();
             onProgress(`BB-Ref ID (MLB Stats API): ${bbSlug}`);
+          } else {
+            onProgress(`BB-Ref ID (MLB Stats API): xrefIds取得失敗 (xrefs=${JSON.stringify(xrefs).substring(0,100)})`);
           }
-        } catch {}
+        } catch (e) {
+          onProgress(`BB-Ref ID (MLB Stats API): 例外=${e.message}`);
+        }
 
         // ── Step 2: BB-Ref 検索ページで名前検索 ─────────────────────────────────
         // ※ページ全体のリンクを正規表現で拾うと関係ない選手(サイドバー等)を
@@ -4518,14 +4522,18 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                 `https://www.baseball-reference.com/players/${cand[0]}/${cand}.shtml`,
                 { waitUntil: 'domcontentloaded', timeout: 20000 }
               );
-              const isMatch = await page.evaluate((name) => {
+              const diagInfo = await page.evaluate((name) => {
                 const h1 = document.querySelector('#info h1') || document.querySelector('h1');
-                if (!h1) return false;
-                const t = h1.textContent.trim().toLowerCase();
-                return name.toLowerCase().split(' ').filter(p => p.length > 1).every(p => t.includes(p));
+                const h1Text = h1 ? h1.textContent.trim() : '(h1なし)';
+                const t = h1Text.toLowerCase();
+                const isMatch = name.toLowerCase().split(' ').filter(p => p.length > 1).every(p => t.includes(p));
+                return { h1Text, isMatch, title: document.title.substring(0, 60) };
               }, playerFullName);
-              if (isMatch) { bbSlug = cand; onProgress(`BB-Ref ID (命名規則): ${bbSlug}`); }
-            } catch {}
+              onProgress(`BB-Ref 命名規則候補 ${cand}: h1="${diagInfo.h1Text}" title="${diagInfo.title}" 一致=${diagInfo.isMatch}`);
+              if (diagInfo.isMatch) { bbSlug = cand; onProgress(`BB-Ref ID (命名規則): ${bbSlug}`); }
+            } catch (e) {
+              onProgress(`BB-Ref 命名規則候補 ${cand}: エラー=${e.message}`);
+            }
           }
         }
 
