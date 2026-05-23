@@ -646,6 +646,9 @@ async function mlbSelectPlayer(id, fullName, pos, team) {
   document.getElementById('mlb-search-results').innerHTML = '';
 
   // グローバル状態を更新
+  // 選手切り替え時に年度別受賞キャッシュをリセット（別選手のデータが混入しないよう）
+  Object.keys(_awardsJaByYear).forEach(k => delete _awardsJaByYear[k]);
+  Object.keys(_rankDataByYear).forEach(k => delete _rankDataByYear[k]);
   g_mlbId       = id;
   g_mlbNameEn   = fullName;
   g_mlbPos      = pos;
@@ -896,7 +899,10 @@ function clearMlbSelection() {
   g_mlbHeadshot     = null;
   g_mlbHasRealPhoto = null;
   g_pitchHand       = null;
-  g_batSide     = null;
+  g_batSide         = null;
+  // 年度別受賞・ランクキャッシュも初期化（選手間でのデータ混入を防ぐ）
+  Object.keys(_awardsJaByYear).forEach(k => delete _awardsJaByYear[k]);
+  Object.keys(_rankDataByYear).forEach(k => delete _rankDataByYear[k]);
   document.getElementById('mlb-selected-player').style.display = 'none';
   document.getElementById('mlb-search-input').value = '';
   document.getElementById('mlb-search-results').innerHTML = '';
@@ -3534,8 +3540,9 @@ function _buildCareerCardType(row, awardsJa) {
   const cnt = (keyword) => awardsJa.filter(a => a.includes(keyword)).length;
   const has = (keyword) => awardsJa.some(a => a.includes(keyword));
 
-  const mvpCount  = awardsJa.filter(a => a.includes('MVP')
-    && !a.includes('ワールドシリーズ') && !a.includes('リーグ優勝')).length;
+  // mvpCount はリーグMVP（AL MVP / NL MVP / MVP）のみをカウント
+  // ワールドシリーズMVP・リーグ優勝シリーズMVP・その他MVP賞を除外するため完全一致で判定
+  const mvpCount  = awardsJa.filter(a => a === 'AL MVP' || a === 'NL MVP' || a === 'MVP').length;
   const wsCount   = cnt('ワールドシリーズMVP');
   const cyCount   = cnt('サイ・ヤング');
   const avgCount  = cnt('首位打者');
@@ -3743,7 +3750,8 @@ function buildCardType(row, awardsJa) {
   const ops   = parseFloat(fmtOPS(row[17])) || 0;
   const posJa = _getPrimaryPosJa(row); // DRS優先・g_mlbPosフォールバック
 
-  const mvp  = awardsJa.find(a => a.includes('MVP') && !a.includes('ワールドシリーズ') && !a.includes('リーグ優勝'));
+  // リーグMVP（AL MVP / NL MVP / MVP）のみを称号に使用（WS MVP・CS MVP等は別扱い）
+  const mvp  = awardsJa.find(a => a === 'AL MVP' || a === 'NL MVP' || a === 'MVP');
   const cy   = awardsJa.find(a => a.includes('サイ・ヤング'));
   const ws   = awardsJa.find(a => a.includes('ワールドシリーズMVP'));
   const rook = awardsJa.find(a => a.includes('新人王'));
