@@ -4803,10 +4803,11 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
   }
 
   // 行4：lore OR 軌跡ストーリー OR 特筆補足（lines.length < 4 のときのみ）
+  // ※ nickS はwikiエピソード重複チェックでも使うため if ブロックの外で定義
+  const nickS = getPlayerNickname(g_mlbNameEn);
   if (!isSparsePA && lines.length < 4) {
     const traj  = trajectory || {};
     const loreS = getPlayerLore(g_mlbNameEn);
-    const nickS = getPlayerNickname(g_mlbNameEn);
     // ピーク年・受賞年・覚醒年は異名を優先して挿入
     const isNotableYear = traj.isPeakSeason || traj.isBreakthrough ||
       awardsJa.some(a => a.includes('MVP') || a.includes('サイ・ヤング') || a.includes('新人王') ||
@@ -5173,10 +5174,11 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   }
 
   // 行4：軌跡ストーリー OR 異名 OR lore（lines.length < 4 のときのみ）
+  // ※ nickPS はwikiエピソード重複チェックでも使うため if ブロックの外で定義
+  const nickPS = getPlayerNickname(g_mlbNameEn);
   if (lines.length < 4) {
     const traj   = trajectory || {};
     const lorePS = getPlayerLore(g_mlbNameEn);
-    const nickPS = getPlayerNickname(g_mlbNameEn);
     // ピーク年・受賞年は異名を優先して挿入
     const isNotableYearP = traj.isPeakSeason || traj.isBreakthrough ||
       awardsJa.some(a => a.includes('サイ・ヤング') || a.includes('MVP') || a.includes('新人王') ||
