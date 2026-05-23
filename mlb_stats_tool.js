@@ -4790,6 +4790,7 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                         CF: 0.06, LF: 0.052, RF: 0.052, OF: 0.052,
                       };
                       const BB_IF_POS = ['SS', '2B', '3B', '1B'];
+                      const BB_OF_POS = ['LF', 'CF', 'RF', 'OF'];
                       const rCoeff  = BB_RANGE_COEFF[pos] ?? 0.08;
                       // RF/9 は d.rf9 優先、なければ po+a から算出
                       const rf9use  = (rf9 > 0) ? rf9
@@ -4797,17 +4798,25 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                           ? (parseInt(d.po) + parseInt(d.a)) / innDec * 9 : 0;
                       const rangeDRS = (lgRf9 > 0 && rf9use > 0)
                         ? (rf9use - lgRf9) * innDec / 9 * rCoeff : 0;
-                      // ② ErrDRS: Fld%差×Chances×0.80（正符号: 優秀な守備手 → プラス）
-                      //   0.80 runs/error = リニアウェイト物理値。Range係数を0.04に下げることで整合
+                      // ② ErrDRS: Fld%差×Chances×1.60（正符号: 優秀な守備手 → プラス）
                       const errDRS  = (ch > 0 && lgFld > 0 && fld > 0)
                         ? (fld - lgFld) * ch * 1.60 : 0;
+                      // ③ 内野: GDP / 外野: ARM（補殺数ベース送球評価）
                       const dpVal   = parseInt(d.dp) || 0;
                       const gdpDRS  = BB_IF_POS.includes(pos) && dpVal > 0 ? dpVal * 0.024 : 0;
+                      // ARM: 実補殺数 vs ポジション別リーグ平均補殺/9回 の差 × 1.6 runs/補殺
+                      // リーグ平均補殺/9回（1980-2020年代近似値）
+                      const BB_LG_ARM_PER9 = { LF: 0.047, CF: 0.033, RF: 0.060, OF: 0.047 };
+                      const assistsVal  = parseInt(d.a) || 0;
+                      const lgArmPer9   = BB_LG_ARM_PER9[pos] ?? 0;
+                      const armDRS      = BB_OF_POS.includes(pos) && innDec > 0 && lgArmPer9 > 0
+                        ? (assistsVal - lgArmPer9 * innDec / 9) * 1.6 : 0;
                       const rtotVal = parseFloat(d.rtot) || 0;
                       const tzDRS   = rtotVal * 0.44;
-                      drsVal = Math.round(rangeDRS + errDRS + gdpDRS + tzDRS);
+                      drsVal = Math.round(rangeDRS + errDRS + gdpDRS + armDRS + tzDRS);
                       // ── デバッグ: DRS内訳を出力（診断用） ─────────────────────────
-                      onProgress(`[DRS診断] ${yr} ${pos}: rf9=${rf9use.toFixed(2)} lgRf9=${lgRf9.toFixed(2)} fld=${fld} lgFld=${lgFld} ch=${ch} dp=${dpVal} rtot=${rtotVal} → Range=${rangeDRS.toFixed(1)} Err=${errDRS.toFixed(1)} GDP=${gdpDRS.toFixed(1)} TZ=${tzDRS.toFixed(1)} 合計=${drsVal}`);
+                      const armDbg = BB_OF_POS.includes(pos) ? ` ARM=${armDRS.toFixed(1)}(a=${assistsVal})` : ` GDP=${gdpDRS.toFixed(1)}`;
+                      onProgress(`[DRS診断] ${yr} ${pos}: rf9=${rf9use.toFixed(2)} lgRf9=${lgRf9.toFixed(2)} fld=${fld} lgFld=${lgFld} ch=${ch} rtot=${rtotVal} → Range=${rangeDRS.toFixed(1)} Err=${errDRS.toFixed(1)}${armDbg} TZ=${tzDRS.toFixed(1)} 合計=${drsVal}`);
                     }
                     fieldingByYear[yr][pos] = { inn: innFmt, drs: drsVal, g: parseInt(d.g) || 0 };
                   }
@@ -5681,6 +5690,9 @@ async function batRunCreateJob(jobId, params) {
       };
       // ③ GDP対象ポジション（内野のみ）
       const GDP_POSITIONS = ['SS', '2B', '3B', '1B'];
+      // ③' ARM対象ポジション（外野のみ）とリーグ平均補殺/9回
+      const OF_POSITIONS  = ['LF', 'CF', 'RF', 'OF'];
+      const LG_ARM_PER9   = { LF: 0.047, CF: 0.033, RF: 0.060, OF: 0.047 };
 
       const PRE2003 = years.filter(y => parseInt(y) < 2003);
       for (const yr of PRE2003) {
@@ -5747,15 +5759,20 @@ async function batRunCreateJob(jobId, params) {
               ? (fldNum - lgFld) * ch * 1.60
               : 0;
 
-            // ③ GDP Runs Saved（内野のみ）
+            // ③ 内野: GDP / 外野: ARM（補殺数ベース送球評価）
             const gdpDRS = (GDP_POSITIONS.includes(pos) && d.dp != null && d.dp > 0)
               ? d.dp * 0.024
+              : 0;
+            const assistsA  = d.a ?? 0;
+            const lgArmP9   = LG_ARM_PER9[pos] ?? 0;
+            const armDRS    = (OF_POSITIONS.includes(pos) && innDec > 0 && lgArmP9 > 0)
+              ? (assistsA - lgArmP9 * innDec / 9) * 1.6
               : 0;
 
             // ④ TZ Adjustment: Rtot未取得のため0
             const tzDRS = 0;
 
-            const rawDrs = Math.round(rangeDRS + errDRS + gdpDRS + tzDRS);
+            const rawDrs = Math.round(rangeDRS + errDRS + gdpDRS + armDRS + tzDRS);
             drs = innDec < 700 ? Math.max(-20, Math.min(20, rawDrs)) : rawDrs;
           }
 
