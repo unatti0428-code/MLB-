@@ -4794,10 +4794,13 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                           ? (parseInt(d.po) + parseInt(d.a)) / innDec * 9 : 0;
                       const rangeDRS = (lgRf9 > 0 && rf9use > 0)
                         ? (rf9use - lgRf9) * innDec / 9 * rCoeff : 0;
+                      // ② ErrDRS: Fld%差×Chances×0.20（正符号: 優秀な守備手 → プラス）
+                      //   係数0.20は符号修正後のキャリブレーション値（旧0.80×-1の代替）
                       const errDRS  = (ch > 0 && lgFld > 0 && fld > 0)
-                        ? (fld - lgFld) * ch * 0.8 * -1 : 0;
+                        ? (fld - lgFld) * ch * 0.20 : 0;
                       const dpVal   = parseInt(d.dp) || 0;
-                      const gdpDRS  = BB_IF_POS.includes(pos) && dpVal > 0 ? dpVal * 0.131 : 0;
+                      // ③ GDP: DP×0.05（旧0.131から再キャリブレーション）
+                      const gdpDRS  = BB_IF_POS.includes(pos) && dpVal > 0 ? dpVal * 0.05 : 0;
                       const rtotVal = parseFloat(d.rtot) || 0;
                       const tzDRS   = rtotVal * 0.22;
                       drsVal = Math.round(rangeDRS + errDRS + gdpDRS + tzDRS);
@@ -5731,17 +5734,19 @@ async function batRunCreateJob(jobId, params) {
               ? (rf9 - lgRf9) * innDec / 9 * rCoeff
               : 0;
 
-            // ② Error Penalty（守備率差 × 機会 × 0.8 × -1）
+            // ② Error（守備率差 × 機会 × 0.20、正符号: 優秀な守備手 → プラス）
+            //   旧式は × -1 で符号が逆（守備名手ほど減点）だったため修正。
+            //   係数0.20は符号修正後のキャリブレーション値（旧0.80×-1の代替）
             const fldNum  = d.fld ? parseFloat(String(d.fld)) : 0;
             const lgFld   = LG_FLD[pos] ?? 0;
             const ch      = d.ch ?? 0;
             const errDRS  = (ch > 0 && lgFld > 0 && fldNum > 0)
-              ? (fldNum - lgFld) * ch * 0.8 * -1
+              ? (fldNum - lgFld) * ch * 0.20
               : 0;
 
-            // ③ GDP Runs Saved（内野のみ。DP × 0.131 ≈ (0.625 - 0.42) × DP×1.6 × 0.4）
+            // ③ GDP Runs Saved（内野のみ。DP × 0.05、旧0.131から再キャリブレーション）
             const gdpDRS = (GDP_POSITIONS.includes(pos) && d.dp != null && d.dp > 0)
-              ? d.dp * 0.131
+              ? d.dp * 0.05
               : 0;
 
             // ④ TZ Adjustment: Rtot未取得のため0
