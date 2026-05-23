@@ -4782,9 +4782,12 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                       // ② ErrPen  : (Fld% - lgFld%) × Chances × 0.8 × -1
                       // ③ GDP     : DP × 0.131（内野のみ）
                       // ④ TZ Adj  : Rtot × 0.22（Baseball Reference Total Zone Rating）
+                      // Range係数: Error係数0.8（正符号）との整合でキャリブレーション済み
+                      // SS/2B: 0.10→0.04, 3B: 0.08→0.032, 1B: 0.05→0.02
+                      // CF: 0.075→0.03, LF/RF: 0.065→0.026
                       const BB_RANGE_COEFF = {
-                        SS: 0.10, '2B': 0.10, '3B': 0.08, '1B': 0.05,
-                        CF: 0.075, LF: 0.065, RF: 0.065, OF: 0.065,
+                        SS: 0.04, '2B': 0.04, '3B': 0.032, '1B': 0.02,
+                        CF: 0.03, LF: 0.026, RF: 0.026, OF: 0.026,
                       };
                       const BB_IF_POS = ['SS', '2B', '3B', '1B'];
                       const rCoeff  = BB_RANGE_COEFF[pos] ?? 0.08;
@@ -4794,13 +4797,13 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                           ? (parseInt(d.po) + parseInt(d.a)) / innDec * 9 : 0;
                       const rangeDRS = (lgRf9 > 0 && rf9use > 0)
                         ? (rf9use - lgRf9) * innDec / 9 * rCoeff : 0;
-                      // ② ErrDRS: Fld%差×Chances×0.20（正符号: 優秀な守備手 → プラス）
-                      //   係数0.20は符号修正後のキャリブレーション値（旧0.80×-1の代替）
+                      // ② ErrDRS: Fld%差×Chances×0.80（正符号: 優秀な守備手 → プラス）
+                      //   0.80 runs/error = リニアウェイト物理値。Range係数を0.04に下げることで整合
                       const errDRS  = (ch > 0 && lgFld > 0 && fld > 0)
-                        ? (fld - lgFld) * ch * 0.20 : 0;
+                        ? (fld - lgFld) * ch * 0.80 : 0;
                       const dpVal   = parseInt(d.dp) || 0;
-                      // ③ GDP: DP×0.05（旧0.131から再キャリブレーション）
-                      const gdpDRS  = BB_IF_POS.includes(pos) && dpVal > 0 ? dpVal * 0.05 : 0;
+                      // ③ GDP: DP×0.012（Range/Error係数調整後のキャリブレーション値）
+                      const gdpDRS  = BB_IF_POS.includes(pos) && dpVal > 0 ? dpVal * 0.012 : 0;
                       const rtotVal = parseFloat(d.rtot) || 0;
                       const tzDRS   = rtotVal * 0.22;
                       drsVal = Math.round(rangeDRS + errDRS + gdpDRS + tzDRS);
@@ -5671,9 +5674,11 @@ async function batRunCreateJob(jobId, params) {
       // ① Range+ 係数: drs_analysis.py 実測校正値（Total Zone Rtot との相関最適化済み）
       //    SS/2B=0.10, 3B=0.08（反応型で範囲係数低め）, 1B=0.05（ストレッチ主体）
       //    CF=0.075（外野中央は広いがランナー阻止換算を除く）, LF/RF/OF=0.065
+      // Range係数: Error係数0.8（正符号）との整合でキャリブレーション済み
+      // SS/2B: 0.10→0.04, 3B: 0.08→0.032, 1B: 0.05→0.02, CF: 0.075→0.03, LF/RF: 0.065→0.026
       const PRE_RANGE_COEFF = {
-        SS: 0.10, '2B': 0.10, '3B': 0.08, '1B': 0.05,
-        CF: 0.075, LF: 0.065, RF: 0.065, OF: 0.065,
+        SS: 0.04, '2B': 0.04, '3B': 0.032, '1B': 0.02,
+        CF: 0.03, LF: 0.026, RF: 0.026, OF: 0.026,
       };
       // ③ GDP対象ポジション（内野のみ）
       const GDP_POSITIONS = ['SS', '2B', '3B', '1B'];
@@ -5734,19 +5739,18 @@ async function batRunCreateJob(jobId, params) {
               ? (rf9 - lgRf9) * innDec / 9 * rCoeff
               : 0;
 
-            // ② Error（守備率差 × 機会 × 0.20、正符号: 優秀な守備手 → プラス）
-            //   旧式は × -1 で符号が逆（守備名手ほど減点）だったため修正。
-            //   係数0.20は符号修正後のキャリブレーション値（旧0.80×-1の代替）
+            // ② Error（守備率差 × 機会 × 0.80、正符号: 優秀な守備手 → プラス）
+            //   0.80 runs/error = リニアウェイト物理値。Range係数0.04との整合でキャリブレーション済み
             const fldNum  = d.fld ? parseFloat(String(d.fld)) : 0;
             const lgFld   = LG_FLD[pos] ?? 0;
             const ch      = d.ch ?? 0;
             const errDRS  = (ch > 0 && lgFld > 0 && fldNum > 0)
-              ? (fldNum - lgFld) * ch * 0.20
+              ? (fldNum - lgFld) * ch * 0.80
               : 0;
 
-            // ③ GDP Runs Saved（内野のみ。DP × 0.05、旧0.131から再キャリブレーション）
+            // ③ GDP Runs Saved（内野のみ。DP × 0.012、Range/Error調整後キャリブレーション）
             const gdpDRS = (GDP_POSITIONS.includes(pos) && d.dp != null && d.dp > 0)
-              ? d.dp * 0.05
+              ? d.dp * 0.012
               : 0;
 
             // ④ TZ Adjustment: Rtot未取得のため0
