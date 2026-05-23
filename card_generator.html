@@ -3426,6 +3426,47 @@ function awardToJa(award) {
     return 'ベースボール・アメリカ最優秀選手';
   if (n.includes('baseball america') && n.includes('pitcher'))
     return 'ベースボール・アメリカ最優秀投手';
+
+  // ⑩-c MLB.com Awards（GIBBY / Esurance Awards）ファン投票による年間表彰
+  // 例: "Performance of the Year - MLB.com Awards" → 年間ベスト・パフォーマンス賞(MLB.com)
+  // ※ MLB.com固有の賞名パターン、または isMlbCom フラグが真の場合に適用
+  {
+    const isMlbCom = n.includes('mlb.com') || n.includes('esurance') || n.includes('gibby');
+    if (isMlbCom || n.includes('performance of the year') ||
+        n.includes('web gem') || n.includes('everyday hero') ||
+        n.includes('defensive play of the year')) {
+      if (n.includes('performance of the year'))
+        return '年間ベスト・パフォーマンス賞(MLB.com)';
+      if (n.includes('defensive play of the year'))
+        return '年間ベスト守備プレー賞(MLB.com)';
+      if (n.includes('play of the year'))
+        return '年間ベスト・プレー賞(MLB.com)';
+      if (n.includes('moment of the year') || n.includes('best moment'))
+        return '年間ベスト・モーメント賞(MLB.com)';
+      if (n.includes('social media') || n.includes('milestone'))
+        return 'SNSマイルストーン賞(MLB.com)';
+      if (n.includes('web gem'))
+        return 'ウェブジェム賞(MLB.com)';
+      if (n.includes('breakout'))
+        return 'ブレイクアウト選手賞(MLB.com)';
+      if (n.includes('wild card'))
+        return 'ワイルドカード賞(MLB.com)';
+      if (n.includes('fan favorite'))
+        return 'ファン投票最優秀賞(MLB.com)';
+      if (n.includes('everyday hero') || n.includes('every day hero'))
+        return 'エブリデー・ヒーロー賞(MLB.com)';
+      if (n.includes('pitcher of the year') || n.includes('outstanding pitcher'))
+        return lg ? `${lg}最優秀投手賞(MLB.com)` : '最優秀投手賞(MLB.com)';
+      if (n.includes('offensive player') || (n.includes('offensive') && n.includes('year')))
+        return '年間最優秀攻撃選手賞(MLB.com)';
+      if (n.includes('player of the year') || n.includes('outstanding player'))
+        return lg ? `${lg}最優秀選手賞(MLB.com)` : '最優秀選手賞(MLB.com)';
+      if (n.includes('rookie'))       return '最優秀新人賞(MLB.com)';
+      if (n.includes('comeback'))     return 'カムバック賞(MLB.com)';
+      if (isMlbCom)                   return 'MLB.com年間特別賞'; // 上記以外の未分類MLB.com賞
+    }
+  }
+
   // ⑩-b チーム固有の年間賞（チーム名付き）
   // 例: "Brewers Pitcher of the Year" → "ブルワーズ年間最優秀投手賞"
   //     "Yankees Player of the Year"  → "ヤンキース年間最優秀選手賞"
@@ -3473,8 +3514,9 @@ function awardToJa(award) {
     return 'ALL-MLBチーム';
   }
 
-  // ⑫ 未変換は元の英語名をそのまま返す
-  return award.name || award.id || '';
+  // ⑫ 未変換・不明な賞は非表示（英語のまま表示しない）
+  // → 日本語訳が用意されていない賞を英語でカードに出さないためにnullを返す
+  return null;
 }
 
 // ── 通算カード専用の称号ロジック ──────────────────────────────
