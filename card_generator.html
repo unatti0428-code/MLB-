@@ -4188,8 +4188,9 @@ function getLeagueInfo(teamCode) {
 const _AWARD_ABBR_LIST = [
   [/ワールドシリーズMVP/,      'WSMVP'],   // WS MVP（先にマッチさせる）
   [/リーグ優勝シリーズMVP/,    'LCSMVP'],  // LCS MVP
-  // リーグMVP のみ：'MVP' / 'AL MVP' / 'NL MVP' / '最優秀選手' に限定
-  [/^(AL |NL )?MVP$|最優秀選手/, 'MVP'],
+  // リーグMVP のみ：'AL MVP' / 'NL MVP' / 'MVP' の完全一致に限定
+  // ※ '最優秀選手' を含む賞（Players Choice賞・MLB.com賞等）はリーグMVPとは別物なので除外
+  [/^(AL |NL )?MVP$/, 'MVP'],
   [/サイ・ヤング/,              'CY'],
   [/新人王/,                    'ROY'],
   [/首位打者/,                  'AVG'],
