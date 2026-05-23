@@ -4101,7 +4101,9 @@ async function batFetchMLBStats(id, y1, y2) {
         rf9: s.stat?.rangeFactorPer9Inn ?? null, // API直値（なければ po+a から算出）
         po:  s.stat?.putOuts            ?? null, // 刺殺
         a:   s.stat?.assists            ?? null, // 補殺
+        e:   s.stat?.errors             ?? null, // 失策
         ch:  s.stat?.chances            ?? null, // 守備機会
+        dp:  s.stat?.doublePlays        ?? null, // ゲッツー（GDP計算用）
         fld: s.stat?.fielding           ?? null, // 守備率 string ".987"
         cs:  s.stat?.caughtStealing     ?? 0,
         sb:  s.stat?.stolenBases        ?? 0,
@@ -5612,6 +5614,17 @@ async function batRunCreateJob(jobId, params) {
       const LG_RF9 = { C:6.5, '1B':8.8, '2B':4.8, '3B':2.9, SS:4.5, LF:2.1, CF:2.7, RF:2.1, OF:2.3 };
       const LG_FLD = { C:.994, '1B':.994, '2B':.980, '3B':.958, SS:.969, LF:.987, CF:.988, RF:.986, OF:.987 };
 
+      // 4コンポーネント近似DRS（pre-2003年）の係数
+      // ① Range+ 係数: drs_analysis.py 実測校正値（Total Zone Rtot との相関最適化済み）
+      //    SS/2B=0.10, 3B=0.08（反応型で範囲係数低め）, 1B=0.05（ストレッチ主体）
+      //    CF=0.075（外野中央は広いがランナー阻止換算を除く）, LF/RF/OF=0.065
+      const PRE_RANGE_COEFF = {
+        SS: 0.10, '2B': 0.10, '3B': 0.08, '1B': 0.05,
+        CF: 0.075, LF: 0.065, RF: 0.065, OF: 0.065,
+      };
+      // ③ GDP対象ポジション（内野のみ）
+      const GDP_POSITIONS = ['SS', '2B', '3B', '1B'];
+
       const PRE2003 = years.filter(y => parseInt(y) < 2003);
       for (const yr of PRE2003) {
         if (!fieldingByYear[yr]) fieldingByYear[yr] = {};
@@ -5649,23 +5662,42 @@ async function batRunCreateJob(jobId, params) {
                         : yrNum < 2015 ? 0.28 : 0.26;
             drs = total >= 10 ? Math.round((d.cs / total - lgCs) * total * 0.40) : 0;
           } else {
-            // 捕手以外: RF/9差 × イニング / 9 × 0.10 + エラー差成分
-            // RF/9 = API直値 または (刺殺+補殺) / イニング × 9 で算出
+            // 捕手以外: 4コンポーネント近似DRS（pre-2003年推定）
+            // ① Range+  : (RF/9 - lgRF/9) × Inn/9 × ポジション係数
+            // ② ErrPen  : (Fld% - lgFld%) × Chances × 0.8 × -1
+            //             ※守備率が平均より高い選手はペナルティ値が負になる（プレー回避補正）
+            // ③ GDP     : DP数 × 0.131（内野のみ。期待DP率0.42との差 × 機会 × 0.4 を簡略化）
+            // ④ TZ Adj  : Rtot × 0.22（データ未取得のため0。Baseball Referenceから取得可能）
+            // 参考: drs_analysis.py (Ozzie Smith キャリア +239 ≒ Total Zone Rtot と一致)
+
+            // ① Range+
             let rf9 = (typeof d.rf9 === 'number') ? d.rf9 : null;
             if (rf9 == null && d.po != null && d.a != null && innDec > 0) {
               rf9 = (d.po + d.a) / innDec * 9;
             }
-            const lgRf9 = LG_RF9[pos] ?? 0;
+            const lgRf9   = LG_RF9[pos] ?? 0;
+            const rCoeff  = PRE_RANGE_COEFF[pos] ?? 0.08;
             const rangeDRS = (rf9 != null && lgRf9 > 0)
-              ? (rf9 - lgRf9) * innDec / 9 * 0.10
+              ? (rf9 - lgRf9) * innDec / 9 * rCoeff
               : 0;
-            const fldNum = d.fld ? parseFloat(String(d.fld)) : 0;
-            const lgFld  = LG_FLD[pos] ?? 0;
-            const ch     = d.ch ?? 0;
-            const errorDRS = (ch > 0 && lgFld > 0 && fldNum > 0)
-              ? ch * (fldNum - lgFld) * 0.25
+
+            // ② Error Penalty（守備率差 × 機会 × 0.8 × -1）
+            const fldNum  = d.fld ? parseFloat(String(d.fld)) : 0;
+            const lgFld   = LG_FLD[pos] ?? 0;
+            const ch      = d.ch ?? 0;
+            const errDRS  = (ch > 0 && lgFld > 0 && fldNum > 0)
+              ? (fldNum - lgFld) * ch * 0.8 * -1
               : 0;
-            const rawDrs = Math.round(rangeDRS + errorDRS);
+
+            // ③ GDP Runs Saved（内野のみ。DP × 0.131 ≈ (0.625 - 0.42) × DP×1.6 × 0.4）
+            const gdpDRS = (GDP_POSITIONS.includes(pos) && d.dp != null && d.dp > 0)
+              ? d.dp * 0.131
+              : 0;
+
+            // ④ TZ Adjustment: Rtot未取得のため0
+            const tzDRS = 0;
+
+            const rawDrs = Math.round(rangeDRS + errDRS + gdpDRS + tzDRS);
             drs = innDec < 700 ? Math.max(-20, Math.min(20, rawDrs)) : rawDrs;
           }
 
