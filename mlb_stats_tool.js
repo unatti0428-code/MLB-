@@ -4786,8 +4786,8 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                       // SS/2B: 0.10→0.04, 3B: 0.08→0.032, 1B: 0.05→0.02
                       // CF: 0.075→0.03, LF/RF: 0.065→0.026
                       const BB_RANGE_COEFF = {
-                        SS: 0.04, '2B': 0.04, '3B': 0.032, '1B': 0.02,
-                        CF: 0.03, LF: 0.026, RF: 0.026, OF: 0.026,
+                        SS: 0.08, '2B': 0.08, '3B': 0.064, '1B': 0.04,
+                        CF: 0.06, LF: 0.052, RF: 0.052, OF: 0.052,
                       };
                       const BB_IF_POS = ['SS', '2B', '3B', '1B'];
                       const rCoeff  = BB_RANGE_COEFF[pos] ?? 0.08;
@@ -4800,12 +4800,11 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                       // ② ErrDRS: Fld%差×Chances×0.80（正符号: 優秀な守備手 → プラス）
                       //   0.80 runs/error = リニアウェイト物理値。Range係数を0.04に下げることで整合
                       const errDRS  = (ch > 0 && lgFld > 0 && fld > 0)
-                        ? (fld - lgFld) * ch * 0.80 : 0;
+                        ? (fld - lgFld) * ch * 1.60 : 0;
                       const dpVal   = parseInt(d.dp) || 0;
-                      // ③ GDP: DP×0.012（Range/Error係数調整後のキャリブレーション値）
-                      const gdpDRS  = BB_IF_POS.includes(pos) && dpVal > 0 ? dpVal * 0.012 : 0;
+                      const gdpDRS  = BB_IF_POS.includes(pos) && dpVal > 0 ? dpVal * 0.024 : 0;
                       const rtotVal = parseFloat(d.rtot) || 0;
-                      const tzDRS   = rtotVal * 0.22;
+                      const tzDRS   = rtotVal * 0.44;
                       drsVal = Math.round(rangeDRS + errDRS + gdpDRS + tzDRS);
                       // ── デバッグ: DRS内訳を出力（診断用） ─────────────────────────
                       onProgress(`[DRS診断] ${yr} ${pos}: rf9=${rf9use.toFixed(2)} lgRf9=${lgRf9.toFixed(2)} fld=${fld} lgFld=${lgFld} ch=${ch} dp=${dpVal} rtot=${rtotVal} → Range=${rangeDRS.toFixed(1)} Err=${errDRS.toFixed(1)} GDP=${gdpDRS.toFixed(1)} TZ=${tzDRS.toFixed(1)} 合計=${drsVal}`);
@@ -5677,8 +5676,8 @@ async function batRunCreateJob(jobId, params) {
       // Range係数: Error係数0.8（正符号）との整合でキャリブレーション済み
       // SS/2B: 0.10→0.04, 3B: 0.08→0.032, 1B: 0.05→0.02, CF: 0.075→0.03, LF/RF: 0.065→0.026
       const PRE_RANGE_COEFF = {
-        SS: 0.04, '2B': 0.04, '3B': 0.032, '1B': 0.02,
-        CF: 0.03, LF: 0.026, RF: 0.026, OF: 0.026,
+        SS: 0.08, '2B': 0.08, '3B': 0.064, '1B': 0.04,
+        CF: 0.06, LF: 0.052, RF: 0.052, OF: 0.052,
       };
       // ③ GDP対象ポジション（内野のみ）
       const GDP_POSITIONS = ['SS', '2B', '3B', '1B'];
@@ -5745,12 +5744,12 @@ async function batRunCreateJob(jobId, params) {
             const lgFld   = LG_FLD[pos] ?? 0;
             const ch      = d.ch ?? 0;
             const errDRS  = (ch > 0 && lgFld > 0 && fldNum > 0)
-              ? (fldNum - lgFld) * ch * 0.80
+              ? (fldNum - lgFld) * ch * 1.60
               : 0;
 
-            // ③ GDP Runs Saved（内野のみ。DP × 0.012、Range/Error調整後キャリブレーション）
+            // ③ GDP Runs Saved（内野のみ）
             const gdpDRS = (GDP_POSITIONS.includes(pos) && d.dp != null && d.dp > 0)
-              ? d.dp * 0.012
+              ? d.dp * 0.024
               : 0;
 
             // ④ TZ Adjustment: Rtot未取得のため0
