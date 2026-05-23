@@ -464,6 +464,7 @@ let g_isPeakRow         = false; // ピーク年フラグ（テーマ再適用�
 let g_lastCardExtras    = null; // 最後のupdateCardExtrasパラメータ（テーマ再適用用）
 let g_lastRetsuden      = '';   // 最後の列伝テキスト（テーマ再適用用）
 let g_wikiCharacteristics = null; // Wikipedia「選手としての特徴」セクション解析結果
+let _careerRetsudenRebuildParams = null; // 通算列伝の再構築用パラメータ（CareerRankAPI完了後に率系順位を更新）
 
 // MLB.com 連携（省略可）
 let g_mlbId       = null;   // MLB選手ID
@@ -4574,19 +4575,42 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
       lines.push(`通算出塁率${obp}の選球眼でチームの攻撃をリードし、長年にわたり塁上で存在感を示し続けた。`);
     }
 
-    // 行3: MLB歴代順位（最も上位の記録を1件のみ・具体的な順位を明記）
+    // 行3: MLB歴代順位（最も上位の記録を1件のみ）
+    // 累計系(hr/rbi/sb): ハードコード表で確定表記
+    // 率系(ops/avg): APIで規定打席確認済み→確定表記、未確認（暫定）→断定しない表記
+    // ※ topText は行4（!topText 判定）でも参照するためブロック外に宣言する
+    const _apiOpsRank = _careerRankData['onBasePlusSlugging']?.rank ?? null;
+    const _apiAvgRank = _careerRankData['battingAverage']?.rank ?? null;
     const rankChecks = [
-      { cat: 'hr',  val: hr,   ok: true,          fmt: r => `通算${hr}本塁打はMLB${_rankLabel(r)}の長打力で、球史に刻まれたホームランレジェンド。` },
-      { cat: 'rbi', val: rbi,  ok: true,          fmt: r => `通算${rbi}打点はMLB${_rankLabel(r)}の打点記録であり、勝負強さをキャリア通じて証明した。` },
-      { cat: 'sb',  val: sb,   ok: true,          fmt: r => `通算${sb}盗塁はMLB${_rankLabel(r)}の快足伝説で、機動力野球の象徴として球史に輝く。` },
-      { cat: 'ops', val: opsN, ok: games >= 500,  fmt: r => `通算OPS${ops}はMLB${_rankLabel(r)}の最高峰打撃力であり、時代を超えた打者の格を示す数字。` },
-      { cat: 'avg', val: avgN, ok: games >= 500,  fmt: r => `通算打率${avg}はMLB${_rankLabel(r)}の確実性で、どの時代でも首位打者級の精度を誇った。` },
+      { ok: true,
+        getR:    () => _mlbCareerRank('hr', hr),
+        fmt:      r  => `通算${hr}本塁打はMLB${_rankLabel(r)}の長打力で、球史に刻まれたホームランレジェンド。` },
+      { ok: true,
+        getR:    () => _mlbCareerRank('rbi', rbi),
+        fmt:      r  => `通算${rbi}打点はMLB${_rankLabel(r)}の打点記録であり、勝負強さをキャリア通じて証明した。` },
+      { ok: true,
+        getR:    () => _mlbCareerRank('sb', sb),
+        fmt:      r  => `通算${sb}盗塁はMLB${_rankLabel(r)}の快足伝説で、機動力野球の象徴として球史に輝く。` },
+      { ok: games >= 500,
+        getR:    () => _apiOpsRank !== null ? _apiOpsRank : _mlbCareerRank('ops', opsN),
+        isSoft:  () => _apiOpsRank === null,
+        fmt: (r, soft) => soft
+          ? `通算OPS${ops}はMLB歴代${r}位に匹敵する最高峰打撃力で、時代を超えた打者の格を示す数字。`
+          : `通算OPS${ops}はMLB${_rankLabel(r)}の最高峰打撃力であり、時代を超えた打者の格を示す数字。` },
+      { ok: games >= 500,
+        getR:    () => _apiAvgRank !== null ? _apiAvgRank : _mlbCareerRank('avg', avgN),
+        isSoft:  () => _apiAvgRank === null,
+        fmt: (r, soft) => soft
+          ? `通算打率${avg}はMLB歴代${r}位に迫る確実性で、どの時代でも首位打者級の精度を誇った。`
+          : `通算打率${avg}はMLB${_rankLabel(r)}の確実性で、どの時代でも首位打者級の精度を誇った。` },
     ];
     let topRank = null, topText = null;
     for (const c of rankChecks) {
       if (!c.ok) continue;
-      const r = _mlbCareerRank(c.cat, c.val);
-      if (r && (!topRank || r < topRank)) { topRank = r; topText = c.fmt(r); }
+      const r = c.getR();
+      if (!r || (topRank && r >= topRank)) continue;
+      topRank = r;
+      topText = c.fmt(r, c.isSoft ? c.isSoft() : false);
     }
     if (topText) lines.push(topText);
 
@@ -5348,6 +5372,15 @@ function _parseJaWikiCharacteristics(wikitext, isPitcher) {
   // → 実用上は「不完全文はスキップ」とする（断片の混入を防ぐ）
   const sentences = rawSentences.filter(s => isComplete(s) || s.length > 30);
 
+  // ── 引用抽出用フィルター ─────────────────────────────────────
+  // 文頭が前の文脈に依存する断片接続詞で始まる文は、単独では意味が成立しないため除外
+  const _isFragmentStart = (s) =>
+    /^(?:その際[、。]|その時[、。]|それ(?:を見て|により|によって|に対し|を聞いて|を受けて)|この(?:とき|際|後)[、。]|ここで[、。]|そこで[、。]|このため[、。]|これ(?:に対し|を受けて|により)|ところが[、。]|しかし[、。]|だが[、。]|なお[、。]|ただし[、。])/.test(s);
+
+  // 引用「」内のテキストが選手の能力を否定・矮小化する内容でないかチェック
+  const _isNegativeQuote = (quoteText) =>
+    /ならみんなできる|でもできる|にすぎない|に過ぎない|大したことは?ない|程度のもの|できない|ではない|じゃない|たいしたことない/.test(quoteText);
+
   for (const s of sentences) {
     // 断片チェック：文末が不完全かつ短い（30字未満）はスキップ
     if (!isComplete(s) && s.length <= 30) continue;
@@ -5361,26 +5394,39 @@ function _parseJaWikiCharacteristics(wikitext, isPitcher) {
       result.framing = s;
     }
     // 守備全般（強肩・フレーミング以外）
-    if (!result.defense && /守備|リード|配球|ブロッキング|ゴールドグラブ|ワイルドピッチ防止|捕球/.test(s)
+    // ※ 断片文・文脈依存文は除外
+    if (!result.defense && !_isFragmentStart(s)
+        && /守備|リード|配球|ブロッキング|ゴールドグラブ|ワイルドピッチ防止|捕球/.test(s)
         && !(result.armStrength && result.armStrength.includes(s.slice(0,8)))
         && !(result.framing    && result.framing.includes(s.slice(0,8)))) {
       result.defense = s;
     }
     // 打撃（野手用）
-    if (!result.batting && !isPitcher && /打撃|スイング|バッティング|打法|打率|コンタクト|パワー|長打/.test(s)) {
+    // ※ 断片文・文脈依存文は除外
+    if (!result.batting && !isPitcher && !_isFragmentStart(s)
+        && /打撃|スイング|バッティング|打法|打率|コンタクト|パワー|長打/.test(s)) {
       result.batting = s;
     }
     // 投球（投手用）
-    if (!result.pitching && isPitcher && /球種|球速|フォーム|投法|スライダー|フォーク|カーブ|チェンジアップ|速球|制球/.test(s)) {
+    // ※ 断片文・文脈依存文は除外
+    if (!result.pitching && isPitcher && !_isFragmentStart(s)
+        && /球種|球速|フォーム|投法|スライダー|フォーク|カーブ|チェンジアップ|速球|制球/.test(s)) {
       result.pitching = s;
     }
     // 引用（「〜」と語る / と評する 等）
     // ※「～」が文中に含まれ、かつ「と語った」等で終わる完全文のみ採用
+    // ※ 前の文脈に依存する断片文（「その際」「それを見て」等で始まる文）は除外
+    // ※ 引用内容が選手を否定・矮小化するものは除外
     if (result.quotes.length < 3
         && /「[^」]{10,}」/.test(s)
         && /と語|と述べ|と話|とコメント|と評|と称|と言/.test(s)
-        && isComplete(s)) {
-      result.quotes.push(s);
+        && isComplete(s)
+        && !_isFragmentStart(s)) {
+      const quoteText = (s.match(/「([^」]+)」/g) || [])
+        .map(m => m.slice(1, -1)).join('');
+      if (!_isNegativeQuote(quoteText)) {
+        result.quotes.push(s);
+      }
     }
     // ニックネーム（「〜と呼ばれ」「〜の異名」等）
     if (!result.nickname && /と呼ばれ|と称され|の異名|ニックネーム|愛称/.test(s)) {
@@ -6883,6 +6929,12 @@ async function fetchRetsudenFromAPI(row) {
     wikiEpisodes = await fetchWikipediaEpisodes(_wikiName, g_isPitcher);
   }
 
+  // 通算カード: APIで歴代率系順位が確定した後に列伝の該当箇所を再構築できるようパラメータを保存
+  // 非通算カード: 不要なので null にリセット
+  _careerRetsudenRebuildParams = isCareer
+    ? { row, mlbData, rankData, trajectory, wikiEpisodes }
+    : null;
+
   const retsuden = buildRetsudenFromMLBData(row, mlbData, rankData, trajectory, wikiEpisodes);
   // MLB公式アワード + リーグリーダー1位タイトルをマージ（重複除去）
   const apiAwards   = (mlbData.awards || []).map(awardToJa).filter(Boolean);
@@ -7698,6 +7750,13 @@ async function _fetchAndApplyCareerRanks(mlbId, isPitcher) {
       }
     });
     _applyCareerRowRanks();
+    // 率系歴代順位が API で確定したので、通算列伝の該当テキストを再構築して更新
+    if (_careerRetsudenRebuildParams) {
+      const { row, mlbData, rankData, trajectory, wikiEpisodes } = _careerRetsudenRebuildParams;
+      const newRetsuden = buildRetsudenFromMLBData(row, mlbData, rankData, trajectory, wikiEpisodes);
+      updateRetsuden(newRetsuden);
+      console.log('[CareerRank] 通算列伝を率系API順位で再構築完了');
+    }
   } catch(e) {
     console.warn('[CareerRank] 取得失敗:', e.message);
   }
