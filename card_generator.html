@@ -5934,7 +5934,7 @@ function _engWordToKana(word) {
 
   const s = parts[0].toLowerCase();
 
-  // 単語全体のよく出るパターン
+  // 単語全体のよく出るパターン（地名・大学名頻出語を含む）
   const FULL = {
     'new':'ニュー','old':'オールド','north':'ノース','south':'サウス',
     'east':'イースト','west':'ウェスト','fort':'フォート','lake':'レイク',
@@ -5945,6 +5945,27 @@ function _engWordToKana(word) {
     'view':'ビュー','ridge':'リッジ','wood':'ウッド','field':'フィールド',
     'port':'ポート','saint':'セント','st':'セント','san':'サン','santa':'サンタ',
     'los':'ロス','las':'ラス',
+    // 大学・カレッジ名でよく出る固有名詞
+    'mohawk':'モホーク','cayuga':'カユーガ','onondaga':'オノンダガ',
+    'allegany':'アレゲニー','chemung':'ケムング','genesee':'ジェネシー',
+    'finger':'フィンガー','lakes':'レイクス','monroe':'モンロー',
+    'nassau':'ナッソー','suffolk':'サフォーク','rockland':'ロックランド',
+    'westchester':'ウェストチェスター','dutchess':'ダッチェス',
+    'orange':'オレンジ','columbia':'コロンビア','glendale':'グレンデール',
+    'citrus':'シトラス','cypress':'サイプレス','golden':'ゴールデン',
+    'west':'ウェスト','mount':'マウント','san':'サン','del':'デル',
+    'rio':'リオ','cerro':'セロ','palomar':'パロマー','grossmont':'グロスモント',
+    'miramar':'ミラマー','southwestern':'サウスウェスタン',
+    'saddleback':'サドルバック','irvine':'アーバイン','fullerton':'フラートン',
+    'chaffey':'チャフィー','victor':'ビクター','antelope':'アンテロープ',
+    'modesto':'モデスト','merced':'マーセド','reedley':'リードリー',
+    'porterville':'ポーターヴィル','bakersfield':'ベーカーズフィールド',
+    'cuesta':'クエスタ','allan hancock':'アラン・ハンコック',
+    'ventura':'ベンチュラ','oxnard':'オックスナード','moorpark':'ムーアパーク',
+    'santa':'サンタ','barbara':'バーバラ','rosa':'ローザ',
+    'diablo':'ディアブロ','contra':'コントラ','costa':'コスタ',
+    'chabot':'シャボット','laney':'レイニー','merritt':'メリット',
+    'skyline':'スカイライン','college':'カレッジ',
   };
   if (FULL[s]) return FULL[s];
 
@@ -6588,9 +6609,32 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
       if (univM && !results.some(r => r.includes('大学') || r.includes('カレッジ'))) {
         const univ = univM[1].trim();
         const isCC = /community|junior|JC/i.test(s);
-        const jaUniv = !isCC && _univEngToJa(univ);
-        const suffix = isCC ? 'コミュニティカレッジ' : '大学';
-        const univDisp = jaUniv || `${univ}${suffix}`;
+
+        let univDisp;
+        if (isCC) {
+          // CC固有名から "Community"/"Junior"/"JC" を除いて静的マップを照合
+          const univBase = univ.replace(/\s*(?:community|junior|jc)\s*/gi, '').trim();
+          const jaFromMap = _univEngToJa(univBase) || _univEngToJa(univ);
+          if (jaFromMap) {
+            // マップ結果に既に「カレッジ」「大学」が含まれる場合はそのまま使用
+            univDisp = /カレッジ|大学/.test(jaFromMap) ? jaFromMap : jaFromMap + 'コミュニティカレッジ';
+          } else {
+            // 未登録: 固有名部分を単語ごとカタカナ変換して "コミュニティカレッジ" を付与
+            // 例: "Mohawk Valley" → "モホーク・バレー" → "モホーク・バレー・コミュニティカレッジ"
+            const kana = univBase.split(/\s+/).map(w => _engWordToKana(w) || w).join('・');
+            univDisp = kana + '・コミュニティカレッジ';
+          }
+        } else {
+          // 4年制大学: 静的マップ照合 → 未登録は単語ごとカタカナ変換
+          const jaFromMap = _univEngToJa(univ);
+          if (jaFromMap) {
+            univDisp = jaFromMap;
+          } else {
+            // 例: "Loyola Marymount" → "ロヨラ・マリーマウント大学"
+            const kana = univ.split(/\s+/).map(w => _engWordToKana(w) || w).join('・');
+            univDisp = kana + '大学';
+          }
+        }
         results.push(`${univDisp}出身で、学生時代から将来を嘱望されたエリートプレーヤーとしてプロの世界へと飛び込んだ。`);
         continue;
       }
