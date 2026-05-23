@@ -4673,7 +4673,7 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                       lgRf9: get('f_range_factor_per_nine_lg', 'f_lg_rf9', 'lg_range_factor_9inn') || '0',
                       // GDP・Total Zone（4コンポーネントDRS用）
                       dp:    get('f_double_plays', 'double_plays', 'f_dp', 'dp')                 || '0',
-                      rtot:  get('Rtot', 'rtot', 'f_Rtot', 'f_rtot', 'total_zone_runs', 'total_zone') || '0',
+                      rtot:  get('f_tz_runs_total', 'Rtot', 'rtot', 'f_Rtot', 'f_rtot', 'total_zone_runs', 'total_zone') || '0',
                       // 捕手専用（他ポジションでは空欄になる）
                       cs:    get('f_caught_stealing', 'caught_stealing', 'cs_catcher', 'rcs')    || '0',
                       sb:    get('f_stolen_bases',    'stolen_bases',    'sb_against')            || '0',
