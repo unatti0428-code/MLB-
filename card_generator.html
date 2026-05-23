@@ -4469,6 +4469,13 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
       lines.push(`通算出塁率${obp}は選球眼と打撃技術の高さが本物であり続けた証で、打線の起点として機能した。`);
     } else if (opsN >= 0.900) {
       lines.push(`通算OPS${ops}はキャリアを通じて一線級打者だった証明で、対戦投手を常に苦しめ続けた。`);
+    } else if (hr >= 100) {
+      lines.push(`通算${hr}本塁打を積み上げ、長打力のある打者としてチームの打線に存在感を示し続けた。`);
+    } else if (opsN >= 0.780) {
+      // OPS 0.78以上はメジャーリーガーとして十分な水準。通算カード向けに閾値を緩和
+      lines.push(`通算OPS${ops}の安定した成績でシーズンを重ね、打線の一角としてチームの勝利に貢献し続けた。`);
+    } else if (obpN >= 0.340) {
+      lines.push(`通算出塁率${obp}の選球眼でチームの攻撃をリードし、長年にわたり塁上で存在感を示し続けた。`);
     }
 
     // 行3: MLB歴代順位（最も上位の記録を1件のみ・具体的な順位を明記）
@@ -4496,30 +4503,51 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
       lines.push(`通算OPS${ops}はキャリアを通じて一線級打者だった証明で、対戦投手を常に苦しめ続けた。`);
     }
 
+    // 行5-fallback: キャリアスパン・チーム経歴（行数が足りない場合に補完）
+    // 通算カードでは選手の「歩み」情報を積極的に追加する
+    if (lines.length < 4) {
+      const seasonRows = (g_dataRows || []).filter(r => /^\d{4}$/.test(String(r[1] ?? '').trim()));
+      if (seasonRows.length >= 2) {
+        const y1 = seasonRows[0][1];
+        const y2 = seasonRows[seasonRows.length - 1][1];
+        const teamStr = g_careerTeam ? `${g_careerTeam}など` : '複数球団';
+        lines.push(`${y1}〜${y2}年の${seasonRows.length}シーズンにわたるMLBキャリアを${teamStr}で戦い抜き、長きにわたって一線のグラウンドに立ち続けた。`);
+      } else if (g_careerTeam) {
+        lines.push(`${g_careerTeam}での活躍を中心に、その打棒でチームの勝利に貢献し続けたプロフェッショナルな野球人生を送った。`);
+      }
+    }
+
     // ── 「選手としての特徴」（Wikipedia特徴セクション）を優先挿入 ──
     // 通算カードでは特徴行を最大2行まで追加（クロージング前に挿入）
     if (g_wikiCharacteristics) {
       const charLines = _buildCharacteristicsLines(g_wikiCharacteristics, false, true);
       for (const cl of charLines) {
-        if (lines.length >= 5) break;
+        if (lines.length >= 6) break;
         if (lines.some(l => l.slice(0, 12) === cl.slice(0, 12))) continue; // 重複回避
         lines.push(cl);
       }
     }
 
-    // Wikipedia エピソード フォールバック
-    // 活躍の乏しい選手は閾値を緩め（5行未満）、最大6行まで埋める
-    // wikiMaxLines = クロージング行を足す前の上限（クロージング+1行が最終的な合計）
-    const wikiThreshold = isObscure ? 5 : 4;
-    const wikiMaxLines  = isObscure ? 5 : 5;
-    if (lines.length < wikiThreshold) {
-      for (const ep of wikiEpisodes) {
-        if (lines.length >= wikiMaxLines) break;
-        // 重複チェック：引用符内ニックネームや先頭テキストが既存行と一致する場合はスキップ
-        const epNick = ep.match(/"([^"]{3,30})"/);
-        if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
-        if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
-        lines.push(ep);
+    // Wikipedia エピソード（通算カードでは常に追加を試みる・閾値ゲートを撤廃）
+    // closing前に最大6行を目標とし、Wikiからエピソードを積極的に補完する
+    const wikiMaxLinesH = 6;
+    for (const ep of wikiEpisodes) {
+      if (lines.length >= wikiMaxLinesH) break;
+      // 重複チェック：引用符内ニックネームや先頭テキストが既存行と一致する場合はスキップ
+      const epNick = ep.match(/"([^"]{3,30})"/);
+      if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
+      if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
+      lines.push(ep);
+    }
+
+    // Wikiを含めてもまだ行が少ない場合の最終フォールバック（closing前に追加）
+    // 通算カードでは最低closing含め5行を目標とする
+    if (lines.length < 4 && !isObscure) {
+      const posJaC = _getPrimaryPosJa(row);
+      if (posJaC) {
+        lines.push(`${posJaC}として長年にわたり高い水準のプレーを維持し、チームに安定感と勝利をもたらした信頼の存在だった。`);
+      } else if (opsN >= 0.700) {
+        lines.push(`長年にわたり攻守両面でチームを支え、プロフェッショナルとしての高い姿勢でファンに感動を与え続けた。`);
       }
     }
 
@@ -4870,25 +4898,38 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
       }
     }
 
+    // キャリアスパン・チーム経歴フォールバック（行数が足りない場合）
+    if (lines.length < 4) {
+      const seasonRowsP = (g_dataRows || []).filter(r => /^\d{4}$/.test(String(r[1] ?? '').trim()));
+      if (seasonRowsP.length >= 2) {
+        const y1P = seasonRowsP[0][1];
+        const y2P = seasonRowsP[seasonRowsP.length - 1][1];
+        const teamStrP = g_careerTeam ? `${g_careerTeam}など` : '複数球団';
+        lines.push(`${y1P}〜${y2P}年の${seasonRowsP.length}シーズンにわたるMLBキャリアを${teamStrP}で戦い続け、投手としての存在感を示し続けた。`);
+      } else if (g_careerTeam) {
+        lines.push(`${g_careerTeam}での登板を中心に、${roleStr}として長年にわたりチームの投手陣を支え続けた。`);
+      }
+    }
+
     // ── 「選手としての特徴」（Wikipedia特徴セクション）を優先挿入 ──
     if (g_wikiCharacteristics) {
       const charLines = _buildCharacteristicsLines(g_wikiCharacteristics, true, true);
       for (const cl of charLines) {
-        if (lines.length >= 5) break;
+        if (lines.length >= 6) break;
         if (lines.some(l => l.slice(0, 12) === cl.slice(0, 12))) continue;
         lines.push(cl);
       }
     }
 
-    // Wikipedia エピソード フォールバック：5行未満のとき補完
-    if (lines.length < 5) {
-      for (const ep of wikiEpisodes) {
-        if (lines.length >= 5) break;
-        const epNick = ep.match(/"([^"]{3,30})"/);
-        if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
-        if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
-        lines.push(ep);
-      }
+    // Wikipedia エピソード（通算カードでは常に追加を試みる・閾値ゲートを撤廃）
+    // closing前に最大6行を目標とし、Wikiからエピソードを積極的に補完する
+    const wikiMaxLinesP = 6;
+    for (const ep of wikiEpisodes) {
+      if (lines.length >= wikiMaxLinesP) break;
+      const epNick = ep.match(/"([^"]{3,30})"/);
+      if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
+      if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
+      lines.push(ep);
     }
 
     // 最終行: 締め（常に1行）
