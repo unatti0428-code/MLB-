@@ -4693,9 +4693,11 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                       lgFld: get('f_fielding_perc_lg', 'f_lg_fielding_perc', 'lg_fielding_perc') || '0',
                       rf9:   get('f_range_factor_per_nine', 'f_rf9', 'range_factor_9inn')        || '0',
                       lgRf9: get('f_range_factor_per_nine_lg', 'f_lg_rf9', 'lg_range_factor_9inn') || '0',
-                      // GDP・Total Zone（4コンポーネントDRS用）
+                      // GDP・Total Zone・実測DRS（4コンポーネントDRS用）
                       dp:    get('f_double_plays', 'double_plays', 'f_dp', 'dp')                 || '0',
                       rtot:  get('f_tz_runs_total', 'Rtot', 'rtot', 'f_Rtot', 'f_rtot', 'total_zone_runs', 'total_zone') || '0',
+                      // 実測DRS（BB-Ref f_drs_total: 2003年以降に存在。空文字=未取得、数値文字列=有効値）
+                      drs_bb: get('f_drs_total') ?? '',
                       // 捕手専用（他ポジションでは空欄になる）
                       cs:    get('f_caught_stealing', 'caught_stealing', 'cs_catcher', 'rcs')    || '0',
                       sb:    get('f_stolen_bases',    'stolen_bases',    'sb_against')            || '0',
@@ -4777,46 +4779,59 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                       const errorDRS = (ch > 0 && lgFld > 0) ? ch * (fld - lgFld) * 0.5 : 0;
                       drsVal = Math.round(stealDRS + blockDRS + errorDRS);
                     } else {
-                      // ── 捕手以外: 4コンポーネント近似DRS（BB-Ref スクレイプ）──────
-                      // ① Range+  : (RF/9 - lgRF/9) × Inn/9 × ポジション係数
-                      // ② ErrPen  : (Fld% - lgFld%) × Chances × 0.8 × -1
-                      // ③ GDP     : DP × 0.131（内野のみ）
-                      // ④ TZ Adj  : Rtot × 0.22（Baseball Reference Total Zone Rating）
-                      // Range係数: Error係数0.8（正符号）との整合でキャリブレーション済み
-                      // SS/2B: 0.10→0.04, 3B: 0.08→0.032, 1B: 0.05→0.02
-                      // CF: 0.075→0.03, LF/RF: 0.065→0.026
-                      const BB_RANGE_COEFF = {
-                        SS: 0.08, '2B': 0.08, '3B': 0.064, '1B': 0.04,
-                        CF: 0.06, LF: 0.052, RF: 0.052, OF: 0.052,
-                      };
-                      const BB_IF_POS = ['SS', '2B', '3B', '1B'];
-                      const BB_OF_POS = ['LF', 'CF', 'RF', 'OF'];
-                      const rCoeff  = BB_RANGE_COEFF[pos] ?? 0.08;
-                      // RF/9 は d.rf9 優先、なければ po+a から算出
-                      const rf9use  = (rf9 > 0) ? rf9
-                        : (innDec > 0 && (parseInt(d.po) + parseInt(d.a)) > 0)
-                          ? (parseInt(d.po) + parseInt(d.a)) / innDec * 9 : 0;
-                      const rangeDRS = (lgRf9 > 0 && rf9use > 0)
-                        ? (rf9use - lgRf9) * innDec / 9 * rCoeff : 0;
-                      // ② ErrDRS: Fld%差×Chances×1.60（正符号: 優秀な守備手 → プラス）
-                      const errDRS  = (ch > 0 && lgFld > 0 && fld > 0)
-                        ? (fld - lgFld) * ch * 1.60 : 0;
-                      // ③ 内野: GDP / 外野: ARM（補殺数ベース送球評価）
-                      const dpVal   = parseInt(d.dp) || 0;
-                      const gdpDRS  = BB_IF_POS.includes(pos) && dpVal > 0 ? dpVal * 0.024 : 0;
-                      // ARM: 実補殺数 vs ポジション別リーグ平均補殺/9回 の差 × 1.6 runs/補殺
-                      // リーグ平均補殺/9回（1980-2020年代近似値）
-                      const BB_LG_ARM_PER9 = { LF: 0.047, CF: 0.033, RF: 0.060, OF: 0.047 };
-                      const assistsVal  = parseInt(d.a) || 0;
-                      const lgArmPer9   = BB_LG_ARM_PER9[pos] ?? 0;
-                      const armDRS      = BB_OF_POS.includes(pos) && innDec > 0 && lgArmPer9 > 0
-                        ? (assistsVal - lgArmPer9 * innDec / 9) * 1.6 : 0;
-                      const rtotVal = parseFloat(d.rtot) || 0;
-                      const tzDRS   = rtotVal * 0.44;
-                      drsVal = Math.round(rangeDRS + errDRS + gdpDRS + armDRS + tzDRS);
-                      // ── デバッグ: DRS内訳を出力（診断用） ─────────────────────────
-                      const armDbg = BB_OF_POS.includes(pos) ? ` ARM=${armDRS.toFixed(1)}(a=${assistsVal})` : ` GDP=${gdpDRS.toFixed(1)}`;
-                      onProgress(`[DRS診断] ${yr} ${pos}: rf9=${rf9use.toFixed(2)} lgRf9=${lgRf9.toFixed(2)} fld=${fld} lgFld=${lgFld} ch=${ch} rtot=${rtotVal} → Range=${rangeDRS.toFixed(1)} Err=${errDRS.toFixed(1)}${armDbg} TZ=${tzDRS.toFixed(1)} 合計=${drsVal}`);
+                      // ── 捕手以外: f_drs_total優先 → なければ4コンポーネント近似DRS ──────
+                      // 【修正①】BB-Ref f_drs_total（2003年以降に存在する実測DRS）を直接使用
+                      const drsBBStr = d.drs_bb ?? '';
+                      const drsBBNum = parseInt(drsBBStr);
+                      if (drsBBStr !== '' && !isNaN(drsBBNum)) {
+                        // BB-Ref実測DRS（f_drs_total）が取得できた年はそのまま使用
+                        // → TZ/Rtotの誤差・Error成分の過大評価を完全に回避
+                        drsVal = drsBBNum;
+                        onProgress(`[DRS診断] ${yr} ${pos}: BB-Ref実測DRS(f_drs_total)=${drsVal}`);
+                      } else {
+                        // 【4コンポーネント近似DRS】pre-2003年、またはf_drs_total欠損時のフォールバック
+                        // ① Range+  : (RF/9 - lgRF/9) × Inn/9 × ポジション係数
+                        // ② ErrDRS  : Fld%差 × Chances × 1.60（修正②: RF9平均以下時はプラス封印）
+                        // ③ GDP/ARM : 内野=DP×0.024 / 外野=補殺差×1.6
+                        // ④ TZ Adj  : Rtot × 0.44
+                        const BB_RANGE_COEFF = {
+                          SS: 0.08, '2B': 0.08, '3B': 0.064, '1B': 0.04,
+                          CF: 0.06, LF: 0.052, RF: 0.052, OF: 0.052,
+                        };
+                        const BB_IF_POS = ['SS', '2B', '3B', '1B'];
+                        const BB_OF_POS = ['LF', 'CF', 'RF', 'OF'];
+                        const rCoeff  = BB_RANGE_COEFF[pos] ?? 0.08;
+                        // RF/9 は d.rf9 優先、なければ po+a から算出
+                        const rf9use  = (rf9 > 0) ? rf9
+                          : (innDec > 0 && (parseInt(d.po) + parseInt(d.a)) > 0)
+                            ? (parseInt(d.po) + parseInt(d.a)) / innDec * 9 : 0;
+                        const rangeDRS = (lgRf9 > 0 && rf9use > 0)
+                          ? (rf9use - lgRf9) * innDec / 9 * rCoeff : 0;
+                        // 【修正②】ErrDRS: RF9が平均以下の場合、プラスのエラー貢献をゼロに制限
+                        //   理由: レンジ不足選手の高Fld%は「難しい球を避けた結果」の可能性が高く、
+                        //         守備上手の証拠にならない。ペナルティ（マイナス）は維持する。
+                        const errDRS_raw = (ch > 0 && lgFld > 0 && fld > 0)
+                          ? (fld - lgFld) * ch * 1.60 : 0;
+                        const errDRS = (lgRf9 > 0 && rf9use > 0 && rf9use < lgRf9)
+                          ? Math.min(0, errDRS_raw)  // レンジ平均以下 → エラーペナルティのみ有効
+                          : errDRS_raw;
+                        // ③ 内野: GDP / 外野: ARM（補殺数ベース送球評価）
+                        const dpVal   = parseInt(d.dp) || 0;
+                        const gdpDRS  = BB_IF_POS.includes(pos) && dpVal > 0 ? dpVal * 0.024 : 0;
+                        const BB_LG_ARM_PER9 = { LF: 0.047, CF: 0.033, RF: 0.060, OF: 0.047 };
+                        const assistsVal  = parseInt(d.a) || 0;
+                        const lgArmPer9   = BB_LG_ARM_PER9[pos] ?? 0;
+                        const armDRS      = BB_OF_POS.includes(pos) && innDec > 0 && lgArmPer9 > 0
+                          ? (assistsVal - lgArmPer9 * innDec / 9) * 1.6 : 0;
+                        const rtotVal = parseFloat(d.rtot) || 0;
+                        const tzDRS   = rtotVal * 0.44;
+                        drsVal = Math.round(rangeDRS + errDRS + gdpDRS + armDRS + tzDRS);
+                        // ── デバッグ: DRS内訳を出力（診断用） ─────────────────────────
+                        const errTag = (lgRf9 > 0 && rf9use > 0 && rf9use < lgRf9 && errDRS_raw > 0)
+                          ? `Err=${errDRS.toFixed(1)}[cap]` : `Err=${errDRS.toFixed(1)}`;
+                        const armDbg = BB_OF_POS.includes(pos) ? ` ARM=${armDRS.toFixed(1)}(a=${assistsVal})` : ` GDP=${gdpDRS.toFixed(1)}`;
+                        onProgress(`[DRS診断] ${yr} ${pos}: rf9=${rf9use.toFixed(2)} lgRf9=${lgRf9.toFixed(2)} fld=${fld} lgFld=${lgFld} ch=${ch} rtot=${rtotVal} → Range=${rangeDRS.toFixed(1)} ${errTag}${armDbg} TZ=${tzDRS.toFixed(1)} 合計=${drsVal}`);
+                      }
                     }
                     fieldingByYear[yr][pos] = { inn: innFmt, drs: drsVal, g: parseInt(d.g) || 0 };
                   }
