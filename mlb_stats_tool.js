@@ -4663,16 +4663,21 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                     result[yr][pos] = {
                       inn:   innRaw,
                       g:     gVal,
-                      ch:    get('f_chances', 'f_tc', 'chances', 'tc')                        || '0',
-                      e:     get('f_errors',  'f_e',  'e')                                    || '0',
-                      fld:   get('f_fielding_perc', 'f_pct', 'fielding_perc')                 || '0',
+                      po:    get('f_putouts', 'putouts', 'f_po', 'po')                           || '0',
+                      a:     get('f_assists',  'assists',  'f_a',  'a')                          || '0',
+                      ch:    get('f_chances', 'f_tc', 'chances', 'tc')                           || '0',
+                      e:     get('f_errors',  'f_e',  'e')                                       || '0',
+                      fld:   get('f_fielding_perc', 'f_pct', 'fielding_perc')                    || '0',
                       lgFld: get('f_fielding_perc_lg', 'f_lg_fielding_perc', 'lg_fielding_perc') || '0',
-                      rf9:   get('f_range_factor_per_nine', 'f_rf9', 'range_factor_9inn')     || '0',
+                      rf9:   get('f_range_factor_per_nine', 'f_rf9', 'range_factor_9inn')        || '0',
                       lgRf9: get('f_range_factor_per_nine_lg', 'f_lg_rf9', 'lg_range_factor_9inn') || '0',
+                      // GDP・Total Zone（4コンポーネントDRS用）
+                      dp:    get('f_double_plays', 'double_plays', 'f_dp', 'dp')                 || '0',
+                      rtot:  get('Rtot', 'rtot', 'f_Rtot', 'f_rtot', 'total_zone_runs', 'total_zone') || '0',
                       // 捕手専用（他ポジションでは空欄になる）
-                      cs:    get('f_caught_stealing', 'caught_stealing', 'cs_catcher', 'rcs')  || '0',
-                      sb:    get('f_stolen_bases',    'stolen_bases',    'sb_against')         || '0',
-                      pb:    get('f_passed_ball',     'passed_ball',     'pb')                 || '0',
+                      cs:    get('f_caught_stealing', 'caught_stealing', 'cs_catcher', 'rcs')    || '0',
+                      sb:    get('f_stolen_bases',    'stolen_bases',    'sb_against')            || '0',
+                      pb:    get('f_passed_ball',     'passed_ball',     'pb')                    || '0',
                     };
                     // G 数を外野ポジション別に記録（OF→RF/LF/CF 按分用）
                     if (['RF','LF','CF'].includes(pos) && gVal > 0) {
@@ -4750,11 +4755,30 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                       const errorDRS = (ch > 0 && lgFld > 0) ? ch * (fld - lgFld) * 0.5 : 0;
                       drsVal = Math.round(stealDRS + blockDRS + errorDRS);
                     } else {
-                      // ── 捕手以外: RF/9ベース ─────────────────────────────────
-                      // 係数 0.25: RF/9差 0.3 × 1296inn/9 × 0.25 ≈ +11 (実測+10〜+15と一致)
-                      const rangeDRS = lgRf9 > 0 ? (rf9 - lgRf9) * innDec / 9 * 0.25 : 0;
-                      const errorDRS = (ch > 0 && lgFld > 0) ? ch * (fld - lgFld) * 0.5 : 0;
-                      drsVal = Math.round(rangeDRS + errorDRS);
+                      // ── 捕手以外: 4コンポーネント近似DRS（BB-Ref スクレイプ）──────
+                      // ① Range+  : (RF/9 - lgRF/9) × Inn/9 × ポジション係数
+                      // ② ErrPen  : (Fld% - lgFld%) × Chances × 0.8 × -1
+                      // ③ GDP     : DP × 0.131（内野のみ）
+                      // ④ TZ Adj  : Rtot × 0.22（Baseball Reference Total Zone Rating）
+                      const BB_RANGE_COEFF = {
+                        SS: 0.10, '2B': 0.10, '3B': 0.08, '1B': 0.05,
+                        CF: 0.075, LF: 0.065, RF: 0.065, OF: 0.065,
+                      };
+                      const BB_IF_POS = ['SS', '2B', '3B', '1B'];
+                      const rCoeff  = BB_RANGE_COEFF[pos] ?? 0.08;
+                      // RF/9 は d.rf9 優先、なければ po+a から算出
+                      const rf9use  = (rf9 > 0) ? rf9
+                        : (innDec > 0 && (parseInt(d.po) + parseInt(d.a)) > 0)
+                          ? (parseInt(d.po) + parseInt(d.a)) / innDec * 9 : 0;
+                      const rangeDRS = (lgRf9 > 0 && rf9use > 0)
+                        ? (rf9use - lgRf9) * innDec / 9 * rCoeff : 0;
+                      const errDRS  = (ch > 0 && lgFld > 0 && fld > 0)
+                        ? (fld - lgFld) * ch * 0.8 * -1 : 0;
+                      const dpVal   = parseInt(d.dp) || 0;
+                      const gdpDRS  = BB_IF_POS.includes(pos) && dpVal > 0 ? dpVal * 0.131 : 0;
+                      const rtotVal = parseFloat(d.rtot) || 0;
+                      const tzDRS   = rtotVal * 0.22;
+                      drsVal = Math.round(rangeDRS + errDRS + gdpDRS + tzDRS);
                     }
                     fieldingByYear[yr][pos] = { inn: innFmt, drs: drsVal, g: parseInt(d.g) || 0 };
                   }
