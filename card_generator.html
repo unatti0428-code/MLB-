@@ -4459,6 +4459,50 @@ function analyzeCareerTrajectory(currentRow) {
   }
 }
 
+// ── Wiki エピソード重複チェック ─────────────────────────────────
+/**
+ * Wikiエピソードが既存行と重複するかを判定。
+ * 英語ニックネーム（"bambino"等）と日本語ニックネーム（「バンビーノ」等）の
+ * 言語間重複も nickData 経由で検出する。
+ * @param {string}      ep       - 判定するWikiエピソード文字列
+ * @param {string[]}    lines    - 現時点の列伝行リスト
+ * @param {object|null} nickData - getPlayerNickname() の戻り値（null 可）
+ * @returns {boolean} true = 重複なのでスキップすべき
+ */
+function _isWikiEpDuplicate(ep, lines, nickData = null) {
+  // ① 引用符ニックネームが既存行に含まれるか（英語 "" 内テキスト）
+  const epNick = ep.match(/"([^"]{3,30})"/);
+  if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) return true;
+
+  // ② 先頭15文字が一致（ほぼ同一文の重複）
+  if (lines.some(l => l.slice(0, 15).toLowerCase() === ep.slice(0, 15).toLowerCase())) return true;
+
+  // ③ nickData.line が追加済みの場合のニックネーム言語間重複チェック
+  //    「バンビーノ」（日本語）と "the Bambino"（英語）のように
+  //    文字列一致しない場合でも同一ニック紹介と判断してスキップ
+  if (nickData && lines.some(l => l === nickData.line)) {
+    // (a) エピソードの冒頭が「引用句」＋「の異名/愛称」のニック紹介主体パターン
+    if (/^["「][^"」]{2,30}["」]の(異名|愛称)/.test(ep) || /の(異名|愛称)を持ち/.test(ep)) return true;
+    // (b) nickData.nicks のいずれかが ep に含まれる（日本語ニックの直接一致）
+    if (nickData.nicks.some(n => ep.includes(n))) return true;
+  }
+
+  // ④ 既存行の引用句セット（「」・""）と ep の引用句との直接重複チェック
+  const lineQuoteSet = new Set(
+    lines.flatMap(l => {
+      const r = [];
+      for (const m of l.matchAll(/「([^」]{2,25})」|"([^"]{2,25})"/g))
+        r.push((m[1] || m[2]).toLowerCase());
+      return r;
+    })
+  );
+  for (const m of ep.matchAll(/「([^」]{2,25})」|"([^"]{2,25})"/g)) {
+    if (lineQuoteSet.has((m[1] || m[2]).toLowerCase())) return true;
+  }
+
+  return false;
+}
+
 // ── 野手・列伝テキスト生成 ────────────────────────────────────
 function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajectory = {}, wikiEpisodes = []) {
   const hr    = parseInt(apiSt.homeRuns    ?? row[9])  || 0;
@@ -4585,10 +4629,7 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     const wikiMaxLinesH = 6;
     for (const ep of wikiEpisodes) {
       if (lines.length >= wikiMaxLinesH) break;
-      // 重複チェック：引用符内ニックネームや先頭テキストが既存行と一致する場合はスキップ
-      const epNick = ep.match(/"([^"]{3,30})"/);
-      if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
-      if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
+      if (_isWikiEpDuplicate(ep, lines, nickH)) continue;
       lines.push(ep);
     }
 
@@ -4804,9 +4845,7 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
   if (lines.length < 5) {
     for (const ep of wikiEpisodes) {
       if (lines.length >= 5) break;
-      const epNick = ep.match(/"([^"]{3,30})"/);
-      if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
-      if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
+      if (_isWikiEpDuplicate(ep, lines, nickS)) continue;
       lines.push(ep);
     }
   }
@@ -4978,9 +5017,7 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     const wikiMaxLinesP = 6;
     for (const ep of wikiEpisodes) {
       if (lines.length >= wikiMaxLinesP) break;
-      const epNick = ep.match(/"([^"]{3,30})"/);
-      if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
-      if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
+      if (_isWikiEpDuplicate(ep, lines, nickPC)) continue;
       lines.push(ep);
     }
 
@@ -5175,9 +5212,7 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   if (lines.length < 5) {
     for (const ep of wikiEpisodes) {
       if (lines.length >= 5) break;
-      const epNick = ep.match(/"([^"]{3,30})"/);
-      if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) continue;
-      if (lines.some(l => l.slice(0,15).toLowerCase() === ep.slice(0,15).toLowerCase())) continue;
+      if (_isWikiEpDuplicate(ep, lines, nickPS)) continue;
       lines.push(ep);
     }
   }
