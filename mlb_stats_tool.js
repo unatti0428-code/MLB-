@@ -4471,7 +4471,7 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
             const searchUrl = `https://www.baseball-reference.com/search/search.fcgi?search=${encodeURIComponent(playerFullName)}`;
             await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
             // Cloudflare チャレンジ待機
-            try { await page.waitForFunction(() => !document.title.toLowerCase().includes('just a moment'), { timeout: 10000 }); } catch {}
+            try { await page.waitForFunction(() => !document.title.toLowerCase().includes('just a moment') && !document.title.includes('しばらくお待ちください') && !document.title.includes('Checking'), { timeout: 15000 }); } catch {}
 
             // 単一結果の場合 BB-Ref は選手ページへ直接リダイレクトする
             const finalUrl = page.url();
@@ -4524,11 +4524,14 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                 `https://www.baseball-reference.com/players/${cand[0]}/${cand}.shtml`,
                 { waitUntil: 'domcontentloaded', timeout: 20000 }
               );
-              // Cloudflare "Just a moment..." チャレンジが完了するまで最大10秒待機
+              // Cloudflare チャレンジ完了待機（英語・日本語タイトル両対応、最大15秒）
               try {
                 await page.waitForFunction(
-                  () => !document.title.toLowerCase().includes('just a moment'),
-                  { timeout: 10000 }
+                  () => (!document.title.toLowerCase().includes('just a moment') &&
+                         !document.title.includes('しばらくお待ちください') &&
+                         !document.title.includes('Checking')) ||
+                        document.querySelector('#info') !== null,
+                  { timeout: 15000 }
                 );
               } catch {} // タイムアウトしても続行
               const diagInfo = await page.evaluate((name) => {
@@ -4557,7 +4560,7 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
               { waitUntil: 'domcontentloaded', timeout: 30000 }
             );
             // Cloudflare チャレンジ待機
-            try { await page.waitForFunction(() => !document.title.toLowerCase().includes('just a moment'), { timeout: 10000 }); } catch {}
+            try { await page.waitForFunction(() => !document.title.toLowerCase().includes('just a moment') && !document.title.includes('しばらくお待ちください') && !document.title.includes('Checking'), { timeout: 15000 }); } catch {}
           }
 
           // ── 打席情報（LHB/RHB/Switch）を取得 → 対左BA推計に使用 ────────────
@@ -4825,7 +4828,7 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
             const splitUrl = `https://www.baseball-reference.com/players/split.fcgi?id=${bbSlug}&year=all&t=b`;
             await page.goto(splitUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
             // Cloudflare チャレンジ待機
-            try { await page.waitForFunction(() => !document.title.toLowerCase().includes('just a moment'), { timeout: 10000 }); } catch {}
+            try { await page.waitForFunction(() => !document.title.toLowerCase().includes('just a moment') && !document.title.includes('しばらくお待ちください') && !document.title.includes('Checking'), { timeout: 15000 }); } catch {}
 
             // スプリットページも HTML コメント内にテーブルが入っている場合があるため
             // Node.js 側で page.content() を取得してコメント除去後に DOMParser で解析
