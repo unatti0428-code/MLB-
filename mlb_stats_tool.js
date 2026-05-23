@@ -4779,6 +4779,8 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                       const rtotVal = parseFloat(d.rtot) || 0;
                       const tzDRS   = rtotVal * 0.22;
                       drsVal = Math.round(rangeDRS + errDRS + gdpDRS + tzDRS);
+                      // ── デバッグ: DRS内訳を出力（診断用） ─────────────────────────
+                      onProgress(`[DRS診断] ${yr} ${pos}: rf9=${rf9use.toFixed(2)} lgRf9=${lgRf9.toFixed(2)} fld=${fld} lgFld=${lgFld} ch=${ch} dp=${dpVal} rtot=${rtotVal} → Range=${rangeDRS.toFixed(1)} Err=${errDRS.toFixed(1)} GDP=${gdpDRS.toFixed(1)} TZ=${tzDRS.toFixed(1)} 合計=${drsVal}`);
                     }
                     fieldingByYear[yr][pos] = { inn: innFmt, drs: drsVal, g: parseInt(d.g) || 0 };
                   }
