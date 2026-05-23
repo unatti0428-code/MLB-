@@ -4470,6 +4470,8 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
           try {
             const searchUrl = `https://www.baseball-reference.com/search/search.fcgi?search=${encodeURIComponent(playerFullName)}`;
             await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            // Cloudflare チャレンジ待機
+            try { await page.waitForFunction(() => !document.title.toLowerCase().includes('just a moment'), { timeout: 10000 }); } catch {}
 
             // 単一結果の場合 BB-Ref は選手ページへ直接リダイレクトする
             const finalUrl = page.url();
@@ -4522,6 +4524,13 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                 `https://www.baseball-reference.com/players/${cand[0]}/${cand}.shtml`,
                 { waitUntil: 'domcontentloaded', timeout: 20000 }
               );
+              // Cloudflare "Just a moment..." チャレンジが完了するまで最大10秒待機
+              try {
+                await page.waitForFunction(
+                  () => !document.title.toLowerCase().includes('just a moment'),
+                  { timeout: 10000 }
+                );
+              } catch {} // タイムアウトしても続行
               const diagInfo = await page.evaluate((name) => {
                 const h1 = document.querySelector('#info h1') || document.querySelector('h1');
                 const h1Text = h1 ? h1.textContent.trim() : '(h1なし)';
@@ -4547,6 +4556,8 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
               `https://www.baseball-reference.com/players/${bbSlug[0]}/${bbSlug}.shtml`,
               { waitUntil: 'domcontentloaded', timeout: 30000 }
             );
+            // Cloudflare チャレンジ待機
+            try { await page.waitForFunction(() => !document.title.toLowerCase().includes('just a moment'), { timeout: 10000 }); } catch {}
           }
 
           // ── 打席情報（LHB/RHB/Switch）を取得 → 対左BA推計に使用 ────────────
@@ -4813,6 +4824,8 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
           try {
             const splitUrl = `https://www.baseball-reference.com/players/split.fcgi?id=${bbSlug}&year=all&t=b`;
             await page.goto(splitUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+            // Cloudflare チャレンジ待機
+            try { await page.waitForFunction(() => !document.title.toLowerCase().includes('just a moment'), { timeout: 10000 }); } catch {}
 
             // スプリットページも HTML コメント内にテーブルが入っている場合があるため
             // Node.js 側で page.content() を取得してコメント除去後に DOMParser で解析
