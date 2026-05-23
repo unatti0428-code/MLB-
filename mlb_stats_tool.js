@@ -6190,6 +6190,15 @@ async function doAdd() {
     el.textContent='✗ 通信エラー: '+e.message;
   }
 }
+
+// ── 初期化: 終了年に現在年をデフォルト設定 ───────────────────────────
+(function() {
+  const currentYear = new Date().getFullYear();
+  ['py2', 'by2'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el.value) el.value = currentYear;
+  });
+})();
 </script>
 </body>
 </html>`;
