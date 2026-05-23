@@ -3332,9 +3332,10 @@ function awardToJa(award) {
   }
 
   // ⑤ MLBPAA ハート・アンド・ハッスル賞（チーム別）
+  // MLBPAA = Major League Baseball Players Alumni Association（MLB選手会OB）
   if (n.includes('heart and hustle')) {
     const teamJa = _teamEngToJa(n);
-    return teamJa ? `MLBPAA ${teamJa} ハート・アンド・ハッスル賞` : 'ハート・アンド・ハッスル賞';
+    return teamJa ? `MLB選手会OB ${teamJa} ハート・アンド・ハッスル賞` : 'MLB選手会OB ハート・アンド・ハッスル賞';
   }
 
   // ⑥ その他タイトル・表彰
@@ -6173,13 +6174,13 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
       continue;
     }
 
-    // ハート・アンド・ハッスル賞（MLBPAA）
+    // ハート・アンド・ハッスル賞（MLB選手会OB＝MLBPAA）
     if (/Heart and Hustle/i.test(s) && !results.some(r => r.includes('ハート・アンド・ハッスル'))) {
       const teamJa = _teamEngToJa(s);
       if (teamJa) {
-        results.push(`MLBPAAが選ぶ${teamJa} ハート・アンド・ハッスル賞を受賞し、プロ意識と全力プレーが球界から公式に認められた。`);
+        results.push(`MLB選手会OBが選ぶ${teamJa} ハート・アンド・ハッスル賞を受賞し、プロ意識と全力プレーが球界から公式に認められた。`);
       } else {
-        results.push('MLBPAAが選ぶハート・アンド・ハッスル賞を受賞し、プロ意識と全力プレーが球界全体から公式に認められた。');
+        results.push('MLB選手会OBが選ぶハート・アンド・ハッスル賞を受賞し、プロ意識と全力プレーが球界全体から公式に認められた。');
       }
       continue;
     }
