@@ -4825,16 +4825,18 @@ async function batFetchBrowserData(slug, id, playerFullName, years, onProgress, 
                           ? (assistsVal - lgArmPer9 * innDec / 9) * 1.6 : 0;
                         const rtotVal = parseFloat(d.rtot) || 0;
                         const tzDRS   = rtotVal * 0.44;
-                        // 外野×0.5スケール係数を適用（仮想DRS補正）/ 内野は係数なし
+                        // 外野×0.5 / 内野×0.85 スケール係数を適用（仮想DRS補正）
                         const rawDRS = rangeDRS + errDRS + gdpDRS + armDRS + tzDRS;
                         drsVal = BB_OF_POS.includes(pos)
                           ? Math.round(rawDRS * 0.5)
-                          : Math.round(rawDRS);
+                          : BB_IF_POS.includes(pos)
+                            ? Math.round(rawDRS * 0.85)
+                            : Math.round(rawDRS);
                         // ── デバッグ: DRS内訳を出力（診断用） ─────────────────────────
                         const errTag = (lgRf9 > 0 && rf9use > 0 && rf9use < lgRf9 && errDRS_raw > 0)
                           ? `Err=${errDRS.toFixed(1)}[cap]` : `Err=${errDRS.toFixed(1)}`;
                         const armDbg = BB_OF_POS.includes(pos) ? ` ARM=${armDRS.toFixed(1)}(a=${assistsVal})` : ` GDP=${gdpDRS.toFixed(1)}`;
-                        const scaleTag = BB_OF_POS.includes(pos) ? ` ×0.5→` : ` →`;
+                        const scaleTag = BB_OF_POS.includes(pos) ? ` ×0.5→` : BB_IF_POS.includes(pos) ? ` ×0.85→` : ` →`;
                         onProgress(`[DRS診断] ${yr} ${pos}: rf9=${rf9use.toFixed(2)} lgRf9=${lgRf9.toFixed(2)} fld=${fld} lgFld=${lgFld} ch=${ch} rtot=${rtotVal} → Range=${rangeDRS.toFixed(1)} ${errTag}${armDbg} TZ=${tzDRS.toFixed(1)} 小計=${rawDRS.toFixed(1)}${scaleTag}合計=${drsVal}`);
                       }
                     }
