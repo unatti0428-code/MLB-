@@ -988,22 +988,38 @@ function getColVal(row, headerRow, name, fallback = '--') {
 // ===== 修正DRS取得ヘルパー =====
 /**
  * ポジション別の表示DRS値を返す。
- * 外野3ポジションはBK列以降の紫塗り修正値を優先し、存在しない場合は元のDRS値を使用。
- *   posIdx=5(LF) → row[64](BM列)
- *   posIdx=6(CF) → row[63](BL列)
- *   posIdx=7(RF) → row[62](BK列)
- *   posIdx=0-4(内野) → 修正列なし、元のDRS値をそのまま返す
+ *
+ * BK列(0-indexed=62)以降は出場ポジション分だけ動的に並ぶ「補正済み最終DRS」セクション。
+ * 1行目ヘッダーは「守備」（先頭列のみ表示、以降は結合セル）、
+ * 2行目ヘッダーに各列のポジション名（"C","1B","2B","3B","SS","LF","CF","RF"）が入る。
+ *
+ * 例：
+ *   Ozスミス → BK列(index 62)に "SS" の補正DRSのみ
+ *   Aaジャッジ → BK="RF" / BL="CF" / BM="LF" の3列（複数ポジション）
+ *
+ * 該当するポジションラベルが見つからない（修正値が未登録）の場合は元のDRS値を返す。
+ *
  * @param {Array} row     データ行
- * @param {number} posIdx ポジションインデックス（0=C,1=1B,...,5=LF,6=CF,7=RF）
+ * @param {number} posIdx ポジションインデックス（0=C,1=1B,2=2B,3=3B,4=SS,5=LF,6=CF,7=RF）
  * @param {number} origDrs 元のDRS値（フォールバック用）
  * @returns {number}
  */
 function _getCorrectedDrs(row, posIdx, origDrs) {
-  const correctedColMap = { 7: 62, 6: 63, 5: 64 }; // RF→BK, CF→BL, LF→BM
-  const colIdx = correctedColMap[posIdx];
-  if (colIdx === undefined) return origDrs;  // 内野は修正列なし
-  const v = safeNum(row[colIdx]);
-  return (v !== null && v !== undefined) ? v : origDrs;
+  const posLabels = ['C','1B','2B','3B','SS','LF','CF','RF'];
+  const targetPos = posLabels[posIdx];
+  if (!targetPos) return origDrs;
+  // g_headers[1] の index 62 以降からポジション名一致を探す
+  const hdrRow2 = (g_headers && g_headers[1]) ? g_headers[1] : null;
+  if (!hdrRow2) return origDrs;
+  for (let i = 62; i < hdrRow2.length; i++) {
+    const label = String(hdrRow2[i] ?? '').trim();
+    if (!label) continue;
+    if (label === targetPos) {
+      const v = safeNum(row[i]);
+      return (v !== null && v !== undefined) ? v : origDrs;
+    }
+  }
+  return origDrs;
 }
 
 // ===== WAR 推定ロジック（スプレッドシートに WAR 列がない場合のフォールバック） =====
