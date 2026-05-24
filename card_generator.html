@@ -985,6 +985,27 @@ function getColVal(row, headerRow, name, fallback = '--') {
   return (v === null || v === undefined || v === '') ? fallback : v;
 }
 
+// ===== 修正DRS取得ヘルパー =====
+/**
+ * ポジション別の表示DRS値を返す。
+ * 外野3ポジションはBK列以降の紫塗り修正値を優先し、存在しない場合は元のDRS値を使用。
+ *   posIdx=5(LF) → row[64](BM列)
+ *   posIdx=6(CF) → row[63](BL列)
+ *   posIdx=7(RF) → row[62](BK列)
+ *   posIdx=0-4(内野) → 修正列なし、元のDRS値をそのまま返す
+ * @param {Array} row     データ行
+ * @param {number} posIdx ポジションインデックス（0=C,1=1B,...,5=LF,6=CF,7=RF）
+ * @param {number} origDrs 元のDRS値（フォールバック用）
+ * @returns {number}
+ */
+function _getCorrectedDrs(row, posIdx, origDrs) {
+  const correctedColMap = { 7: 62, 6: 63, 5: 64 }; // RF→BK, CF→BL, LF→BM
+  const colIdx = correctedColMap[posIdx];
+  if (colIdx === undefined) return origDrs;  // 内野は修正列なし
+  const v = safeNum(row[colIdx]);
+  return (v !== null && v !== undefined) ? v : origDrs;
+}
+
 // ===== WAR 推定ロジック（スプレッドシートに WAR 列がない場合のフォールバック） =====
 /**
  * 野手 WAR 推定（bWAR 近似）
@@ -1007,10 +1028,11 @@ function estimateHitterWAR(row) {
   const battingWAR = (ops - 0.728) * 15 * ptRatio;
 
   // 守備貢献（DRS ÷ 10 ≈ WAR）
+  // ※ 外野3ポジションはBK列以降の修正DRS値を優先使用
   let totalDrs = 0, totalInn = 0;
   for (let i = 0; i < 8; i++) {
     const inn = parseFloat(row[28 + i * 2]) || 0;
-    const drs = safeNum(row[29 + i * 2]) || 0;
+    const drs = _getCorrectedDrs(row, i, safeNum(row[29 + i * 2]) || 0);
     if (inn > 0) { totalDrs += drs; totalInn += inn; }
   }
   const fieldingWAR = totalInn > 0 ? totalDrs / 10 : 0;
@@ -2057,7 +2079,8 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
     const posList = [];
     for (let i = 0; i < 8; i++) {
       const inn = parseFloat(row[28 + i * 2]) || 0;
-      const drs = safeNum(row[29 + i * 2]) ?? 0;
+      // 外野3ポジションはBK列以降の修正DRS値を優先使用
+      const drs = _getCorrectedDrs(row, i, safeNum(row[29 + i * 2]) ?? 0);
       if (inn > 0) {
         defInn += inn;
         posList.push({ inn, drs });
@@ -2458,9 +2481,12 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
   const drsData   = [];
   for (let i = 0; i < 8; i++) {
     const inn = row[28 + i * 2];
-    const drs = row[29 + i * 2];
     if (inn && inn !== '--' && inn !== null && inn !== '') {
-      drsData.push({ pos: posLabels[i], inn: String(inn), drs: safeNum(drs) || 0 });
+      // 外野3ポジションはBK列以降の紫塗り修正DRS値を優先表示
+      // イニングは変更なし（row[28+i*2]のまま）
+      const origDrs = safeNum(row[29 + i * 2]) || 0;
+      const dispDrs = _getCorrectedDrs(row, i, origDrs);
+      drsData.push({ pos: posLabels[i], inn: String(inn), drs: dispDrs });
     }
   }
 
