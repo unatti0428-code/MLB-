@@ -3547,7 +3547,20 @@ function awardToJa(award) {
       !n.includes('silver slugger') && !n.includes('mvp') && !n.includes('heart')) {
     // 人名由来賞（例: "Bob Robertson Award"）はそのまま人名を使う
     const personM = (award.name || '').match(/^(?:[A-Z][a-z]+ )+[A-Z][a-z]+\s+(Award|Trophy)/);
-    if (personM) return `${awardTeamJa} ${award.name}`;
+    if (personM) {
+      // チーム名の英語表記が award.name 先頭に含まれている場合は重複を除去
+      // 例: awardTeamJa="パドレス", award.name="Padres Darrel Akerfelds Bullpen Award"
+      //   そのまま結合 → "パドレス Padres Darrel Akerfelds Bullpen Award"（パドレス重複）
+      //   先頭の "Padres " を除去 → "パドレス Darrel Akerfelds Bullpen Award"
+      let cleanName = award.name;
+      for (const enTeam of Object.keys(_TEAM_JA_MAP)) {
+        const re = new RegExp(`^${enTeam}\\s+`, 'i');
+        if (re.test(cleanName)) { cleanName = cleanName.replace(re, ''); break; }
+      }
+      // 末尾 "Award" → "賞" / "Trophy" → "トロフィー" に簡易訳して読みやすく
+      cleanName = cleanName.replace(/\s+Award$/i, '賞').replace(/\s+Trophy$/i, 'トロフィー');
+      return `${awardTeamJa} ${cleanName}`;
+    }
     return `${awardTeamJa}球団賞`;
   }
   if (n.includes('strikeout') && n.includes('leader')) return '奪三振王';
@@ -3958,7 +3971,16 @@ function buildCardType(row, awardsJa) {
       if (hldRankVal && hldRankVal >= 2 && hldRankVal <= 5) return `リーグHLD${hldRankVal}位投手`;
     }
     // ⑤ クローザー実績（タイトルなし）
-    if (!isStarter && era < 2.20) return '不滅の守護神';
+    // ※「不滅の守護神」を名乗るには、実際のクローザー/セットアッパー級の働きが必要：
+    //   - イニング数: 40回以上（リリーフ実働量の最低水準）
+    //   - セーブ or ホールド: 10以上（実際の救援役割を担った証拠）
+    //   いずれかが欠ければ単なる「低防御率の救援投手」止まりとして肩書には使用しない
+    if (!isStarter && era < 2.20) {
+      const _ipN  = parseFloat(row[10]) || 0;
+      const _svN  = parseInt(getFirstColVal(row, g_headers && g_headers[0], ['SV','セーブ','Saves','Save'])) || 0;
+      const _hldN = parseInt(getFirstColVal(row, g_headers && g_headers[0], ['HLD','ホールド','Holds','Hold','HD'])) || 0;
+      if (_ipN >= 40 && (_svN >= 10 || _hldN >= 10)) return '不滅の守護神';
+    }
     // ⑥ その他のタイトルがあれば手腕を付けて整形
     // 「ワールドシリーズ優勝」は「受賞」でなく「制覇」なので別途処理
     if (awardsJa.length) {
@@ -5358,6 +5380,17 @@ function _parseJaWikiCharacteristics(wikitext, isPitcher) {
 
   // wikitextを平文化
   let text = wikitext
+    // ⓪ HTMLエンティティを実体文字に変換（&nbsp;等が文中に残らないよう最初に処理）
+    //   例: "平均97.3&nbsp;mph" → "平均97.3 mph" → 後段で数値と単位間のスペースを除去
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;|&#39;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/ /g, ' ') // U+00A0 NBSP実体文字も通常スペースに置換
     // ① wikitextテーブルを丸ごと除去（{| ... |} の間を含む複数行テーブル）
     //   例: {| class="wikitable" ... |} （ティム・リンスカムの投球データ表など）
     .replace(/\{\|[\s\S]*?\|\}/g, '')
@@ -5389,6 +5422,11 @@ function _parseJaWikiCharacteristics(wikitext, isPitcher) {
     .replace(/(?:thumb|right|left|center|upright|frameless)\|\d{4}年\s*/g, '') // |2016年 形式
     // ⑫ 連続する空行を整理
     .replace(/\n{3,}/g, '\n\n')
+    // ⑬ 数値と単位の間のスペースを除去（日本語表記スタイルに合わせる）
+    //    例: "97.3 mph" → "97.3mph" / "165 km/h" → "165km/h"
+    //    Wikipediaの "97.3&nbsp;mph" を ⓪ で "97.3 mph" にした後の最終整形
+    //    ※ 誤マッチを避けるためスピード/長さ系単位のみに限定
+    .replace(/(\d(?:\.\d+)?)[  ]+(mph|km\/h|km\/s|m\/s|cm|kg)\b/gi, '$1$2')
     .trim();
 
   const result = {
