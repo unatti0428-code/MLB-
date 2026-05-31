@@ -3390,8 +3390,17 @@ function awardToJa(award) {
   // ⑥ その他タイトル・表彰
   if (n.includes('cy young'))
     return lg ? `${lg}サイ・ヤング賞` : 'サイ・ヤング賞';
-  // 'rookie of the year' を優先、それ以外は'month'を含まない場合のみ年間新人王とみなす
-  if (n.includes('rookie of the year') || (n.includes('rookie') && !n.includes('month'))) {
+  // 「新人王(Rookie of the Year)」は厳密に "rookie of the year" を含む賞のみを対象とする
+  // ※「Topps All-Star Rookie」「All-Rookie Team」「Topps Rookie of the Month」等の
+  //   月間新人賞・新人選抜チーム表彰を誤って年間新人王扱いしないよう、ROY以外は別ルートへ
+  // ① 新人選抜チーム系（タイトルではなく選出表彰）→ 列伝・肩書に出さない
+  if (n.includes('all-rookie') || n.includes('all rookie') ||
+      n.includes('rookie all-star') || n.includes('all-star rookie') ||
+      n.includes('rookie team')) {
+    return null;
+  }
+  // ② 年間新人王（BBWAA等のRookie of the Year）のみを「新人王」として扱う
+  if (n.includes('rookie of the year')) {
     if (awardTeamJa && !isAL && !isNL) return `${awardTeamJa}新人賞`; // チーム独自新人賞
     return lg ? `${lg}新人王` : '新人王';
   }
@@ -3511,7 +3520,8 @@ function awardToJa(award) {
         return '年間最優秀攻撃選手賞(MLB.com)';
       if (n.includes('player of the year') || n.includes('outstanding player'))
         return lg ? `${lg}最優秀選手賞(MLB.com)` : '最優秀選手賞(MLB.com)';
-      if (n.includes('rookie'))       return '最優秀新人賞(MLB.com)';
+      // MLB.comの新人賞も「rookie of the year」のみを年間新人賞として扱う
+      if (n.includes('rookie of the year')) return '最優秀新人賞(MLB.com)';
       if (n.includes('comeback'))     return 'カムバック賞(MLB.com)';
       if (isMlbCom)                   return 'MLB.com年間特別賞'; // 上記以外の未分類MLB.com賞
     }
