@@ -1008,18 +1008,62 @@ function _getCorrectedDrs(row, posIdx, origDrs) {
   const posLabels = ['C','1B','2B','3B','SS','LF','CF','RF'];
   const targetPos = posLabels[posIdx];
   if (!targetPos) return origDrs;
-  // g_headers[1] の index 62 以降からポジション名一致を探す
+  const v = _lookupCorrectedDrs(row, targetPos);
+  return (v !== null) ? v : origDrs;
+}
+
+/**
+ * BK列(index 62)以降の補正DRSセクションから、指定ポジションの補正DRS値を返す。
+ *   - 2行目ヘッダーにポジション名が一致し、かつ値が数値 → その数値
+ *   - 一致するが値が空（守備判定対象外）→ null
+ *   - 一致するヘッダーが無い → null
+ * @returns {number|null}
+ */
+function _lookupCorrectedDrs(row, posLabel) {
   const hdrRow2 = (g_headers && g_headers[1]) ? g_headers[1] : null;
-  if (!hdrRow2) return origDrs;
+  if (!hdrRow2) return null;
   for (let i = 62; i < hdrRow2.length; i++) {
     const label = String(hdrRow2[i] ?? '').trim();
-    if (!label) continue;
-    if (label === targetPos) {
-      const v = safeNum(row[i]);
-      return (v !== null && v !== undefined) ? v : origDrs;
+    if (label === posLabel) return safeNum(row[i]); // 値が空なら null
+  }
+  return null;
+}
+
+/**
+ * 補正DRSセクション（BK列以降にポジション名ヘッダー）が存在するか判定。
+ * 存在する場合、補正値が入っていないポジションは「守備判定対象外」として扱う。
+ * @returns {boolean}
+ */
+function _hasCorrectedDrsSection() {
+  const hdrRow2 = (g_headers && g_headers[1]) ? g_headers[1] : null;
+  if (!hdrRow2) return false;
+  for (let i = 62; i < hdrRow2.length; i++) {
+    if (String(hdrRow2[i] ?? '').trim()) return true;
+  }
+  return false;
+}
+
+/**
+ * 野手の試合数を取得する。
+ * 野手エクセルの列構成は 列3=試合 / 列6=安打 のため、固定 row[6] では安打を誤取得する。
+ * ヘッダー名（「試合」「G」等）で正しい列を検索し、無ければ列3にフォールバックする。
+ * @param {Array} row データ行
+ * @param {Array} [headerRow] ヘッダー行（省略時 g_headers[0]）
+ * @returns {number}
+ */
+function getHitterGames(row, headerRow) {
+  const hdr = headerRow || (g_headers && g_headers[0]);
+  if (hdr) {
+    for (const name of ['試合', '試合数', 'G', 'Games', 'GP']) {
+      const idx = findColIdx(hdr, name);
+      if (idx >= 0) {
+        const v = parseInt(row[idx]);
+        if (!isNaN(v)) return v;
+      }
     }
   }
-  return origDrs;
+  // フォールバック：野手エクセルでは列3（D列）が試合
+  return parseInt(row[3]) || 0;
 }
 
 // ===== WAR 推定ロジック（スプレッドシートに WAR 列がない場合のフォールバック） =====
@@ -1033,7 +1077,7 @@ function _getCorrectedDrs(row, posIdx, origDrs) {
  */
 function estimateHitterWAR(row) {
   const ops    = parseFloat(fmtOPS(row[17]));
-  const rawG   = parseInt(row[6]);
+  const rawG   = getHitterGames(row);
   const games  = (!isNaN(rawG) && rawG >= 1 && rawG <= 162) ? rawG : 150;
   const sb     = getSB(row);
   if (!ops || isNaN(ops) || ops <= 0) return null;
@@ -2149,7 +2193,7 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
   // DH等で守備イニングが極端に少ない場合も試合数ベースで補正し
   // 「少イニング × 500 = 爆発」を防ぐ
   {
-    const rawG    = parseInt(row[6]);
+    const rawG    = getHitterGames(row);
     const gamesInn = (!isNaN(rawG) && rawG >= 10 && rawG <= 162) ? rawG * 8.5 : 0;
     // 守備イニングと試合数推定の大きい方を採用（DH時は試合数ベースが優先される）
     let inn500 = Math.max(defInn, gamesInn);
@@ -2495,14 +2539,21 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
 
   const posLabels = ['C','1B','2B','3B','SS','LF','CF','RF'];
   const drsData   = [];
+  // BK列以降に補正DRSセクションがあるか（ある場合、補正値が空のポジションは守備判定対象外）
+  const _hasCorrSec = _hasCorrectedDrsSection();
   for (let i = 0; i < 8; i++) {
     const inn = row[28 + i * 2];
-    if (inn && inn !== '--' && inn !== null && inn !== '') {
-      // 外野3ポジションはBK列以降の紫塗り修正DRS値を優先表示
-      // イニングは変更なし（row[28+i*2]のまま）
+    if (!inn || inn === '--' || inn === null || inn === '') continue;
+    if (_hasCorrSec) {
+      // 補正DRSセクションがある場合：補正値が登録されたポジションのみ表示
+      // （イニングはごくわずか等で守備判定から外したポジションは補正値が空＝非表示）
+      const corrected = _lookupCorrectedDrs(row, posLabels[i]);
+      if (corrected === null) continue; // 守備判定対象外 → カードに記載しない
+      drsData.push({ pos: posLabels[i], inn: String(inn), drs: corrected });
+    } else {
+      // 旧データ（補正セクションなし）：従来通り元のDRS値を表示
       const origDrs = safeNum(row[29 + i * 2]) || 0;
-      const dispDrs = _getCorrectedDrs(row, i, origDrs);
-      drsData.push({ pos: posLabels[i], inn: String(inn), drs: dispDrs });
+      drsData.push({ pos: posLabels[i], inn: String(inn), drs: origDrs });
     }
   }
 
@@ -3837,7 +3888,7 @@ function buildCardType(row, awardsJa) {
   if (rook) return rook;
   // ⑤ 記録から生成
   if (!g_isPitcher) {
-    const games = parseInt(row[6]) || 0;
+    const games = getHitterGames(row);
     const hasEnoughGames = games >= 80;
     const sb  = getSB(row);
     const rbi = parseInt(row[10]) || 0;
@@ -4587,7 +4638,11 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
   const obp   = apiSt.obp  || fmtRate(row[16]);
   const sb    = parseInt(apiSt.stolenBases ?? getSB(row)) || 0;
   const hits  = parseInt(apiSt.hits        ?? 0)        || 0;
-  const games = parseInt(apiSt.gamesPlayed ?? row[6]) || 0;
+  // 試合数：MLB Stats APIの値を優先。無ければエクセルから正しい列（getHitterGames）で取得。
+  // ※ 固定 row[6] は安打列のため使用しない
+  const games = (apiSt.gamesPlayed != null && apiSt.gamesPlayed !== '')
+    ? parseInt(apiSt.gamesPlayed) || 0
+    : getHitterGames(row);
   // 重要度でソートした受賞歴（シーズンタイトル→特別賞の順。オールスター等は除外済み）
   const AWARD_TOP = ['MVP', 'サイ・ヤング', '新人王', '首位打者', '本塁打王', '打点王', '盗塁王', '奪三振王',
                      '最優秀防御率', '最多勝', '最多セーブ', 'ゴールドグラブ', 'シルバースラッガー',
@@ -8029,7 +8084,7 @@ function buildAndAttachCardBack() {
     cols = [
       { label: '年度',   fn: r => r[1] ?? '--' },
       { label: 'チーム', fn: r => isCareerRow(r) ? _careerTeam : hitterTeamDisplay(r, g_dataRows) },
-      { label: '試合',   fn: r => r[6] ?? '--',                                                         careerKey: 'gamesPlayed' },
+      { label: '試合',   fn: r => { const g = getHitterGames(r, hdr); return g || '--'; },              careerKey: 'gamesPlayed' },
       { label: '打数',   fn: r => getFirstColVal(r, hdr, ['AB','打数','At Bats']),                      careerKey: 'atBats' },
       { label: '安打',   fn: r => getFirstColVal(r, hdr, ['H','安打','Hits']),                          careerKey: 'hits' },
       { label: '本塁打', fn: r => r[9] ?? '--',                                                         careerKey: 'homeRuns' },
