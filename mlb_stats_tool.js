@@ -5436,14 +5436,21 @@ async function processFile(filePath, catcherData = null) {
     const clutch = parseBA(row.getCell(20).value);
     const spd    = Number(row.getCell(21).value) || 0;
 
+    const g        = Number(row.getCell(4).value) || 0;
     const tier     = calcHRTier(hr, ab);
     const walkRate = ab > 0 ? walks / ab * 1000 : 0;
     const soRate   = k / ab * 1000;
     const spdVal   = calcSpeed(spd);
+    let   stealAbility = calcStealAbility(spdVal, ab, walks, sb, cs);
+
+    // 年間試合数100未満: スピード＋盗塁能が120を超えないよう盗塁能を-10ずつ補正
+    if (!isCareer && g < 100 && typeof stealAbility === 'number') {
+      while (spdVal + stealAbility > 120) stealAbility -= 10;
+    }
 
     [calcMeet(avg,tier), calcPower(hr,ab), spdVal, calcChance(clutch-avg),
      calcEye(walkRate), calcSO(soRate), tier,
-     calcStealAbility(spdVal, ab, walks, sb, cs),
+     stealAbility,
      calcVsLeft(vsL-avg)]
       .forEach((v, i) => purpleCell(ws.getCell(rn, START_COL + i), v, fontSize));
 
