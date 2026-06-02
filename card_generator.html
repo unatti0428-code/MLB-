@@ -457,6 +457,7 @@ let g_careerTeam = null;   // 通算行専用：キャリア最多試合チー�
 let g_lastAwardsJa      = [];   // 直近カードのawardsJa（通算バナー再描画用）
 let g_lastIsCareer      = false; // 直近カードが通算行かどうか
 let g_baseOverallScore  = 0;    // タイトル加点前の基本総合力
+let g_currentTheme      = null; // 現在のカードテーマ（タイトル加点でランクアップした際も最新を保持）
 let g_genId             = 0;   // カード生成のたびにインクリメント（非同期汚染防止）
 let g_selectedRow       = null; // 最後に生成したデータ行（テーマ再適用用）
 let g_resolvedPhotoUrl  = '';   // 最後に使った写真URL（テーマ再適用用）
@@ -7280,6 +7281,7 @@ function _reapplyCardTheme(newScore) {
   const newStars = _scoreToStars(newScore);
   currentStars = newStars;
   const t = getThemeVars(newStars);
+  g_currentTheme = t; // ランクアップ後の最新テーマを保持（保存時に参照）
 
   // ① CSS全体を新テーマで更新
   const styleEl = document.getElementById('card-dynamic-css');
@@ -7593,7 +7595,10 @@ async function saveCardAsHTML() {
   msgEl.textContent = '⏳ 画像を変換中...';
   msgEl.style.color = '#ffd700';
 
-  const { theme, playerName, year } = currentSaveData;
+  const { playerName, year } = currentSaveData;
+  // テーマはタイトル加点でランクアップした場合に備え、最新の g_currentTheme を優先使用する。
+  // （currentSaveData.theme は初回生成時=加点前で固定のため、SSR→SR等の色ズレを防ぐ）
+  const theme = g_currentTheme || currentSaveData.theme;
 
   // ── 列伝の最新HTML（AI生成済みがあればそれを使う） ──
   const retsudenEl  = document.getElementById('retsuden-area');
@@ -8723,6 +8728,7 @@ async function _doGenerate(photoInput) {
                 : overallScore >= 50 ? 1 : 0;
     currentStars = stars;
     const theme  = getThemeVars(stars);
+    g_currentTheme = theme; // 最新テーマを保持（保存時に参照）
 
     // カードHTML生成（英語名を渡す）
     const nameEn = g_mlbNameEn || '';
