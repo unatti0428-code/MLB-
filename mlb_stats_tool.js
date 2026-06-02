@@ -5448,11 +5448,36 @@ async function processFile(filePath, catcherData = null) {
       while (spdVal + stealAbility > 120) stealAbility -= 10;
     }
 
-    [calcMeet(avg,tier), calcPower(hr,ab), spdVal, calcChance(clutch-avg),
-     calcEye(walkRate), calcSO(soRate), tier,
-     stealAbility,
-     calcVsLeft(vsL-avg)]
-      .forEach((v, i) => purpleCell(ws.getCell(rn, START_COL + i), v, fontSize));
+    const abilityVals = [
+      calcMeet(avg,tier),     // i=0 ミート
+      calcPower(hr,ab),       // i=1 パワー
+      spdVal,                 // i=2 スピード
+      calcChance(clutch-avg), // i=3 チャンス
+      calcEye(walkRate),      // i=4 選球眼
+      calcSO(soRate),         // i=5 三振
+      tier,                   // i=6 HR（クランプ対象外）
+      stealAbility,           // i=7 盗塁能
+      calcVsLeft(vsL-avg),    // i=8 対左投手
+    ];
+    // 打数150未満の年は各能力値を上下限でクランプ（少数サンプル補正）
+    if (!isCareer && ab < 150) {
+      const clamps = [
+        [35,  90],  // ミート
+        [35,  90],  // パワー
+        [25, 100],  // スピード
+        [25, 100],  // チャンス
+        [25, 100],  // 選球眼
+        [25, 110],  // 三振
+        null,       // HR（対象外）
+        [-10, 40],  // 盗塁能
+        [-25, 25],  // 対左投手
+      ];
+      clamps.forEach((c, i) => {
+        if (c !== null && typeof abilityVals[i] === 'number')
+          abilityVals[i] = Math.max(c[0], Math.min(c[1], abilityVals[i]));
+      });
+    }
+    abilityVals.forEach((v, i) => purpleCell(ws.getCell(rn, START_COL + i), v, fontSize));
 
     // リード (START_COL+9) と 阻止率 (START_COL+10) — 捕手のみ
     {
@@ -5518,6 +5543,9 @@ async function processFile(filePath, catcherData = null) {
             leadVal = Math.max(-8, Math.min(8, Math.round(comp1 + comp2)));
           }
         }
+        // C出場100イニング以下の年: リードを[-7, 7]でクランプ（少数サンプル補正）
+        if (!isCareer && cInn != null && cInn <= 100)
+          leadVal = Math.max(-7, Math.min(7, leadVal));
         purpleCell(ws.getCell(rn, START_COL + 9), leadVal, fontSize);
 
         // 阻止率: CS÷(SB+CS)×100 round（年別→career で代替）
