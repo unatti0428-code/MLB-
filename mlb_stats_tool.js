@@ -2739,9 +2739,9 @@ async function pitFetchBrowserData(slug, id, years, onProgress, playerName = '',
     try {
       onProgress('Baseball Savant を読み込み中...');
       const savantUrl = `https://baseballsavant.mlb.com/savant-player/${slug}-${id}?stats=statcast-r-pitching-mlb`;
-      // 'load' を使用: networkidle2 は Analytics 等の永続コネクションで60s タイムアウトするため
-      // XHR データの完了は waitForFunction で BA/SLG の出現を監視して保証する
-      await page.goto(savantUrl, { waitUntil: 'load', timeout: 60000 });
+      // domcontentloaded: HTML受信後すぐ返るため goto 自体のブロックを最小化。
+      // 12秒タイムアウト: 超えた場合は catch に落ちて次処理へスキップ。
+      await page.goto(savantUrl, { waitUntil: 'domcontentloaded', timeout: 12000 });
 
       // ── テーブル描画待機（最大12秒）────────────────────────────────────────
       // BA/SLG を含む Run Values テーブルが出るまで待つ。
