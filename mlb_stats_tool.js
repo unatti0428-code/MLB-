@@ -2743,11 +2743,9 @@ async function pitFetchBrowserData(slug, id, years, onProgress, playerName = '',
       // XHR データの完了は waitForFunction で BA/SLG の出現を監視して保証する
       await page.goto(savantUrl, { waitUntil: 'load', timeout: 60000 });
 
-      // ── テーブル描画待機（2フェーズ）──────────────────────────────────────
-      // フェーズ①: BA/SLG を含む Run Values テーブルが出るまで待つ（最大45秒）
-      //   → XHR で後から読み込まれるデータ（被打率・SLG）の出現を確認するため
-      //      /.³/（小数点3桁）が現れた時点で XHR 完了と判断する
-      // フェーズ②: タイムアウト時は球種名テーブルのみで続行（velo/pct だけでも取得）
+      // ── テーブル描画待機（最大12秒）────────────────────────────────────────
+      // BA/SLG を含む Run Values テーブルが出るまで待つ。
+      // 12秒以内に取得できなければそのまま次処理へ進む（取得できた分だけ使用）。
       const PITCH_KW = ['4-Seam','Fastball','Sinker','Slider','Riding','Knuckleball','Knuckler'];
       try {
         await page.waitForFunction(
@@ -2759,21 +2757,10 @@ async function pitFetchBrowserData(slug, id, years, onProgress, playerName = '',
             }
             return false;
           },
-          { timeout: 45000 },
+          { timeout: 12000 },
           PITCH_KW
         );
-      } catch {
-        // BA/SLG なしでも球種テーブルがあれば続行（velo/pct のみ取得）
-        try {
-          await page.waitForFunction(
-            (kw) => [...document.querySelectorAll('table')].some(t =>
-              /\d{4}/.test(t.innerText || '') && kw.some(k => (t.innerText||'').includes(k))
-            ),
-            { timeout: 10000 },
-            PITCH_KW
-          );
-        } catch { /* テーブルが見つからなくても続行 */ }
-      }
+      } catch { /* 12秒で切り上げ、取得済みデータのみで続行 */ }
 
       // キャリアページの多年度 Pitch Tracking テーブルを一括パース
       // ── 設計方針 ────────────────────────────────────────────────────────────
