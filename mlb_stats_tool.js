@@ -5555,8 +5555,8 @@ async function processFile(filePath, catcherData = null) {
           const tot = (fieldingData.sb || 0) + (fieldingData.cs || 0);
           csRateVal = tot > 0 ? Math.round((fieldingData.cs || 0) / tot * 100) : 0;
         }
-        // C出場100イニング以下 かつ 阻止率45%超 → 通算阻止率で代替（少数サンプル補正）
-        if (!isCareer && cInn != null && cInn <= 100 && csRateVal > 45 && carData?.fielding) {
+        // C出場100イニング以下 かつ 阻止率45%超 or 9%未満 → 通算阻止率で代替（少数サンプル補正）
+        if (!isCareer && cInn != null && cInn <= 100 && (csRateVal > 45 || csRateVal < 9) && carData?.fielding) {
           const carTot = (carData.fielding.sb || 0) + (carData.fielding.cs || 0);
           csRateVal = carTot > 0 ? Math.round((carData.fielding.cs || 0) / carTot * 100) : csRateVal;
         }
