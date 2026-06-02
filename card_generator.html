@@ -2303,10 +2303,29 @@ function calcPitcherOverall(row, fipValue = null, warValue = null) {
   const warNum = (warValue !== null && warValue !== '--')
     ? parseFloat(String(warValue).replace('~', ''))
     : NaN;
+  let finalScore;
   if (!isNaN(warNum) && isStarterForFIP) {
-    return Math.round((A * 3 + warToScore(warNum)) / 4);
+    finalScore = Math.round((A * 3 + warToScore(warNum)) / 4);
+  } else {
+    finalScore = A;
   }
-  return A;
+
+  // ── 投球回数による総合力の上限制限 ──
+  // 投球回が少ない選手（失点0等で能力値が過大評価されるケース）を抑制する
+  //   投球回10未満 → MAX79 / 20未満 → MAX89 / 30未満 → MAX99
+  // ※ 通算行（年度が4桁でない）は累積イニングが多いため制限対象外
+  const _isCareerRowOvr = !/^\d{4}$/.test(String(row[1] ?? '').trim());
+  if (!_isCareerRowOvr) {
+    const ipNum = parseFloat(row[10]);
+    if (!isNaN(ipNum)) {
+      let cap = null;
+      if (ipNum < 10)      cap = 79;
+      else if (ipNum < 20) cap = 89;
+      else if (ipNum < 30) cap = 99;
+      if (cap !== null && finalScore > cap) finalScore = cap;
+    }
+  }
+  return finalScore;
 }
 
 // ===== CARD HTML BUILDERS =====
