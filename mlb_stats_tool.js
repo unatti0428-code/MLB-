@@ -1396,22 +1396,24 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
         if (cell.value !== '' && !isNaN(v))
           purpleCell(cell, Math.max(-25, Math.min(25, v)), fontSize);
       }
-      // 各球種の球威: [35, kyuiMax]（通算加重平均用 _rowKyuiByI にも反映）
+      // 各球種の球威: [35, kyuiMax]（割合割当済みセルのみ・通算加重平均用にも反映）
       activePitchList.forEach((pg, i) => {
         const cell = ws.getCell(rn, PITCH_ABILITY_START_COL + i * 3 + 1);
+        if (cell.value == null) return;  // 割合未割当の球種はスキップ
         const v = Number(cell.value);
-        if (cell.value !== '' && !isNaN(v)) {
+        if (!isNaN(v)) {
           const clamped = Math.max(35, Math.min(kyuiMax, v));
           redPurpleCell(cell, clamped, fontSize);
           if (_rowKyuiByI[i] !== undefined) _rowKyuiByI[i] = clamped;
         }
       });
     }
-    // 球威下限30: IP・通算に関わらず常時適用
+    // 球威下限30: IP・通算に関わらず常時適用（割合割当済みセルのみ）
     activePitchList.forEach((pg, i) => {
       const cell = ws.getCell(rn, PITCH_ABILITY_START_COL + i * 3 + 1);
+      if (cell.value == null) return;  // 割合未割当の球種はスキップ
       const v = Number(cell.value);
-      if (cell.value !== '' && !isNaN(v) && v < 30) {
+      if (!isNaN(v) && v < 30) {
         redPurpleCell(cell, 30, fontSize);
         if (_rowKyuiByI[i] !== undefined) _rowKyuiByI[i] = 30;
       }
