@@ -1180,11 +1180,13 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
       }
       if (sumI > 0) kaifuku = Math.round(sumKI / sumI);
     } else {
-      // 年度行: IP < 8 → 1固定 / IP < 15 → 2固定 / それ以上 → 基本値＋試合数ボーナス
+      // 年度行: IP < 8 → 1固定 / IP < 15 → 2固定 / IP < 20 → 2.5固定 / それ以上 → 基本値＋試合数ボーナス
       if (ip < 8) {
         kaifuku = 1;
       } else if (ip < 15) {
         kaifuku = 2;
+      } else if (ip < 20) {
+        kaifuku = 2.5;
       } else {
         const _kBase = calcKaifukuryo(ip, g, gs);
         if (_kBase !== '') {
