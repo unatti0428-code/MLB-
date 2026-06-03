@@ -1378,6 +1378,45 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
       redPurpleCell(ws.getCell(rn, base + 2), pctNum, fontSize);
     });
 
+    // ── 少数イニング年の能力値クランプ（IP < 20 / IP < 10）────────────────────
+    if (!isCareerRow && ip < 20) {
+      const statMax = ip < 10 ? 80 : 90;  // 制球・緩急・精神・奪三振・重さの上限
+      const kyuiMax = ip < 10 ? 90 : 95;  // 球威の上限
+      // 制球・緩急・精神・奪三振・重さ: [35, statMax]
+      for (const col of [SEIKYU_COL, KANKYUU_COL, SEISIN_COL, SANSHIN_COL, OMOSA_COL]) {
+        const cell = ws.getCell(rn, col);
+        const v = Number(cell.value);
+        if (cell.value !== '' && !isNaN(v))
+          purpleCell(cell, Math.max(35, Math.min(statMax, v)), fontSize);
+      }
+      // 対左・対盗塁: [-25, 25]
+      for (const col of [TAILEFT_COL, TAITOURUI_COL]) {
+        const cell = ws.getCell(rn, col);
+        const v = Number(cell.value);
+        if (cell.value !== '' && !isNaN(v))
+          purpleCell(cell, Math.max(-25, Math.min(25, v)), fontSize);
+      }
+      // 各球種の球威: [35, kyuiMax]（通算加重平均用 _rowKyuiByI にも反映）
+      activePitchList.forEach((pg, i) => {
+        const cell = ws.getCell(rn, PITCH_ABILITY_START_COL + i * 3 + 1);
+        const v = Number(cell.value);
+        if (cell.value !== '' && !isNaN(v)) {
+          const clamped = Math.max(35, Math.min(kyuiMax, v));
+          redPurpleCell(cell, clamped, fontSize);
+          if (_rowKyuiByI[i] !== undefined) _rowKyuiByI[i] = clamped;
+        }
+      });
+    }
+    // 球威下限30: IP・通算に関わらず常時適用
+    activePitchList.forEach((pg, i) => {
+      const cell = ws.getCell(rn, PITCH_ABILITY_START_COL + i * 3 + 1);
+      const v = Number(cell.value);
+      if (cell.value !== '' && !isNaN(v) && v < 30) {
+        redPurpleCell(cell, 30, fontSize);
+        if (_rowKyuiByI[i] !== undefined) _rowKyuiByI[i] = 30;
+      }
+    });
+
     // 年度行のみ kyuiStore に蓄積（通算行はスキップ）
     if (!isCareerRow && Object.keys(_rowKyuiByI).length > 0) {
       yearKyuiStore.push({ outs: ipToOuts(ipRaw), kyuiByI: _rowKyuiByI });
