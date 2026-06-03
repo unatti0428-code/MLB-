@@ -5477,6 +5477,21 @@ async function processFile(filePath, catcherData = null) {
           abilityVals[i] = Math.max(c[0], Math.min(c[1], abilityVals[i]));
       });
     }
+    // 打数50未満: 上限をさらに絞る（i=2スピード・i=8対左は対象外）
+    if (!isCareer && ab < 50) {
+      const caps = { 0:75, 1:75, 3:90, 4:90, 5:90, 6:2, 7:30 };
+      Object.entries(caps).forEach(([i, max]) => {
+        if (typeof abilityVals[i] === 'number') abilityVals[i] = Math.min(max, abilityVals[i]);
+      });
+    }
+    // 打数25未満: 上限をさらに絞る（盗塁能は試合数20以上の年は除外）
+    if (!isCareer && ab < 25) {
+      const caps = { 0:70, 1:70, 3:80, 4:80, 5:80, 6:1 };
+      if (g < 20) caps[7] = 20;  // 盗塁能上限20（試合数20以上は除外）
+      Object.entries(caps).forEach(([i, max]) => {
+        if (typeof abilityVals[i] === 'number') abilityVals[i] = Math.min(max, abilityVals[i]);
+      });
+    }
     abilityVals.forEach((v, i) => purpleCell(ws.getCell(rn, START_COL + i), v, fontSize));
 
     // リード (START_COL+9) と 阻止率 (START_COL+10) — 捕手のみ
