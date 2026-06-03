@@ -1194,6 +1194,11 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
           kaifuku = _kBase + _kBonus;
         }
       }
+      // round(IP÷5) が回復量より小さければ round(IP÷5) に修正
+      if (kaifuku !== '') {
+        const ipDiv5 = Math.round(ip / 5);
+        if (ipDiv5 < kaifuku) kaifuku = ipDiv5;
+      }
       if (kaifuku !== '') yearKaifukuStore.push({ ip, kaifuku });
     }
     if (kaifuku !== '') purpleCell(ws.getCell(rn, KAIFUKURYO_COL), kaifuku, fontSize);
