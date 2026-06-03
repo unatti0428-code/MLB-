@@ -1180,13 +1180,19 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
       }
       if (sumI > 0) kaifuku = Math.round(sumKI / sumI);
     } else {
-      // 年度行: 基本値 + ボーナス (G≥80:+2, G≥70:+1)
-      const _kBase = calcKaifukuryo(ip, g, gs);
-      if (_kBase !== '') {
-        const _kBonus = g >= 80 ? 2 : g >= 70 ? 1 : 0;
-        kaifuku = _kBase + _kBonus;
-        yearKaifukuStore.push({ ip, kaifuku });
+      // 年度行: IP < 8 → 1固定 / IP < 15 → 2固定 / それ以上 → 基本値＋試合数ボーナス
+      if (ip < 8) {
+        kaifuku = 1;
+      } else if (ip < 15) {
+        kaifuku = 2;
+      } else {
+        const _kBase = calcKaifukuryo(ip, g, gs);
+        if (_kBase !== '') {
+          const _kBonus = g >= 80 ? 2 : g >= 70 ? 1 : 0;
+          kaifuku = _kBase + _kBonus;
+        }
       }
+      if (kaifuku !== '') yearKaifukuStore.push({ ip, kaifuku });
     }
     if (kaifuku !== '') purpleCell(ws.getCell(rn, KAIFUKURYO_COL), kaifuku, fontSize);
 
