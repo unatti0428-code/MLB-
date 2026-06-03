@@ -1421,14 +1421,14 @@ async function addAbilityToFile(xlsxPath, showKyuiMap = {}, pitchNameOverrides =
         }
       });
     }
-    // 球威下限30: IP・通算に関わらず常時適用（割合割当済みセルのみ）
+    // 球威下限35: IP・通算に関わらず常時適用（割合割当済みセルのみ）
     activePitchList.forEach((pg, i) => {
       const cell = ws.getCell(rn, PITCH_ABILITY_START_COL + i * 3 + 1);
       if (cell.value == null) return;  // 割合未割当の球種はスキップ
       const v = Number(cell.value);
-      if (!isNaN(v) && v < 30) {
-        redPurpleCell(cell, 30, fontSize);
-        if (_rowKyuiByI[i] !== undefined) _rowKyuiByI[i] = 30;
+      if (!isNaN(v) && v < 35) {
+        redPurpleCell(cell, 35, fontSize);
+        if (_rowKyuiByI[i] !== undefined) _rowKyuiByI[i] = 35;
       }
     });
 
