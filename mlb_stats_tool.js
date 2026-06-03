@@ -5455,7 +5455,7 @@ async function processFile(filePath, catcherData = null) {
       calcChance(clutch-avg), // i=3 チャンス
       calcEye(walkRate),      // i=4 選球眼
       calcSO(soRate),         // i=5 三振
-      tier,                   // i=6 HR（クランプ対象外）
+      tier,                   // i=6 HR
       stealAbility,           // i=7 盗塁能
       calcVsLeft(vsL-avg),    // i=8 対左投手
     ];
@@ -5468,7 +5468,7 @@ async function processFile(filePath, catcherData = null) {
         [25, 100],  // チャンス
         [25, 100],  // 選球眼
         [25, 110],  // 三振
-        null,       // HR（対象外）
+        [0,    3],  // HR能（上限3）
         [-10, 40],  // 盗塁能
         [-25, 25],  // 対左投手
       ];
