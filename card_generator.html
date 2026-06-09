@@ -2224,12 +2224,27 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
   const hrAbility = safeNum(row[50]);
   const hrBonus   = (hrAbility !== null && hrAbility > 0) ? hrAbility * 2 : 0;
 
+  // ── 安打数ボーナス（単年のみ・通算行は適用なし） ──
+  //   安打180以上190未満 → +3 / 190以上200未満 → +4 / 200以上 → +5
+  let hitsBonus = 0;
+  const _isCareerRowH = !/^\d{4}$/.test(String(row[1] ?? '').trim());
+  if (!_isCareerRowH) {
+    // 安打数はヘッダー名で取得（無ければ安打列 row[6] にフォールバック）
+    let hitsN = parseInt(getFirstColVal(row, (g_headers && g_headers[0]) || null, ['安打', 'H', 'Hits']));
+    if (isNaN(hitsN)) hitsN = parseInt(row[6]);
+    if (!isNaN(hitsN)) {
+      if (hitsN >= 200)      hitsBonus = 5;
+      else if (hitsN >= 190) hitsBonus = 4;
+      else if (hitsN >= 180) hitsBonus = 3;
+    }
+  }
+
   // ── WAR 実測値がある場合のみ総合力にブレンド ──
   const warNum = (realWar !== null && realWar !== '--') ? parseFloat(realWar) : NaN;
   if (!isNaN(warNum)) {
-    return Math.round((A + warToScore(warNum)) / 2) + hrBonus;
+    return Math.round((A + warToScore(warNum)) / 2) + hrBonus + hitsBonus;
   }
-  return A + hrBonus;
+  return A + hrBonus + hitsBonus;
 }
 
 /**
