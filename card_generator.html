@@ -2382,6 +2382,18 @@ function calcPitcherOverall(row, fipValue = null, warValue = null) {
     }
   }
 
+  // ── リリーフ投手の精神基準補正（投球回60未満） ──
+  // カードで「先発投手」判定がない（gs < 試合数×0.5 ＝ リリーフ）かつ投球回60未満で、
+  // 総合力が精神値を上回る場合のみ、(本来の総合力 + 精神) ÷ 2 に補正して過大査定を抑える。
+  // 精神値が総合力以上の場合は補正しない。
+  // ※ ment = safeNum(row[53]), g/gs は上部で定義済み（g=試合数, gs=先発数）
+  const isStarterForCard = g > 0 && gs >= g * 0.5;
+  if (!isStarterForCard && !isNaN(ipNum) && ipNum < 60 && ment !== null) {
+    if (finalScore > ment) {
+      finalScore = Math.round((finalScore + ment) / 2);
+    }
+  }
+
   // ── 投球回による総合力の上限制限（通算年にも適用） ──
   // 投球回が少ない選手（失点0等で能力値が過大評価されるケース）を抑制する
   //   投球回10未満 → MAX65 / 20未満 → MAX70 / 30未満 → MAX75
