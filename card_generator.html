@@ -2365,20 +2365,32 @@ function calcPitcherOverall(row, fipValue = null, warValue = null) {
     finalScore = A;
   }
 
-  // ── 投球回数による総合力の上限制限 ──
-  // 投球回が少ない選手（失点0等で能力値が過大評価されるケース）を抑制する
-  //   投球回10未満 → MAX79 / 20未満 → MAX89 / 30未満 → MAX99
-  // ※ 通算行（年度が4桁でない）は累積イニングが多いため制限対象外
   const _isCareerRowOvr = !/^\d{4}$/.test(String(row[1] ?? '').trim());
-  if (!_isCareerRowOvr) {
-    const ipNum = parseFloat(row[10]);
-    if (!isNaN(ipNum)) {
-      let cap = null;
-      if (ipNum < 10)      cap = 79;
-      else if (ipNum < 20) cap = 89;
-      else if (ipNum < 30) cap = 99;
-      if (cap !== null && finalScore > cap) finalScore = cap;
+  const ipNum = parseFloat(row[10]);
+
+  // ── 投球回による底上げボーナス（単年のみ・通算行は適用なし） ──
+  //   150以上175未満 かつ 総合力70未満 → +3
+  //   175以上200未満 かつ 総合力72未満 → +4
+  //   200以上        かつ 総合力75未満 → +5
+  if (!_isCareerRowOvr && !isNaN(ipNum)) {
+    if (ipNum >= 200) {
+      if (finalScore < 75) finalScore += 5;
+    } else if (ipNum >= 175) {
+      if (finalScore < 72) finalScore += 4;
+    } else if (ipNum >= 150) {
+      if (finalScore < 70) finalScore += 3;
     }
+  }
+
+  // ── 投球回による総合力の上限制限（通算年にも適用） ──
+  // 投球回が少ない選手（失点0等で能力値が過大評価されるケース）を抑制する
+  //   投球回10未満 → MAX65 / 20未満 → MAX70 / 30未満 → MAX75
+  if (!isNaN(ipNum)) {
+    let cap = null;
+    if (ipNum < 10)      cap = 65;
+    else if (ipNum < 20) cap = 70;
+    else if (ipNum < 30) cap = 75;
+    if (cap !== null && finalScore > cap) finalScore = cap;
   }
   return finalScore;
 }
