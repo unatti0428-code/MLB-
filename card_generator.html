@@ -2241,10 +2241,37 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
 
   // ── WAR 実測値がある場合のみ総合力にブレンド ──
   const warNum = (realWar !== null && realWar !== '--') ? parseFloat(realWar) : NaN;
+  let finalScore;
   if (!isNaN(warNum)) {
-    return Math.round((A + warToScore(warNum)) / 2) + hrBonus + hitsBonus;
+    finalScore = Math.round((A + warToScore(warNum)) / 2) + hrBonus + hitsBonus;
+  } else {
+    finalScore = A + hrBonus + hitsBonus;
   }
-  return A + hrBonus + hitsBonus;
+
+  // ── 成績フロア（最低保証・単年のみ・通算行は適用なし） ──
+  //   本塁打20以上 → 総合力70保証 / 30以上 → 75保証
+  //   規定打席到達(打数+四球≧503)かつ
+  //     打率.280以上 → 70保証 / .300以上 → 75保証 / .320以上 → 80保証
+  //   複数該当時は最も高い下限を適用する
+  if (!_isCareerRowH) {
+    const _hdr = (g_headers && g_headers[0]) || null;
+    const hrN  = parseInt(row[9]) || 0;
+    const avgN = parseFloat(String(fmtRate(row[15])).replace(/^\./, '0.')) || 0;
+    const abN  = parseInt(getFirstColVal(row, _hdr, ['AB', '打数', 'At Bats'])) || 0;
+    const bbN  = parseInt(getFirstColVal(row, _hdr, ['BB', '四球', 'Walks', 'BB+HBP'])) || 0;
+    const qualified = (abN + bbN) >= 503; // 規定打席相当
+
+    let floor = 0;
+    if (hrN >= 30)      floor = Math.max(floor, 75);
+    else if (hrN >= 20) floor = Math.max(floor, 70);
+    if (qualified) {
+      if (avgN >= 0.320)      floor = Math.max(floor, 80);
+      else if (avgN >= 0.300) floor = Math.max(floor, 75);
+      else if (avgN >= 0.280) floor = Math.max(floor, 70);
+    }
+    if (floor > 0 && finalScore < floor) finalScore = floor;
+  }
+  return finalScore;
 }
 
 /**
