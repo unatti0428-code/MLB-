@@ -2271,6 +2271,18 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
     }
     if (floor > 0 && finalScore < floor) finalScore = floor;
   }
+
+  // ── 試合数による総合力の底上げ（単年のみ・通算行は適用なし） ──
+  //   121試合以上138試合未満 かつ 総合力65未満 → 本来 + ROUNDDOWN((65-本来)÷2)
+  //   138試合以上            かつ 総合力70未満 → 本来 + ROUNDDOWN((70-本来)÷2)
+  if (!_isCareerRowH) {
+    const gN = getHitterGames(row);
+    if (gN >= 138) {
+      if (finalScore < 70) finalScore = finalScore + Math.floor((70 - finalScore) / 2);
+    } else if (gN >= 121) {
+      if (finalScore < 65) finalScore = finalScore + Math.floor((65 - finalScore) / 2);
+    }
+  }
   return finalScore;
 }
 
