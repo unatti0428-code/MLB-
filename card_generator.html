@@ -2239,13 +2239,28 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
     }
   }
 
+  // ── 能力値ボーナス（規定打席到達・単年のみ・通算行は適用なし） ──
+  //   三振耐性110超 → +2 / 選球眼110超 → +2 / チャンス110超 → +2（各独立に加算）
+  //   ※ kres=三振耐性(row49), eye=選球眼(row48), chance=チャンス(row47) は上部で定義済み
+  let abilityBonus = 0;
+  if (!_isCareerRowH) {
+    const _hdrA = (g_headers && g_headers[0]) || null;
+    const abA = parseInt(getFirstColVal(row, _hdrA, ['AB', '打数', 'At Bats'])) || 0;
+    const bbA = parseInt(getFirstColVal(row, _hdrA, ['BB', '四球', 'Walks', 'BB+HBP'])) || 0;
+    if ((abA + bbA) >= 503) { // 規定打席相当
+      if (kres   !== null && kres   > 110) abilityBonus += 2;
+      if (eye    !== null && eye    > 110) abilityBonus += 2;
+      if (chance !== null && chance > 110) abilityBonus += 2;
+    }
+  }
+
   // ── WAR 実測値がある場合のみ総合力にブレンド ──
   const warNum = (realWar !== null && realWar !== '--') ? parseFloat(realWar) : NaN;
   let finalScore;
   if (!isNaN(warNum)) {
-    finalScore = Math.round((A + warToScore(warNum)) / 2) + hrBonus + hitsBonus;
+    finalScore = Math.round((A + warToScore(warNum)) / 2) + hrBonus + hitsBonus + abilityBonus;
   } else {
-    finalScore = A + hrBonus + hitsBonus;
+    finalScore = A + hrBonus + hitsBonus + abilityBonus;
   }
 
   // ── 成績フロア（最低保証・単年のみ・通算行は適用なし） ──
