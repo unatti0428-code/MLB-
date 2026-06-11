@@ -9091,6 +9091,54 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
   }
 }
 
+// ═══ チーム別写真メモリ ═══════════════════════════════════════
+// 手動アップロードした写真を「選手×チーム」単位で localStorage に保存し、
+// 同じチームに所属する他年度のカード生成時に自動転用する。
+// （例: BAL時代の写真を一度アップロード → 2022〜2025のBAL年度すべてに適用）
+let g_teamPhotoLocked = false; // 保存写真適用中は非同期写真解決を停止するフラグ
+
+function _teamPhotoStoreKey(row) {
+  const playerKey = g_mlbId || String((row && row[0]) || '').trim() || null;
+  if (!playerKey) return null;
+  const isCareer = !/^\d{4}$/.test(String((row && row[1]) ?? '').trim());
+  const teamCode = normalizeTeamCode(
+    (isCareer && g_careerTeam) ? String(g_careerTeam) : String((row && row[2]) || '').trim()
+  );
+  if (!teamCode || teamCode === 'TOT' || teamCode === '--') return null;
+  return `mlbcard_teamphoto_${playerKey}_${teamCode}`;
+}
+
+/** 手動アップロード写真を縮小JPEG(data URL)化してチーム別に保存する */
+function _saveTeamPhoto(srcUrl, row) {
+  const key = _teamPhotoStoreKey(row);
+  if (!key) return;
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const maxW = 640;
+      const scale = Math.min(1, maxW / (img.naturalWidth || maxW));
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round((img.naturalWidth  || maxW) * scale);
+      canvas.height = Math.round((img.naturalHeight || maxW) * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      localStorage.setItem(key, dataUrl);
+      console.log('[TeamPhoto] 保存:', key, `(${Math.round(dataUrl.length / 1024)}KB)`);
+    } catch (e) {
+      // localStorage 容量超過等は無視（保存できなくても生成は続行）
+      console.warn('[TeamPhoto] 保存失敗:', e.message);
+    }
+  };
+  img.src = srcUrl;
+}
+
+/** 保存済みチーム別写真を取得（なければ null） */
+function _loadTeamPhoto(row) {
+  const key = _teamPhotoStoreKey(row);
+  if (!key) return null;
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+
 async function _doGenerate(photoInput) {
   // ※ プロキシ経由の自動BRefフェッチは file:// 環境では常に失敗するため廃止。
   //    WAR/FIPは貼り付けUIから取得済みのキャッシュを使用する。
@@ -9164,6 +9212,7 @@ async function _doGenerate(photoInput) {
     }
     g_baseOverallScore = overallScore; // タイトル加点前のスコアを保存
     g_genId++;          // 新カード生成を開始：古い非同期処理が誤って加点するのを防ぐ
+    g_teamPhotoLocked  = false; // チーム別保存写真のロックをリセット（適用時に再セット）
     g_lastIsCareer     = false; // 非同期完了前でも古いcareerフラグが残らないよう即リセット
     g_selectedRow      = selectedRow;
     g_isPeakRow        = isPeakRow;
@@ -9208,11 +9257,22 @@ async function _doGenerate(photoInput) {
       ? `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,h_282,c_fit,q_auto:best/v1/people/${g_mlbId}/headshot/67/current`
       : null;
 
+    const _savedTeamPhoto = _isManualPhoto ? null : _loadTeamPhoto(selectedRow);
+
     if (_isManualPhoto) {
       // ① 手動アップロード最優先
       const photoURL = URL.createObjectURL(photoInput.files[0]);
       cardContent = cardContent.replace(/__PHOTO__/g, photoURL);
       g_resolvedPhotoUrl = photoURL;
+      // チーム別写真メモリへ保存（同チーム所属の他年度カードに自動転用される）
+      _saveTeamPhoto(photoURL, selectedRow);
+
+    } else if (_savedTeamPhoto) {
+      // ①-b 保存済みチーム別写真（過去に手動アップロードした同チーム時代の写真）
+      cardContent = cardContent.replace(/__PHOTO__/g, _savedTeamPhoto);
+      g_resolvedPhotoUrl = _savedTeamPhoto;
+      g_teamPhotoLocked = true; // 非同期写真解決による上書きを防止
+      console.log('[TeamPhoto] 保存済みチーム別写真を適用');
 
     } else if (g_mlbId && g_mlbHasRealPhoto === true) {
       // ② MLB実写真が確認済み → MLB CDN使用（最良品質）
@@ -9287,9 +9347,9 @@ async function _doGenerate(photoInput) {
         `</div>` +
       `</div>`;
 
-    // 年度別写真の非同期解決（手動アップロードがない場合のみ）
+    // 年度別写真の非同期解決（手動アップロード・保存済みチーム別写真がない場合のみ）
     // カードが表示された後、バックグラウンドで年度に合致する写真を探し差し替える
-    if (!_isManualPhoto && g_mlbId) {
+    if (!_isManualPhoto && !g_teamPhotoLocked && g_mlbId) {
       const _thisGenId = g_genId; // クロージャでキャプチャ（旧世代への誤適用防止）
       resolveYearPhotoAsync(g_mlbId, selectedRow[1], brPhoto, _thisGenId);
     }
