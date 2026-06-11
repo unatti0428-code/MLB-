@@ -7198,8 +7198,24 @@ function _birthLineFromBirthInfo(info) {
   }
 
   // ── 米国出身：州名を日本語化＋都市名をカタカナ化 ──
+  // MLB APIは州を略号（"TX"等）で返すことがあるため、まず正式名に展開してから日本語化する
   if (/^(usa|united states)$/i.test(country)) {
-    const stateJa = _STATE_JA_MAP[info.state] || (info.state ? `${info.state}州` : '');
+    const _US_STATE_ABBR = {
+      AL:'Alabama', AK:'Alaska', AZ:'Arizona', AR:'Arkansas', CA:'California', CO:'Colorado',
+      CT:'Connecticut', DE:'Delaware', FL:'Florida', GA:'Georgia', HI:'Hawaii', ID:'Idaho',
+      IL:'Illinois', IN:'Indiana', IA:'Iowa', KS:'Kansas', KY:'Kentucky', LA:'Louisiana',
+      ME:'Maine', MD:'Maryland', MA:'Massachusetts', MI:'Michigan', MN:'Minnesota',
+      MS:'Mississippi', MO:'Missouri', MT:'Montana', NE:'Nebraska', NV:'Nevada',
+      NH:'New Hampshire', NJ:'New Jersey', NM:'New Mexico', NY:'New York',
+      NC:'North Carolina', ND:'North Dakota', OH:'Ohio', OK:'Oklahoma', OR:'Oregon',
+      PA:'Pennsylvania', RI:'Rhode Island', SC:'South Carolina', SD:'South Dakota',
+      TN:'Tennessee', TX:'Texas', UT:'Utah', VT:'Vermont', VA:'Virginia', WA:'Washington',
+      WV:'West Virginia', WI:'Wisconsin', WY:'Wyoming', DC:'District of Columbia',
+    };
+    let stRaw = info.state;
+    if (/^[A-Z]{2}$/.test(stRaw)) stRaw = _US_STATE_ABBR[stRaw] || stRaw;
+    const stateJa = (stRaw === 'District of Columbia') ? 'ワシントンD.C.'
+                  : (_STATE_JA_MAP[stRaw] || (stRaw ? `${stRaw}州` : ''));
     const cityJa  = _cityEngToKana(info.city) || info.city;
     if (stateJa && cityJa) return `${stateJa}${cityJa}出身。${closing}`;
     if (stateJa)           return `${stateJa}出身。${closing}`;
@@ -8804,8 +8820,33 @@ async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
   try {
     let pages = await fetchCat(nameEn.trim());
     if (!pages || !pages.length) pages = await fetchCat(`${nameEn.trim()} (baseball)`);
+    // カテゴリ未整備の選手向け：ファイル名前空間の全文検索でフォールバック
+    let fromSearch = false;
+    if (!pages || !pages.length) {
+      const sUrl = 'https://commons.wikimedia.org/w/api.php?action=query&generator=search' +
+        `&gsrsearch=${encodeURIComponent('"' + nameEn.trim() + '"')}&gsrnamespace=6&gsrlimit=30` +
+        '&prop=imageinfo&iiprop=url|size|extmetadata&iiurlwidth=640&format=json&origin=*';
+      const sRes = await fetch(sUrl);
+      if (sRes.ok) {
+        const sd = await sRes.json();
+        pages = sd?.query?.pages ? Object.values(sd.query.pages) : null;
+        fromSearch = !!(pages && pages.length);
+      }
+    }
     if (!pages || !pages.length) { _commonsPhotoCache[cacheKey] = null; return null; }
 
+    // チーム名の出現が「対戦相手」文脈（against/vs等の直後）のみの場合は不採用にする判定
+    const teamMentionValid = (txt, tnLower) => {
+      let idx = 0;
+      while ((idx = txt.indexOf(tnLower, idx)) !== -1) {
+        const before = txt.slice(Math.max(0, idx - 30), idx);
+        if (!/(?:against|vs\.?|versus)\s+(?:the\s+)?[a-z .]*$/.test(before)) return true;
+        idx += tnLower.length;
+      }
+      return false;
+    };
+
+    const nameLower = nameEn.trim().toLowerCase();
     const yrN = parseInt(cardYear) || 0;
     let best = null, bestScore = 0;
     for (const p of pages) {
@@ -8822,12 +8863,17 @@ async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
         String(md.ObjectName?.value || '')
       ).toLowerCase();
 
+      // ⓪ 全文検索由来の場合：被写体の取り違え防止のため、
+      //    ファイル名または説明文に選手名が含まれることを必須とする
+      if (fromSearch && !text.includes(nameLower)) continue;
+
       // ① チーム名一致（必須）: 正式名 → ニックネーム（"Rays" 等）の順で照合
-      let teamHit = teamNames.some(tn => text.includes(tn.toLowerCase()));
+      //    「against the Rays」等、対戦相手としての言及のみの写真は除外
+      let teamHit = teamNames.some(tn => teamMentionValid(text, tn.toLowerCase()));
       if (!teamHit) {
         teamHit = teamNames.some(tn => {
           const nick = tn.split(' ').pop().toLowerCase();
-          return nick.length >= 4 && text.includes(nick);
+          return nick.length >= 4 && teamMentionValid(text, nick);
         });
       }
       if (!teamHit) continue;
@@ -8847,6 +8893,8 @@ async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
         else if (diff >= 5)  continue; // 年代が離れすぎ（同チーム再入団等の誤適用防止）
       }
       if ((ii.height || 0) > (ii.width || 0)) score += 1; // 縦長（人物写真向き）を優遇
+      // ファイル名が選手名で始まる＝個人ショットの可能性が高い → 集合・イベント写真より優遇
+      if (title.toLowerCase().replace(/^file:/, '').trim().startsWith(nameLower)) score += 3;
 
       if (score > bestScore) { bestScore = score; best = ii.thumburl || ii.url; }
     }
