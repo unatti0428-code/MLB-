@@ -8800,6 +8800,23 @@ async function _fetchMlbCurrentTeamAbbr(mlbId) {
  * @param {number|string} cardYear カード年度
  * @returns {Promise<string|null>} 画像URL（640px幅サムネイル）または null
  */
+/**
+ * 成績データ（g_dataRows）から指定年度の所属チームコードを逆引きする。
+ * その年に複数チームに所属（シーズン途中移籍）の場合はユニフォームを
+ * 特定できないため null を返す。
+ * @param {number|string} year
+ * @returns {string|null} 正規化済みチームコード（例 "TB"）または null
+ */
+function _yearTeamFromData(year) {
+  if (!g_dataRows) return null;
+  const rows = g_dataRows.filter(r => String(r[1] ?? '').trim() === String(year));
+  const teams = [...new Set(
+    rows.map(r => normalizeTeamCode(String(r[2] ?? '').trim()))
+        .filter(tc => tc && tc !== 'TOT' && tc !== '--')
+  )];
+  return teams.length === 1 ? teams[0] : null;
+}
+
 const _commonsPhotoCache = {};
 async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
   const teamNames = _TEAM_CODE_EN_MAP[teamCode];
@@ -8863,12 +8880,29 @@ async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
         String(md.ObjectName?.value || '')
       ).toLowerCase();
 
-      // ⓪ 全文検索由来の場合：被写体の取り違え防止のため、
-      //    ファイル名または説明文に選手名が含まれることを必須とする
+      // ⓪ 被写体特定ガード：ファイル名に選手の姓を含まない写真は除外
+      //    （「MacDill hosts Tampa Bay Rays」のようなイベント・集合写真の誤採用防止）
+      const titleLower = title.toLowerCase().replace(/^file:/, '').trim();
+      const lastName = nameLower.split(' ').pop();
+      if (!titleLower.includes(lastName)) continue;
+      // 全文検索由来の場合はさらにフルネームの含有も必須とする
       if (fromSearch && !text.includes(nameLower)) continue;
 
-      // ① チーム名一致（必須）: 正式名 → ニックネーム（"Rays" 等）の順で照合
-      //    「against the Rays」等、対戦相手としての言及のみの写真は除外
+      // ② 撮影年（DateTimeOriginal を優先。説明文/ファイル名の年は補助扱い）
+      let photoYrFromDate = 0;
+      const dateStr = String(md.DateTimeOriginal?.value || '');
+      const dm = dateStr.match(/(19|20)\d{2}/);
+      if (dm) photoYrFromDate = parseInt(dm[0]);
+      let photoYr = photoYrFromDate;
+      if (!photoYr) {
+        const ym = text.match(/(19|20)\d{2}/);
+        if (ym) photoYr = parseInt(ym[0]);
+      }
+
+      // ① チーム一致判定（いずれか必須）
+      //    (a) チーム名の言及（「against the Rays」等の対戦相手言及は除外）
+      //    (b) 撮影年が確実（EXIF由来）で、その年の所属チームがカードのチームと一致
+      //        →説明文にチーム名がなくても、撮影時期からユニフォーム一致と判断できる
       let teamHit = teamNames.some(tn => teamMentionValid(text, tn.toLowerCase()));
       if (!teamHit) {
         teamHit = teamNames.some(tn => {
@@ -8876,13 +8910,10 @@ async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
           return nick.length >= 4 && teamMentionValid(text, nick);
         });
       }
+      if (!teamHit && photoYrFromDate) {
+        teamHit = _yearTeamFromData(photoYrFromDate) === teamCode;
+      }
       if (!teamHit) continue;
-
-      // ② 撮影年（DateTimeOriginal → 説明文/ファイル名 の順）
-      let photoYr = 0;
-      const dateStr = String(md.DateTimeOriginal?.value || '');
-      const ym = dateStr.match(/(19|20)\d{2}/) || text.match(/(19|20)\d{2}/);
-      if (ym) photoYr = parseInt(ym[0]);
 
       let score = 6; // チーム一致の基礎点
       if (photoYr && yrN) {
@@ -8983,6 +9014,22 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
         if (commonsUrl) {
           found = commonsUrl;
           console.log('[Photo] Commonsチーム一致写真 使用:', commonsUrl);
+        } else {
+          // ── Commonsにも無い場合の救済 ──
+          // MLB年別写真の最新年（カード年2022まで存在）を確認し、その撮影時代の
+          // 所属チームがカードのチームと一致するなら流用する。
+          // 例: 2023年TBカード → 2021年撮影(TB時代)の年別写真を使用（current=移籍後より適切）
+          const yc = await fetchMlbYearSpecificPhotos(mlbId); // キャッシュ済みのため追加コストなし
+          for (let cy = 2022; cy >= 2015; cy--) {
+            const u = yc.cardPhotoMap[cy];
+            if (!u) continue;
+            // cardPhotoMap[cy] は URL年 cy-1（シーズン末撮影）の写真 → cy-1 の所属で判定
+            if (_yearTeamFromData(cy - 1) === cardTeamCode) {
+              found = u;
+              console.log(`[Photo] 年別写真を時代一致で流用（撮影${cy - 1}年・${cardTeamCode}時代）`);
+            }
+            break; // 最新の年別写真のみ判定（古すぎる写真への暴走防止）
+          }
         }
       }
     }
