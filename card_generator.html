@@ -8729,6 +8729,138 @@ function getMlbPhotoForYear(cache, cardYear) {
   return cache.cardPhotoMap[yr] || cache.currentUrl || null;
 }
 
+// ── チームコード → 英語チーム名（Wikimedia Commons 写真検索用） ──────────
+// 値は配列（旧称・改名を含む）。Commons の写真説明文・カテゴリと照合する。
+const _TEAM_CODE_EN_MAP = {
+  TB:  ['Tampa Bay Rays', 'Tampa Bay Devil Rays'], TBR: ['Tampa Bay Rays', 'Tampa Bay Devil Rays'],
+  NYY: ['New York Yankees'], BOS: ['Boston Red Sox'], TOR: ['Toronto Blue Jays'], BAL: ['Baltimore Orioles'],
+  CLE: ['Cleveland Guardians', 'Cleveland Indians'], DET: ['Detroit Tigers'],
+  KC:  ['Kansas City Royals'], KCR: ['Kansas City Royals'], MIN: ['Minnesota Twins'],
+  CWS: ['Chicago White Sox'], CHW: ['Chicago White Sox'],
+  HOU: ['Houston Astros'], LAA: ['Los Angeles Angels', 'Anaheim Angels', 'California Angels'], ANA: ['Anaheim Angels', 'Los Angeles Angels'],
+  OAK: ['Oakland Athletics'], ATH: ['Athletics', 'Oakland Athletics'], SEA: ['Seattle Mariners'], TEX: ['Texas Rangers'],
+  ATL: ['Atlanta Braves'], MIA: ['Miami Marlins', 'Florida Marlins'], FLA: ['Florida Marlins'],
+  NYM: ['New York Mets'], PHI: ['Philadelphia Phillies'], WSH: ['Washington Nationals'], WSN: ['Washington Nationals'],
+  CHC: ['Chicago Cubs'], CIN: ['Cincinnati Reds'], MIL: ['Milwaukee Brewers'], PIT: ['Pittsburgh Pirates'],
+  STL: ['St. Louis Cardinals'], ARI: ['Arizona Diamondbacks'], AZ: ['Arizona Diamondbacks'],
+  COL: ['Colorado Rockies'], LAD: ['Los Angeles Dodgers', 'Brooklyn Dodgers'],
+  SD:  ['San Diego Padres'], SDP: ['San Diego Padres'], SF: ['San Francisco Giants'], SFG: ['San Francisco Giants'],
+  MON: ['Montreal Expos'],
+};
+
+// ── 現在の所属チーム略称を取得（MLB Stats API・キャッシュ付き） ──
+const _curTeamCache = {};
+async function _fetchMlbCurrentTeamAbbr(mlbId) {
+  if (!mlbId) return null;
+  if (_curTeamCache[mlbId] !== undefined) return _curTeamCache[mlbId];
+  try {
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/people/${mlbId}?hydrate=currentTeam`);
+    if (!res.ok) { _curTeamCache[mlbId] = null; return null; }
+    const d = await res.json();
+    const t = d?.people?.[0]?.currentTeam;
+    let abbr = t?.abbreviation || null;
+    if (!abbr && t?.id) {
+      const r2 = await fetch(`https://statsapi.mlb.com/api/v1/teams/${t.id}`);
+      if (r2.ok) {
+        const d2 = await r2.json();
+        abbr = d2?.teams?.[0]?.abbreviation || null;
+      }
+    }
+    _curTeamCache[mlbId] = abbr;
+    return abbr;
+  } catch (e) {
+    _curTeamCache[mlbId] = null;
+    return null;
+  }
+}
+
+/**
+ * Wikimedia Commons（フリーライセンス画像）から
+ * 「指定チームのユニフォームを着た選手写真」を探す。
+ * 選手カテゴリ内の各画像の説明文・カテゴリ・撮影日を照合し、
+ * チーム名一致（必須）＋撮影年の近さでスコアリングして最良の1枚を返す。
+ * @param {string} nameEn   選手英語名（例 "Tyler Glasnow"）
+ * @param {string} teamCode カードのチームコード（例 "TB"）
+ * @param {number|string} cardYear カード年度
+ * @returns {Promise<string|null>} 画像URL（640px幅サムネイル）または null
+ */
+const _commonsPhotoCache = {};
+async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
+  const teamNames = _TEAM_CODE_EN_MAP[teamCode];
+  if (!nameEn || !teamNames) return null;
+  const cacheKey = `${nameEn}|${teamCode}|${cardYear}`;
+  if (_commonsPhotoCache[cacheKey] !== undefined) return _commonsPhotoCache[cacheKey];
+
+  const fetchCat = async (catTitle) => {
+    const url = 'https://commons.wikimedia.org/w/api.php?action=query&generator=categorymembers' +
+      `&gcmtitle=${encodeURIComponent('Category:' + catTitle)}&gcmtype=file&gcmlimit=50` +
+      '&prop=imageinfo&iiprop=url|size|extmetadata&iiurlwidth=640&format=json&origin=*';
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const d = await res.json();
+    return d?.query?.pages ? Object.values(d.query.pages) : null;
+  };
+
+  try {
+    let pages = await fetchCat(nameEn.trim());
+    if (!pages || !pages.length) pages = await fetchCat(`${nameEn.trim()} (baseball)`);
+    if (!pages || !pages.length) { _commonsPhotoCache[cacheKey] = null; return null; }
+
+    const yrN = parseInt(cardYear) || 0;
+    let best = null, bestScore = 0;
+    for (const p of pages) {
+      const ii = p.imageinfo && p.imageinfo[0];
+      if (!ii) continue;
+      const title = String(p.title || '');
+      if (!/\.(jpe?g|png)$/i.test(title)) continue;                    // 写真のみ（SVG等除外）
+      if ((ii.width || 0) < 240 || (ii.height || 0) < 240) continue;   // 低解像度は除外
+      const md = ii.extmetadata || {};
+      const text = (
+        title + ' ' +
+        String(md.ImageDescription?.value || '') + ' ' +
+        String(md.Categories?.value || '') + ' ' +
+        String(md.ObjectName?.value || '')
+      ).toLowerCase();
+
+      // ① チーム名一致（必須）: 正式名 → ニックネーム（"Rays" 等）の順で照合
+      let teamHit = teamNames.some(tn => text.includes(tn.toLowerCase()));
+      if (!teamHit) {
+        teamHit = teamNames.some(tn => {
+          const nick = tn.split(' ').pop().toLowerCase();
+          return nick.length >= 4 && text.includes(nick);
+        });
+      }
+      if (!teamHit) continue;
+
+      // ② 撮影年（DateTimeOriginal → 説明文/ファイル名 の順）
+      let photoYr = 0;
+      const dateStr = String(md.DateTimeOriginal?.value || '');
+      const ym = dateStr.match(/(19|20)\d{2}/) || text.match(/(19|20)\d{2}/);
+      if (ym) photoYr = parseInt(ym[0]);
+
+      let score = 6; // チーム一致の基礎点
+      if (photoYr && yrN) {
+        const diff = Math.abs(photoYr - yrN);
+        if (diff === 0)      score += 5;
+        else if (diff === 1) score += 3;
+        else if (diff === 2) score += 1;
+        else if (diff >= 5)  continue; // 年代が離れすぎ（同チーム再入団等の誤適用防止）
+      }
+      if ((ii.height || 0) > (ii.width || 0)) score += 1; // 縦長（人物写真向き）を優遇
+
+      if (score > bestScore) { bestScore = score; best = ii.thumburl || ii.url; }
+    }
+    _commonsPhotoCache[cacheKey] = best;
+    if (best) console.log(`[Commons] ${nameEn} ${teamCode} ${cardYear}年 → チーム一致写真 (score=${bestScore})`);
+    else      console.log(`[Commons] ${nameEn} ${teamCode} → チーム一致写真なし`);
+    return best;
+  } catch (e) {
+    console.warn('[Commons] 検索失敗:', e.message);
+    _commonsPhotoCache[cacheKey] = null;
+    return null;
+  }
+}
+
 /**
  * カード年度に合致する選手写真URLをバックグラウンドで探索し、
  * カードの <img> を差し替える。
@@ -8756,6 +8888,7 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
   const isOldPlayer = yr < 2010;
 
   let found = null;
+  let mlbCurrentUrl = null;  // Step1.5 で「currentフォールバックかどうか」を判定するために保持
 
   // ── Step 1: MLB CDN 年別スキャン（fetchMlbYearSpecificPhotos キャッシュ使用）──
   // URL年度 X → カード年度 X+1 のマッピング。キャリーフォワードで空白年を補完。
@@ -8764,6 +8897,7 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
     console.log('[Photo] MLB シルエット確認済 → CDNスキャンをスキップ、BRef直接取得へ');
   } else {
     const yearCache = await fetchMlbYearSpecificPhotos(mlbId);
+    mlbCurrentUrl = yearCache.currentUrl || null;
     if (yearCache.hasAnyPhoto) {
       // 通算カードはピーク年、単年カードはカード年でルックアップ
       const lookupYear = isCareer ? (parseInt(g_peakYear) || yr) : yr;
@@ -8777,6 +8911,35 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
       console.log('[Photo] MLB CDN 全年度シルエット/なし → BRef取得へ');
       if (g_mlbHasRealPhoto === null) g_mlbHasRealPhoto = false;
     }
+  }
+
+  // ── Step 1.5: チームユニフォーム一致写真（Wikimedia Commons・フリーライセンス）──
+  // MLBから取れた写真が「current（現在の所属）」のフォールバックで、かつ
+  // カードのチームと現在の所属チームが異なる場合、ユニフォームが合わない。
+  // その場合に限り、Commons からカードのチーム名・撮影年が一致する写真を探して優先採用する。
+  // （年別の正しいMLB写真が取れている場合は何もしない）
+  try {
+    const cardTeamCode = normalizeTeamCode(
+      (isCareer && g_careerTeam) ? String(g_careerTeam) : String((g_selectedRow && g_selectedRow[2]) || '')
+    );
+    const isCurrentFallback = found !== null && mlbCurrentUrl !== null && found === mlbCurrentUrl;
+    if (g_mlbNameEn && cardTeamCode && _TEAM_CODE_EN_MAP[cardTeamCode] && (!found || isCurrentFallback)) {
+      let needCommons = !found;
+      if (isCurrentFallback) {
+        const curAbbr = await _fetchMlbCurrentTeamAbbr(mlbId);
+        // 現在の所属チームとカードのチームが同じなら current写真で正しい → Commons不要
+        needCommons = !curAbbr || normalizeTeamCode(curAbbr) !== cardTeamCode;
+      }
+      if (needCommons) {
+        const commonsUrl = await _fetchCommonsTeamPhoto(g_mlbNameEn, cardTeamCode, yr);
+        if (commonsUrl) {
+          found = commonsUrl;
+          console.log('[Photo] Commonsチーム一致写真 使用:', commonsUrl);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Photo] Commons検索エラー（既存写真で続行）:', e.message);
   }
 
   // ── Step 2: BRef 直接写真（MLBシルエット確認済み or 未確認のみ。実写真確認済みは使わない） ──
