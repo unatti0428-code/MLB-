@@ -9010,25 +9010,29 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
         needCommons = !curAbbr || normalizeTeamCode(curAbbr) !== cardTeamCode;
       }
       if (needCommons) {
-        const commonsUrl = await _fetchCommonsTeamPhoto(g_mlbNameEn, cardTeamCode, yr);
-        if (commonsUrl) {
-          found = commonsUrl;
-          console.log('[Photo] Commonsチーム一致写真 使用:', commonsUrl);
-        } else {
-          // ── Commonsにも無い場合の救済 ──
-          // MLB年別写真の最新年（カード年2022まで存在）を確認し、その撮影時代の
-          // 所属チームがカードのチームと一致するなら流用する。
-          // 例: 2023年TBカード → 2021年撮影(TB時代)の年別写真を使用（current=移籍後より適切）
-          const yc = await fetchMlbYearSpecificPhotos(mlbId); // キャッシュ済みのため追加コストなし
-          for (let cy = 2022; cy >= 2015; cy--) {
-            const u = yc.cardPhotoMap[cy];
-            if (!u) continue;
-            // cardPhotoMap[cy] は URL年 cy-1（シーズン末撮影）の写真 → cy-1 の所属で判定
-            if (_yearTeamFromData(cy - 1) === cardTeamCode) {
-              found = u;
-              console.log(`[Photo] 年別写真を時代一致で流用（撮影${cy - 1}年・${cardTeamCode}時代）`);
-            }
-            break; // 最新の年別写真のみ判定（古すぎる写真への暴走防止）
+        // ── 第一優先: MLB年別写真（証明写真スタイル）の時代一致流用 ──
+        // カードのチームに所属していた時代の年別写真があればそれを使う。
+        // 例: 2023年TBカード → 2021年撮影(TB時代)の年別写真を流用
+        // （ユニフォーム・画風ともカード向けに最適なMLB公式ヘッドショット）
+        let rescued = false;
+        const yc = await fetchMlbYearSpecificPhotos(mlbId); // キャッシュ済みのため追加コストなし
+        for (let cy = 2022; cy >= 2015; cy--) {
+          const u = yc.cardPhotoMap[cy];
+          if (!u) continue;
+          // cardPhotoMap[cy] は URL年 cy-1（シーズン末撮影）の写真 → cy-1 の所属で判定
+          if (_yearTeamFromData(cy - 1) === cardTeamCode) {
+            found = u;
+            rescued = true;
+            console.log(`[Photo] 年別写真を時代一致で流用（撮影${cy - 1}年・${cardTeamCode}時代）`);
+            break; // 最も新しい時代一致写真を採用
+          }
+        }
+        // ── 第二優先: Wikimedia Commons（年別写真で救済できない場合のみ） ──
+        if (!rescued) {
+          const commonsUrl = await _fetchCommonsTeamPhoto(g_mlbNameEn, cardTeamCode, yr);
+          if (commonsUrl) {
+            found = commonsUrl;
+            console.log('[Photo] Commonsチーム一致写真 使用:', commonsUrl);
           }
         }
       }
