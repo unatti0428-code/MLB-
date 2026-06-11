@@ -7132,6 +7132,67 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
   return [...new Set(results)];
 }
 
+// ── MLB Stats API から出身地（構造化データ）を取得 ──────────────
+// Wikipedia本文の正規表現解析より遥かに正確（birthCity / birthStateProvince / birthCountry）
+const _birthInfoCache = {};
+async function _fetchMlbBirthInfo(mlbId) {
+  if (!mlbId) return null;
+  if (_birthInfoCache[mlbId] !== undefined) return _birthInfoCache[mlbId];
+  try {
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/people/${mlbId}`);
+    if (!res.ok) { _birthInfoCache[mlbId] = null; return null; }
+    const d = await res.json();
+    const p = d?.people?.[0];
+    if (!p) { _birthInfoCache[mlbId] = null; return null; }
+    const info = {
+      city:    (p.birthCity || '').trim(),
+      state:   (p.birthStateProvince || '').trim(),
+      country: (p.birthCountry || '').trim(),
+    };
+    _birthInfoCache[mlbId] = (info.city || info.country) ? info : null;
+    console.log('[BirthInfo]', JSON.stringify(_birthInfoCache[mlbId]));
+    return _birthInfoCache[mlbId];
+  } catch (e) {
+    console.warn('[BirthInfo] 取得失敗:', e.message);
+    _birthInfoCache[mlbId] = null;
+    return null;
+  }
+}
+
+/**
+ * MLB Stats API の出身データから列伝用の出身行を生成する。
+ * 変換不能な部分は英語のまま残すのではなく、確実に訳せる範囲で組み立てる。
+ * @returns {string|null}
+ */
+function _birthLineFromBirthInfo(info) {
+  if (!info) return null;
+  const closing = '地元で磨いた野球センスがプロの世界で確かに開花した。';
+  const country = info.country;
+
+  // ── 日本出身：birthStateProvince に都道府県（例 "Iwate"）、birthCity に市名（例 "Oshu"）──
+  if (/^japan$/i.test(country)) {
+    const pref = _jakenFromRomaji(info.state) || _jakenFromRomaji(info.city);
+    if (pref) return `${pref}出身。${closing}`;
+    return info.city ? `日本・${info.city}出身。${closing}` : `日本出身。${closing}`;
+  }
+
+  // ── 米国出身：州名を日本語化＋都市名をカタカナ化 ──
+  if (/^(usa|united states)$/i.test(country)) {
+    const stateJa = _STATE_JA_MAP[info.state] || (info.state ? `${info.state}州` : '');
+    const cityJa  = _cityEngToKana(info.city) || info.city;
+    if (stateJa && cityJa) return `${stateJa}${cityJa}出身。${closing}`;
+    if (stateJa)           return `${stateJa}出身。${closing}`;
+    return null;
+  }
+
+  // ── その他の国：国名を日本語化（_STATE_JA_MAP の国名エントリを利用）──
+  const countryJa = _STATE_JA_MAP[country] || country;
+  const cityJa = _cityEngToKana(info.city) || info.city;
+  if (countryJa && cityJa) return `${countryJa}・${cityJa}出身。${closing}`;
+  if (countryJa)           return `${countryJa}出身。${closing}`;
+  return null;
+}
+
 // ── 列伝を生成してカードに反映（APIキー不要） ─────────────────
 async function fetchRetsudenFromAPI(row) {
   const yearKey = String(row[1] || '');
@@ -7185,6 +7246,17 @@ async function fetchRetsudenFromAPI(row) {
   }
   if (_wikiName) {
     wikiEpisodes = await fetchWikipediaEpisodes(_wikiName, g_isPitcher);
+  }
+
+  // ④-b 出身地はMLB Stats APIの構造化データを最優先で使用
+  // Wikipedia正規表現解析由来の出身行（精度が不安定）をAPI由来の正確な行に差し替える
+  if (g_mlbId) {
+    const birthInfo = await _fetchMlbBirthInfo(g_mlbId);
+    const apiBirthLine = _birthLineFromBirthInfo(birthInfo);
+    if (apiBirthLine) {
+      wikiEpisodes = wikiEpisodes.filter(ep => !ep.includes('出身') && !ep.includes('生まれ'));
+      wikiEpisodes.unshift(apiBirthLine);
+    }
   }
 
   // 通算カード: APIで歴代率系順位が確定した後に列伝の該当箇所を再構築できるようパラメータを保存
