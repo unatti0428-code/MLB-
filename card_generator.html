@@ -8801,17 +8801,28 @@ async function _fetchMlbCurrentTeamAbbr(mlbId) {
  * @returns {Promise<string|null>} 画像URL（640px幅サムネイル）または null
  */
 /**
+ * 写真用チームコード正規化。
+ * "BAL2" のような在籍区分付きコード（2度目の在籍等）から末尾数字を除去し、
+ * 写真の検索・保存・比較ではすべて素のチームコード（"BAL"）として扱う。
+ * ※ カード表示用の正規化（normalizeTeamCode）は末尾数字を保持するため別関数とする
+ */
+function _photoTeamCode(code) {
+  const c = normalizeTeamCode(String(code || '').trim());
+  return c ? String(c).replace(/\d+$/, '') : c;
+}
+
+/**
  * 成績データ（g_dataRows）から指定年度の所属チームコードを逆引きする。
  * その年に複数チームに所属（シーズン途中移籍）の場合はユニフォームを
  * 特定できないため null を返す。
  * @param {number|string} year
- * @returns {string|null} 正規化済みチームコード（例 "TB"）または null
+ * @returns {string|null} 写真用正規化済みチームコード（例 "TB"）または null
  */
 function _yearTeamFromData(year) {
   if (!g_dataRows) return null;
   const rows = g_dataRows.filter(r => String(r[1] ?? '').trim() === String(year));
   const teams = [...new Set(
-    rows.map(r => normalizeTeamCode(String(r[2] ?? '').trim()))
+    rows.map(r => _photoTeamCode(r[2]))
         .filter(tc => tc && tc !== 'TOT' && tc !== '--')
   )];
   return teams.length === 1 ? teams[0] : null;
@@ -8998,7 +9009,8 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
   // その場合に限り、Commons からカードのチーム名・撮影年が一致する写真を探して優先採用する。
   // （年別の正しいMLB写真が取れている場合は何もしない）
   try {
-    const cardTeamCode = normalizeTeamCode(
+    // "BAL2"等の在籍区分付きコードは末尾数字を除去して素のチームとして写真判定する
+    const cardTeamCode = _photoTeamCode(
       (isCareer && g_careerTeam) ? String(g_careerTeam) : String((g_selectedRow && g_selectedRow[2]) || '')
     );
     const isCurrentFallback = found !== null && mlbCurrentUrl !== null && found === mlbCurrentUrl;
@@ -9007,7 +9019,7 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
       if (isCurrentFallback) {
         const curAbbr = await _fetchMlbCurrentTeamAbbr(mlbId);
         // 現在の所属チームとカードのチームが同じなら current写真で正しい → Commons不要
-        needCommons = !curAbbr || normalizeTeamCode(curAbbr) !== cardTeamCode;
+        needCommons = !curAbbr || _photoTeamCode(curAbbr) !== cardTeamCode;
       }
       if (needCommons) {
         // ── 第一優先: MLB年別写真（証明写真スタイル）の時代一致流用 ──
@@ -9101,7 +9113,8 @@ function _teamPhotoStoreKey(row) {
   const playerKey = g_mlbId || String((row && row[0]) || '').trim() || null;
   if (!playerKey) return null;
   const isCareer = !/^\d{4}$/.test(String((row && row[1]) ?? '').trim());
-  const teamCode = normalizeTeamCode(
+  // "BAL2"等の在籍区分付きコードは末尾数字を除去し、同一チームとして保存・適用する
+  const teamCode = _photoTeamCode(
     (isCareer && g_careerTeam) ? String(g_careerTeam) : String((row && row[2]) || '').trim()
   );
   if (!teamCode || teamCode === 'TOT' || teamCode === '--') return null;
