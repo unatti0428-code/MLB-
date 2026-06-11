@@ -5996,6 +5996,27 @@ function _parseJaWikiEpisodes(text, isPitcher) {
     }
 
   }
+
+  // ── 汎用サルベージ：パターン抽出で3件未満の場合、記事本文から自然な日本語文を補完 ──
+  // 日本語Wikipediaの文はそのまま列伝に使える品質のため、
+  // 「単独で意味が通る・野球的に意味のある・適度な長さの」文を選んで追加する。
+  if (results.length < 3) {
+    const KEYWORDS = /記録|達成|受賞|史上|初の|最年少|最年長|最多|最速|リーグ|球団|契約|メジャー|デビュー|昇格|ワールドシリーズ|オールスター|プレーオフ|ポストシーズン|本塁打|安打|盗塁|打点|奪三振|完封|完投|セーブ|ホールド|防御率|打率|タイトル|殿堂|代表|WBC|二刀流|評価|期待|注目|看板|エース|主砲|正捕手|遊撃手|外野手|先発|抑え|クローザー/;
+    for (const s of sentences) {
+      if (results.length >= 4) break;
+      const t = s.trim();
+      // 単独で意味が通る文のみ採用するためのフィルター群
+      if (t.length < 25 || t.length > 110) continue;                       // 短すぎ・長すぎは除外
+      if (!KEYWORDS.test(t)) continue;                                     // 野球的に意味のある文のみ
+      if (/^(また|なお|ただし|一方|さらに|そして|それ|これ|その後|この|同年|同月|翌年|翌\d|当時|ここで|そこで|だが|しかし|ところが)/.test(t)) continue; // 文脈依存の文頭は除外
+      if (/^[0-9０-９]/.test(t) === false && /(である|だった|となった|となる|した|している|抜擢|指名|記録|受賞|達成|呼ばれ|称され|活躍|貢献|登板|出場)/.test(t) === false) continue; // 述語のない断片を除外
+      if (/出身|生まれ/.test(t)) continue;                                  // 出身行はAPI由来の行と重複するため除外
+      if (results.some(r => r.slice(0, 10) === t.slice(0, 10))) continue;  // 重複除外
+      results.push(t.endsWith('。') ? t : t + '。');
+      console.log('[WikiJA] サルベージ採用:', t.slice(0, 30) + '…');
+    }
+  }
+
   return results;
 }
 
