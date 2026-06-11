@@ -8830,6 +8830,54 @@ function _yearTeamFromData(year) {
   return teams.length === 1 ? teams[0] : null;
 }
 
+/**
+ * 画像が「証明写真のような顔のアップ」かを画像解析で判定する。
+ * 画像の中央上部（顔が来るはずの領域）の肌色ピクセル比率を測定し、
+ * 後ろ姿・全身アクション写真・風景写真を物理的に検出して除外する。
+ * メタデータでは判別できない「後ろ姿のcropped写真」等への最終防衛線。
+ * @param {string} url 画像URL（CORS対応サイトであること）
+ * @returns {Promise<boolean>} 顔アップと判定できれば true
+ */
+function _isFaceCloseup(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const timer = setTimeout(() => resolve(false), 8000);
+    img.onload = () => {
+      clearTimeout(timer);
+      try {
+        const w = 64, h = 64; // 縮小サンプリングで十分（高速化）
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, w, h);
+        // 顔が来るはずの領域: 中央上部（x: 25〜75%, y: 5〜55%）
+        const x0 = Math.floor(w * 0.25), y0 = Math.floor(h * 0.05);
+        const rw = Math.floor(w * 0.50), rh = Math.floor(h * 0.50);
+        const data = ctx.getImageData(x0, y0, rw, rh).data;
+        let skin = 0, total = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i], g = data[i + 1], b = data[i + 2];
+          total++;
+          // 肌色ヒューリスティック（幅広い肌色トーンを許容）
+          const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+          if (r > 60 && g > 30 && b > 15 && r > b && r >= g &&
+              (mx - mn) > 12 && (r - b) > 12) skin++;
+        }
+        const ratio = skin / Math.max(1, total);
+        console.log(`[FaceCheck] 肌色比率 ${(ratio * 100).toFixed(0)}% → ${ratio >= 0.30 ? '顔アップOK' : 'NG'}:`, url.slice(-50));
+        resolve(ratio >= 0.30);
+      } catch (e) {
+        // CORS失敗等で解析不能 → 不採用側に倒す（元ロジックの写真を使う）
+        console.warn('[FaceCheck] 解析不能 → 不採用:', e.message);
+        resolve(false);
+      }
+    };
+    img.onerror = () => { clearTimeout(timer); resolve(false); };
+    img.src = url;
+  });
+}
+
 const _commonsPhotoCache = {};
 async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
   const teamNames = _TEAM_CODE_EN_MAP[teamCode];
@@ -8878,7 +8926,7 @@ async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
 
     const nameLower = nameEn.trim().toLowerCase();
     const yrN = parseInt(cardYear) || 0;
-    let best = null, bestScore = 0;
+    const cands = []; // スコア付き候補（最後に顔アップ判定で最終選別）
     for (const p of pages) {
       const ii = p.imageinfo && p.imageinfo[0];
       if (!ii) continue;
@@ -8922,6 +8970,14 @@ async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
         if (ym) photoYr = parseInt(ym[0]);
       }
 
+      // ①-0 撮影年の所属チームがカードのチームと異なることが確実な場合は除外
+      //    球場名や試合スコア（"Baltimore Orioles 7, Miami Marlins 5"等）として
+      //    カードのチーム名が説明文に含まれるだけの他チーム時代写真を弾く
+      if (photoYrFromDate) {
+        const eraTeam = _yearTeamFromData(photoYrFromDate);
+        if (eraTeam && eraTeam !== teamCode) continue;
+      }
+
       // ① チーム一致判定（いずれか必須）
       //    (a) チーム名の言及（「against the Rays」等の対戦相手言及は除外）
       //    (b) 撮影年が確実（EXIF由来）で、その年の所属チームがカードのチームと一致
@@ -8950,12 +9006,24 @@ async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
       // ファイル名が選手名で始まる＝個人ショットの可能性が高い → 集合・イベント写真より優遇
       if (title.toLowerCase().replace(/^file:/, '').trim().startsWith(nameLower)) score += 3;
 
-      if (score > bestScore) { bestScore = score; best = ii.thumburl || ii.url; }
+      cands.push({ score, url: ii.thumburl || ii.url, title });
     }
-    _commonsPhotoCache[cacheKey] = best;
-    if (best) console.log(`[Commons] ${nameEn} ${teamCode} ${cardYear}年 → チーム一致写真 (score=${bestScore})`);
-    else      console.log(`[Commons] ${nameEn} ${teamCode} → チーム一致写真なし`);
-    return best;
+
+    // ── 最終選別: スコア上位候補から順に「顔アップ判定」（画像解析）を実施 ──
+    // 後ろ姿・全身写真などメタデータで弾けない写真をここで除外する。
+    // 全候補が不合格なら null を返し、元のロジックの写真（MLB公式等）に委ねる。
+    cands.sort((a, b) => b.score - a.score);
+    for (const c of cands.slice(0, 4)) {
+      if (await _isFaceCloseup(c.url)) {
+        _commonsPhotoCache[cacheKey] = c.url;
+        console.log(`[Commons] ${nameEn} ${teamCode} ${cardYear}年 → 顔アップ写真採用 (score=${c.score})`);
+        return c.url;
+      }
+      console.log('[Commons] 顔アップ判定NG → 次候補へ:', c.title.slice(0, 50));
+    }
+    _commonsPhotoCache[cacheKey] = null;
+    console.log(`[Commons] ${nameEn} ${teamCode} → 顔アップのチーム一致写真なし（元ロジックに委譲）`);
+    return null;
   } catch (e) {
     console.warn('[Commons] 検索失敗:', e.message);
     _commonsPhotoCache[cacheKey] = null;
