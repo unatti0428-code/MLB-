@@ -8807,7 +8807,9 @@ async function _fetchMlbCurrentTeamAbbr(mlbId) {
  * ※ カード表示用の正規化（normalizeTeamCode）は末尾数字を保持するため別関数とする
  */
 function _photoTeamCode(code) {
-  const c = normalizeTeamCode(String(code || '').trim());
+  // 末尾数字を先に除去してから正規化する（"TAM3"→"TAM"→"TB" の順で変換するため）
+  const raw = String(code || '').trim().replace(/\d+$/, '');
+  const c = normalizeTeamCode(raw);
   return c ? String(c).replace(/\d+$/, '') : c;
 }
 
@@ -8898,6 +8900,16 @@ async function _fetchCommonsTeamPhoto(nameEn, teamCode, cardYear) {
       if (!titleLower.includes(lastName)) continue;
       // 全文検索由来の場合はさらにフルネームの含有も必須とする
       if (fromSearch && !text.includes(nameLower)) continue;
+
+      // ⓪-b 証明写真ガード：顔のアップ（ポートレート）と確信できる写真のみ採用
+      //    投球・打撃など体全体が写るアクション写真（顔が小さい）を除外し、
+      //    条件を満たさない場合は従来ロジックの写真（MLB公式等）に委ねる
+      //    ① 縦長写真であること（横長の引き・全景写真を除外）
+      if ((ii.height || 0) <= (ii.width || 0)) continue;
+      //    ② アクション描写キーワードを含まないこと（"pitcher"等の役職語は除外対象外）
+      if (/pitch(?:es|ing|ed)\b|batting|at bat|\bbats\b|swing|throw(?:s|ing)?\b|deliver|bullpen|warm.?up|fielding|on the mound|baserunning|sliding|catch(?:es|ing)\b|home run|striking out/.test(text)) continue;
+      //    ③ クロップ版・ポートレート・ヘッドショット等、顔アップを示す表記があること
+      if (!/cropped|portrait|headshot|head shot|close.?up|mug ?shot/.test(text)) continue;
 
       // ② 撮影年（DateTimeOriginal を優先。説明文/ファイル名の年は補助扱い）
       let photoYrFromDate = 0;
@@ -9003,54 +9015,76 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
     }
   }
 
-  // ── Step 1.5: チームユニフォーム一致写真（Wikimedia Commons・フリーライセンス）──
-  // MLBから取れた写真が「current（現在の所属）」のフォールバックで、かつ
-  // カードのチームと現在の所属チームが異なる場合、ユニフォームが合わない。
-  // その場合に限り、Commons からカードのチーム名・撮影年が一致する写真を探して優先採用する。
-  // （年別の正しいMLB写真が取れている場合は何もしない）
+  // ── Step 1.5: カードのチームに合うユニフォーム写真への補正 ──
+  // カード左上のチームコード（"BAL"・"BAL2"等。末尾数字は除去して判定）を目印に、
+  // 以下のいずれかでユニフォーム不一致を検知した場合、チーム一致写真を探し直す：
+  //  (A) current（現在の所属）フォールバック写真で、現在の所属チームがカードのチームと異なる
+  //  (B) 年別写真は取れたが、その撮影時代の所属チームがカードのチームと異なる
+  //      （例: BAL→NYY→BAL返り咲きで、BAL2カードに直前のNYY時代写真が当たるケース）
+  // 探し直す際は「カード年に最も近い同チーム時代の年別写真」を最優先で採用する。
+  // すべて見つからなければ従来の写真をそのまま使用（従来ロジック踏襲）。
   try {
     // "BAL2"等の在籍区分付きコードは末尾数字を除去して素のチームとして写真判定する
     const cardTeamCode = _photoTeamCode(
       (isCareer && g_careerTeam) ? String(g_careerTeam) : String((g_selectedRow && g_selectedRow[2]) || '')
     );
     const isCurrentFallback = found !== null && mlbCurrentUrl !== null && found === mlbCurrentUrl;
-    if (g_mlbNameEn && cardTeamCode && _TEAM_CODE_EN_MAP[cardTeamCode] && (!found || isCurrentFallback)) {
-      let needCommons = !found;
-      if (isCurrentFallback) {
-        const curAbbr = await _fetchMlbCurrentTeamAbbr(mlbId);
-        // 現在の所属チームとカードのチームが同じなら current写真で正しい → Commons不要
-        needCommons = !curAbbr || _photoTeamCode(curAbbr) !== cardTeamCode;
+
+    // (B) 年別写真の時代チーム不一致を検出（返り咲き・移籍跨ぎ）
+    // cardPhotoMap のルックアップ年-1（シーズン末撮影）の所属チームで近似判定。
+    // 途中移籍年など所属を特定できない年は null → 判定しない（従来写真を維持）
+    let yearPhotoEraMismatch = false;
+    if (found && !isCurrentFallback && cardTeamCode) {
+      const lookupYear = isCareer ? (parseInt(g_peakYear) || yr) : yr;
+      const eraTeam = _yearTeamFromData(lookupYear - 1);
+      yearPhotoEraMismatch = !!eraTeam && eraTeam !== cardTeamCode;
+      if (yearPhotoEraMismatch) {
+        console.log(`[Photo] 年別写真の時代チーム不一致を検出（撮影${lookupYear - 1}年=${eraTeam} ≠ カード=${cardTeamCode}）`);
       }
-      if (needCommons) {
+    }
+
+    if (g_mlbNameEn && cardTeamCode && _TEAM_CODE_EN_MAP[cardTeamCode] &&
+        (!found || isCurrentFallback || yearPhotoEraMismatch)) {
+      let needFix = !found || yearPhotoEraMismatch;
+      if (!needFix && isCurrentFallback) {
+        const curAbbr = await _fetchMlbCurrentTeamAbbr(mlbId);
+        // 現在の所属チームとカードのチームが同じなら current写真で正しい → 補正不要
+        needFix = !curAbbr || _photoTeamCode(curAbbr) !== cardTeamCode;
+      }
+      if (needFix) {
         // ── 第一優先: MLB年別写真（証明写真スタイル）の時代一致流用 ──
-        // カードのチームに所属していた時代の年別写真があればそれを使う。
-        // 例: 2023年TBカード → 2021年撮影(TB時代)の年別写真を流用
-        // （ユニフォーム・画風ともカード向けに最適なMLB公式ヘッドショット）
+        // カードのチームに所属していた時代の年別写真のうち、カード年に最も近いものを採用。
+        // 返り咲きの場合も、以前の在籍時代の写真がここで自動的に拾われる。
         let rescued = false;
         const yc = await fetchMlbYearSpecificPhotos(mlbId); // キャッシュ済みのため追加コストなし
+        let bestCy = 0, bestUrl = null;
         for (let cy = 2022; cy >= 2015; cy--) {
           const u = yc.cardPhotoMap[cy];
           if (!u) continue;
           // cardPhotoMap[cy] は URL年 cy-1（シーズン末撮影）の写真 → cy-1 の所属で判定
-          if (_yearTeamFromData(cy - 1) === cardTeamCode) {
-            found = u;
-            rescued = true;
-            console.log(`[Photo] 年別写真を時代一致で流用（撮影${cy - 1}年・${cardTeamCode}時代）`);
-            break; // 最も新しい時代一致写真を採用
+          if (_yearTeamFromData(cy - 1) !== cardTeamCode) continue;
+          if (!bestUrl || Math.abs(cy - yr) < Math.abs(bestCy - yr)) {
+            bestCy = cy; bestUrl = u;
           }
         }
-        // ── 第二優先: Wikimedia Commons（年別写真で救済できない場合のみ） ──
+        if (bestUrl) {
+          found = bestUrl;
+          rescued = true;
+          console.log(`[Photo] 年別写真を時代一致で流用（撮影${bestCy - 1}年・${cardTeamCode}時代）`);
+        }
+        // ── 第二優先: Wikimedia Commons（年別写真で救済できない場合のみ・顔アップ写真限定） ──
         if (!rescued) {
           const commonsUrl = await _fetchCommonsTeamPhoto(g_mlbNameEn, cardTeamCode, yr);
           if (commonsUrl) {
             found = commonsUrl;
             console.log('[Photo] Commonsチーム一致写真 使用:', commonsUrl);
           }
+          // どちらも見つからない場合は found を変更せず従来写真を維持
         }
       }
     }
   } catch (e) {
-    console.warn('[Photo] Commons検索エラー（既存写真で続行）:', e.message);
+    console.warn('[Photo] チーム一致写真の補正エラー（既存写真で続行）:', e.message);
   }
 
   // ── Step 2: BRef 直接写真（MLBシルエット確認済み or 未確認のみ。実写真確認済みは使わない） ──
