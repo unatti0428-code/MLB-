@@ -8831,45 +8831,69 @@ function _yearTeamFromData(year) {
 }
 
 /**
- * 画像が「証明写真のような顔のアップ」かを画像解析で判定する。
- * 画像の中央上部（顔が来るはずの領域）の肌色ピクセル比率を測定し、
- * 後ろ姿・全身アクション写真・風景写真を物理的に検出して除外する。
- * メタデータでは判別できない「後ろ姿のcropped写真」等への最終防衛線。
+ * 成績データの最新年の所属チームを返す（現在の所属チームの近似値）。
+ * MLB APIのcurrentTeamが取得できない場合（FA中・マイナー等）のフォールバック。
+ * 最新年が途中移籍等で特定できない場合は1年ずつさかのぼる。
+ * @returns {string|null} 写真用正規化済みチームコード または null
+ */
+function _latestTeamFromData() {
+  if (!g_dataRows) return null;
+  const years = [...new Set(
+    g_dataRows.map(r => parseInt(String(r[1] ?? '').trim()))
+              .filter(y => !isNaN(y) && y >= 1900)
+  )].sort((a, b) => b - a);
+  for (const y of years) {
+    const t = _yearTeamFromData(y);
+    if (t) return t;
+  }
+  return null;
+}
+
+/**
+ * 画像が「証明写真のような顔のアップ」かを顔検出で判定する。
+ *
+ * ブラウザ標準の FaceDetector API が利用できる場合のみ検証を行い、
+ * 「顔が検出され、かつ顔が画像の大きな割合を占める」写真だけを合格させる。
+ * FaceDetector が使えない環境では常に false（＝Commons写真を採用せず、
+ * 確実に顔写真である元ロジックの写真＝MLB公式ヘッドショット等に委ねる）。
+ *
+ * ※ 肌色ピクセル比率による判定は、迷彩ジャージ・砂色背景を肌と誤認する
+ *   事例（Maマッコイ）があったため廃止。確実な顔検出ができない限り
+ *   採用しない方針とする。
+ *
  * @param {string} url 画像URL（CORS対応サイトであること）
- * @returns {Promise<boolean>} 顔アップと判定できれば true
+ * @returns {Promise<boolean>} 顔アップと確認できた場合のみ true
  */
 function _isFaceCloseup(url) {
   return new Promise((resolve) => {
+    // FaceDetector 非対応ブラウザ → 顔の確認ができないため不採用（安全側）
+    if (!('FaceDetector' in window)) {
+      console.log('[FaceCheck] FaceDetector非対応 → Commons写真は採用せず元ロジックに委譲');
+      resolve(false);
+      return;
+    }
     const img = new Image();
     img.crossOrigin = 'anonymous';
     const timer = setTimeout(() => resolve(false), 8000);
-    img.onload = () => {
+    img.onload = async () => {
       clearTimeout(timer);
       try {
-        const w = 64, h = 64; // 縮小サンプリングで十分（高速化）
-        const c = document.createElement('canvas');
-        c.width = w; c.height = h;
-        const ctx = c.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(img, 0, 0, w, h);
-        // 顔が来るはずの領域: 中央上部（x: 25〜75%, y: 5〜55%）
-        const x0 = Math.floor(w * 0.25), y0 = Math.floor(h * 0.05);
-        const rw = Math.floor(w * 0.50), rh = Math.floor(h * 0.50);
-        const data = ctx.getImageData(x0, y0, rw, rh).data;
-        let skin = 0, total = 0;
-        for (let i = 0; i < data.length; i += 4) {
-          const r = data[i], g = data[i + 1], b = data[i + 2];
-          total++;
-          // 肌色ヒューリスティック（幅広い肌色トーンを許容）
-          const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-          if (r > 60 && g > 30 && b > 15 && r > b && r >= g &&
-              (mx - mn) > 12 && (r - b) > 12) skin++;
+        const fd = new FaceDetector({ fastMode: false, maxDetectedFaces: 3 });
+        const faces = await fd.detect(img);
+        if (!faces || !faces.length) {
+          console.log('[FaceCheck] 顔検出なし → NG:', url.slice(-50));
+          resolve(false);
+          return;
         }
-        const ratio = skin / Math.max(1, total);
-        console.log(`[FaceCheck] 肌色比率 ${(ratio * 100).toFixed(0)}% → ${ratio >= 0.30 ? '顔アップOK' : 'NG'}:`, url.slice(-50));
-        resolve(ratio >= 0.30);
+        // 最大の顔の高さが画像高さの32%以上 ＝ 顔が画面の大半を占める証明写真構図
+        const maxFaceH = Math.max(...faces.map(f => f.boundingBox.height));
+        const ratio = maxFaceH / (img.naturalHeight || 1);
+        const ok = ratio >= 0.32;
+        console.log(`[FaceCheck] 顔サイズ比率 ${(ratio * 100).toFixed(0)}% → ${ok ? '顔アップOK' : 'NG'}:`, url.slice(-50));
+        resolve(ok);
       } catch (e) {
-        // CORS失敗等で解析不能 → 不採用側に倒す（元ロジックの写真を使う）
-        console.warn('[FaceCheck] 解析不能 → 不採用:', e.message);
+        // 検出エラー → 不採用側に倒す（元ロジックの写真を使う）
+        console.warn('[FaceCheck] 顔検出エラー → 不採用:', e.message);
         resolve(false);
       }
     };
@@ -9115,9 +9139,16 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
         (!found || isCurrentFallback || yearPhotoEraMismatch)) {
       let needFix = !found || yearPhotoEraMismatch;
       if (!needFix && isCurrentFallback) {
+        // 現在の所属チーム: API → 成績データの最新年チーム の順で特定
+        // （FA中・移籍直後等でAPIがcurrentTeamを返さない場合のフォールバック）
+        let curTeam = null;
         const curAbbr = await _fetchMlbCurrentTeamAbbr(mlbId);
-        // 現在の所属チームとカードのチームが同じなら current写真で正しい → 補正不要
-        needFix = !curAbbr || _photoTeamCode(curAbbr) !== cardTeamCode;
+        if (curAbbr) curTeam = _photoTeamCode(curAbbr);
+        if (!curTeam) curTeam = _latestTeamFromData();
+        // 現在のチームとカードのチームが同じなら、current写真＝正しいチームの顔写真。
+        // あえて別の写真を取りに行かず必ずそのまま使う。
+        needFix = !curTeam || curTeam !== cardTeamCode;
+        if (!needFix) console.log(`[Photo] current写真がカードのチーム(${cardTeamCode})と一致 → そのまま使用`);
       }
       if (needFix) {
         // ── 第一優先: MLB年別写真（証明写真スタイル）の時代一致流用 ──
