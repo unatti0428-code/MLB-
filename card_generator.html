@@ -9155,6 +9155,7 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
       }
 
       let needFix = !found || yearPhotoEraMismatch;
+      let currentMismatch = false; // current写真がカードのチームと異なると判断されたか
       if (!needFix && isCurrentFallback) {
         // current（現在の所属）フォールバック写真の妥当性を判定する。
         // current写真のチームはAPIでは確定できないことが多い（FA中・返り咲き等）。
@@ -9169,8 +9170,13 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
           const curAbbr = await _fetchMlbCurrentTeamAbbr(mlbId);
           if (curAbbr) curTeam = _photoTeamCode(curAbbr);
           if (!curTeam) curTeam = _latestTeamFromData();
-          needFix = !curTeam || curTeam !== cardTeamCode;
-          if (!needFix) console.log(`[Photo] current写真がカードのチーム(${cardTeamCode})と一致 → そのまま使用`);
+          if (curTeam && curTeam === cardTeamCode) {
+            console.log(`[Photo] current写真がカードのチーム(${cardTeamCode})と一致 → そのまま使用`);
+          } else {
+            // current写真は別チームの可能性が高い（例: ARI返り咲き年なのにcurrent=CHC）
+            needFix = true;
+            currentMismatch = true;
+          }
         }
       }
 
@@ -9185,6 +9191,26 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
           if (commonsUrl) {
             found = commonsUrl;
             console.log('[Photo] Commonsチーム一致写真 使用:', commonsUrl);
+          } else if (currentMismatch) {
+            // ── 第三優先: current写真が誤チームと判断された場合、その選手の
+            //    「確実な顔写真（チーム判明済みの年別写真）」のうちカード年に最も近いものを使う。
+            //    カードのチームの写真ではないが、誤チームのcurrentより本人らしい顔写真になる。
+            //    （例: WSH年でWSH写真もCHC currentも適切でない → ARI年別写真を使用）
+            let anyUrl = null, anyCy = 0, anyTeam = null;
+            for (let cy = 2022; cy >= 2015; cy--) {
+              const u = yc.cardPhotoMap[cy];
+              if (!u) continue;
+              const t = _yearTeamFromData(cy - 1);
+              if (!t) continue; // チームが確定できる年別写真のみ
+              if (!anyUrl || Math.abs(cy - yr) < Math.abs(anyCy - yr)) {
+                anyCy = cy; anyUrl = u; anyTeam = t;
+              }
+            }
+            if (anyUrl) {
+              found = anyUrl;
+              console.log(`[Photo] current写真が誤チームのため、確実な顔写真に置換（撮影${anyCy - 1}年・${anyTeam}時代）`);
+            }
+            // それも無ければ found を変更せず従来写真を維持
           }
           // どちらも見つからない場合は found を変更せず従来写真を維持
         }
