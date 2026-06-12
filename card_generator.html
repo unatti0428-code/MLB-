@@ -9141,16 +9141,24 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
       // ── カードのチームと一致する「確証のある年別写真」を先に探す ──
       // 年別写真は撮影時代の所属チームがデータから確定できる公式ヘッドショット。
       // カード年に最も近い同チーム時代の写真を採用候補とする。
-      // （ARI→WSH→ARI返り咲き等で、以前のARI時代写真がここで拾われる）
+      // （ARI→CHC→WSH→ARI返り咲き等で、以前のARI時代写真がここで拾われる）
+      // ※ 重要: 写真の所属チームは「URLの撮影年」で判定する。
+      //   cardPhotoMap はキャリーフォワード補完で別年の写真を指すことがあるため、
+      //   キー(cy-1)ではなくURLから実際の撮影年を抽出して照合する。
+      //   （例: 2020年CHC写真がカードキー2022に補完され、2021年ARIと誤判定するのを防ぐ）
       const yc = await fetchMlbYearSpecificPhotos(mlbId); // キャッシュ済みのため追加コストなし
-      let eraUrl = null, eraBestCy = 0;
-      for (let cy = 2022; cy >= 2015; cy--) {
-        const u = yc.cardPhotoMap[cy];
+      const _photoUrlYear = (u) => {
+        const m = /\/headshot\/67\/(\d{4})(?:[/?#]|$)/.exec(String(u || ''));
+        return m ? parseInt(m[1]) : null;
+      };
+      let eraUrl = null, eraBestPy = 0;
+      for (const u of Object.values(yc.cardPhotoMap)) {
         if (!u) continue;
-        // cardPhotoMap[cy] は URL年 cy-1（シーズン末撮影）の写真 → cy-1 の所属で判定
-        if (_yearTeamFromData(cy - 1) !== cardTeamCode) continue;
-        if (!eraUrl || Math.abs(cy - yr) < Math.abs(eraBestCy - yr)) {
-          eraBestCy = cy; eraUrl = u;
+        const py = _photoUrlYear(u); // 実際の撮影年（URL由来）
+        if (!py) continue;
+        if (_yearTeamFromData(py) !== cardTeamCode) continue;
+        if (!eraUrl || Math.abs(py - yr) < Math.abs(eraBestPy - yr)) {
+          eraBestPy = py; eraUrl = u;
         }
       }
 
@@ -9184,31 +9192,48 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
         // ── 第一優先: 確証のある年別写真（証明写真スタイル）の時代一致流用 ──
         if (eraUrl) {
           found = eraUrl;
-          console.log(`[Photo] 年別写真を時代一致で流用（撮影${eraBestCy - 1}年・${cardTeamCode}時代）`);
+          console.log(`[Photo] 年別写真を時代一致で流用（撮影${eraBestPy}年・${cardTeamCode}時代）`);
         } else {
           // ── 第二優先: Wikimedia Commons（顔アップ写真限定） ──
           const commonsUrl = await _fetchCommonsTeamPhoto(g_mlbNameEn, cardTeamCode, yr);
           if (commonsUrl) {
             found = commonsUrl;
             console.log('[Photo] Commonsチーム一致写真 使用:', commonsUrl);
-          } else if (currentMismatch) {
-            // ── 第三優先: current写真が誤チームと判断された場合、その選手の
-            //    「確実な顔写真（チーム判明済みの年別写真）」のうちカード年に最も近いものを使う。
-            //    カードのチームの写真ではないが、誤チームのcurrentより本人らしい顔写真になる。
-            //    （例: WSH年でWSH写真もCHC currentも適切でない → ARI年別写真を使用）
-            let anyUrl = null, anyCy = 0, anyTeam = null;
-            for (let cy = 2022; cy >= 2015; cy--) {
-              const u = yc.cardPhotoMap[cy];
+          } else if (currentMismatch || yearPhotoEraMismatch) {
+            // ── 第三優先: 当たった写真が誤チーム（current誤判定 or 年別写真の時代不一致）
+            //    と判断された場合、その選手の
+            //    「確実な顔写真（チーム判明済みの年別写真）」に置換する。
+            //    カードのチームの写真がない場合は、その選手の主所属チーム
+            //    （成績データで最も在籍年数が多いチーム）の写真を優先する。
+            //    （例: WSH年で、近いCHC写真より主所属ARIの写真を使う）
+            //    ※ 撮影年もURL由来で判定（キャリーフォワード写真の年ズレを防ぐ）
+
+            // 各チームの在籍年数を集計（主所属チーム判定用）
+            const _teamYears = {};
+            (g_dataRows || []).forEach(r => {
+              if (!/^\d{4}$/.test(String(r[1] ?? '').trim())) return;
+              const tc = _photoTeamCode(r[2]);
+              if (!tc || tc === 'TOT' || tc === '--') return;
+              _teamYears[tc] = (_teamYears[tc] || 0) + 1;
+            });
+
+            // 候補: チーム判明済みの年別写真。主所属（在籍年数）優先、次にカード年への近さ。
+            let bestUrl = null, bestPy = 0, bestTeam = null, bestScore = -Infinity;
+            for (const u of Object.values(yc.cardPhotoMap)) {
               if (!u) continue;
-              const t = _yearTeamFromData(cy - 1);
+              const py = _photoUrlYear(u);
+              if (!py) continue;
+              const t = _yearTeamFromData(py);
               if (!t) continue; // チームが確定できる年別写真のみ
-              if (!anyUrl || Math.abs(cy - yr) < Math.abs(anyCy - yr)) {
-                anyCy = cy; anyUrl = u; anyTeam = t;
+              // 在籍年数×1000 を主成分、年の近さを従成分にしてスコア化
+              const score = (_teamYears[t] || 0) * 1000 - Math.abs(py - yr);
+              if (score > bestScore) {
+                bestScore = score; bestUrl = u; bestPy = py; bestTeam = t;
               }
             }
-            if (anyUrl) {
-              found = anyUrl;
-              console.log(`[Photo] current写真が誤チームのため、確実な顔写真に置換（撮影${anyCy - 1}年・${anyTeam}時代）`);
+            if (bestUrl) {
+              found = bestUrl;
+              console.log(`[Photo] current写真が誤チームのため、主所属の確実な顔写真に置換（撮影${bestPy}年・${bestTeam}時代）`);
             }
             // それも無ければ found を変更せず従来写真を維持
           }
