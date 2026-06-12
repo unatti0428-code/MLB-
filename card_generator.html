@@ -9137,42 +9137,50 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
 
     if (g_mlbNameEn && cardTeamCode && _TEAM_CODE_EN_MAP[cardTeamCode] &&
         (!found || isCurrentFallback || yearPhotoEraMismatch)) {
+
+      // ── カードのチームと一致する「確証のある年別写真」を先に探す ──
+      // 年別写真は撮影時代の所属チームがデータから確定できる公式ヘッドショット。
+      // カード年に最も近い同チーム時代の写真を採用候補とする。
+      // （ARI→WSH→ARI返り咲き等で、以前のARI時代写真がここで拾われる）
+      const yc = await fetchMlbYearSpecificPhotos(mlbId); // キャッシュ済みのため追加コストなし
+      let eraUrl = null, eraBestCy = 0;
+      for (let cy = 2022; cy >= 2015; cy--) {
+        const u = yc.cardPhotoMap[cy];
+        if (!u) continue;
+        // cardPhotoMap[cy] は URL年 cy-1（シーズン末撮影）の写真 → cy-1 の所属で判定
+        if (_yearTeamFromData(cy - 1) !== cardTeamCode) continue;
+        if (!eraUrl || Math.abs(cy - yr) < Math.abs(eraBestCy - yr)) {
+          eraBestCy = cy; eraUrl = u;
+        }
+      }
+
       let needFix = !found || yearPhotoEraMismatch;
       if (!needFix && isCurrentFallback) {
-        // 現在の所属チーム: API → 成績データの最新年チーム の順で特定
-        // （FA中・移籍直後等でAPIがcurrentTeamを返さない場合のフォールバック）
-        let curTeam = null;
-        const curAbbr = await _fetchMlbCurrentTeamAbbr(mlbId);
-        if (curAbbr) curTeam = _photoTeamCode(curAbbr);
-        if (!curTeam) curTeam = _latestTeamFromData();
-        // 現在のチームとカードのチームが同じなら、current写真＝正しいチームの顔写真。
-        // あえて別の写真を取りに行かず必ずそのまま使う。
-        needFix = !curTeam || curTeam !== cardTeamCode;
-        if (!needFix) console.log(`[Photo] current写真がカードのチーム(${cardTeamCode})と一致 → そのまま使用`);
+        // current（現在の所属）フォールバック写真の妥当性を判定する。
+        // current写真のチームはAPIでは確定できないことが多い（FA中・返り咲き等）。
+        // → カードのチームと一致する確証のある年別写真(eraUrl)がある場合は、
+        //   チーム不明のcurrent写真より優先する（＝必ずそのチームの顔写真を使う）。
+        if (eraUrl) {
+          needFix = true;
+          console.log(`[Photo] カードのチーム(${cardTeamCode})の年別写真あり → current写真より優先`);
+        } else {
+          // 確証のある年別写真がない場合のみ、current写真のチームを推定して判定
+          let curTeam = null;
+          const curAbbr = await _fetchMlbCurrentTeamAbbr(mlbId);
+          if (curAbbr) curTeam = _photoTeamCode(curAbbr);
+          if (!curTeam) curTeam = _latestTeamFromData();
+          needFix = !curTeam || curTeam !== cardTeamCode;
+          if (!needFix) console.log(`[Photo] current写真がカードのチーム(${cardTeamCode})と一致 → そのまま使用`);
+        }
       }
+
       if (needFix) {
-        // ── 第一優先: MLB年別写真（証明写真スタイル）の時代一致流用 ──
-        // カードのチームに所属していた時代の年別写真のうち、カード年に最も近いものを採用。
-        // 返り咲きの場合も、以前の在籍時代の写真がここで自動的に拾われる。
-        let rescued = false;
-        const yc = await fetchMlbYearSpecificPhotos(mlbId); // キャッシュ済みのため追加コストなし
-        let bestCy = 0, bestUrl = null;
-        for (let cy = 2022; cy >= 2015; cy--) {
-          const u = yc.cardPhotoMap[cy];
-          if (!u) continue;
-          // cardPhotoMap[cy] は URL年 cy-1（シーズン末撮影）の写真 → cy-1 の所属で判定
-          if (_yearTeamFromData(cy - 1) !== cardTeamCode) continue;
-          if (!bestUrl || Math.abs(cy - yr) < Math.abs(bestCy - yr)) {
-            bestCy = cy; bestUrl = u;
-          }
-        }
-        if (bestUrl) {
-          found = bestUrl;
-          rescued = true;
-          console.log(`[Photo] 年別写真を時代一致で流用（撮影${bestCy - 1}年・${cardTeamCode}時代）`);
-        }
-        // ── 第二優先: Wikimedia Commons（年別写真で救済できない場合のみ・顔アップ写真限定） ──
-        if (!rescued) {
+        // ── 第一優先: 確証のある年別写真（証明写真スタイル）の時代一致流用 ──
+        if (eraUrl) {
+          found = eraUrl;
+          console.log(`[Photo] 年別写真を時代一致で流用（撮影${eraBestCy - 1}年・${cardTeamCode}時代）`);
+        } else {
+          // ── 第二優先: Wikimedia Commons（顔アップ写真限定） ──
           const commonsUrl = await _fetchCommonsTeamPhoto(g_mlbNameEn, cardTeamCode, yr);
           if (commonsUrl) {
             found = commonsUrl;
