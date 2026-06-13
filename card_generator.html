@@ -6679,7 +6679,10 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
       continue;
     }
     if (/All.Star/i.test(s) && /selected|named|chosen|earned/i.test(s) && !results.some(r => r.includes('オールスター'))) {
-      results.push('オールスターに選出された実績は、その年のリーグを代表する投手としての高い評価を示す栄誉。');
+      // 守備位置に依存しない表現にする（野手に「投手として」と付かないよう isPitcher で出し分け）
+      results.push(isPitcher
+        ? 'オールスターに選出された実績は、その年のリーグを代表する投手としての高い評価を示す栄誉。'
+        : 'オールスターに選出された実績は、その年のリーグを代表する選手としての高い評価を示す栄誉。');
       continue;
     }
 
@@ -6888,10 +6891,12 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
       continue;
     }
 
-    // トミー・ジョン手術 / 重大手術からの復帰
+    // トミー・ジョン手術 / 重大手術からの復帰（野手も肘手術を受けるため守備位置で出し分け）
     if (/Tommy John|UCL|ulnar collateral|reconstructive.*elbow|elbow.*surgery|elbow.*repl/i.test(s)) {
       if (!results.some(r => r.includes('手術') || r.includes('復帰'))) {
-        results.push('トミー・ジョン手術という試練を乗り越えてマウンドへと帰還し、不屈の精神でキャリアを継続した。');
+        results.push(isPitcher
+          ? 'トミー・ジョン手術という試練を乗り越えてマウンドへと帰還し、不屈の精神でキャリアを継続した。'
+          : 'トミー・ジョン手術という試練を乗り越えてグラウンドへと帰還し、不屈の精神でキャリアを継続した。');
         continue;
       }
     }
