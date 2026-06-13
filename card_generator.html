@@ -3503,6 +3503,44 @@ const _SELECTION_AWARDS = new Set([
   'ALL-MLBチーム',
 ]);
 
+// マイナー／ウィンター／独立リーグの略号（MLB以外）。
+// これらを冠した賞（例: "VWL Rookie of the Year", "PCL Pitcher of the Year"）は
+// MLBの年間タイトルではないため、肩書・列伝に出さない。
+// ※ MLBのリーグ略号 AL / NL は当然ここに含めない。
+// ※ 誤除外を避けるため2文字コード(AL/NL等との衝突)は採用せず、
+//   マイナー/ウィンターで実際に使われる3文字以上の略号のみを列挙する。
+//   （MLB年間タイトルの賞名・IDは AL/NL/MLB/Rawlings/Wilson 等で始まり、ここに該当しない）
+const _NON_MLB_LEAGUE_CODES = new Set([
+  // 傘下マイナー（AAA〜A）※賞名・ID双方の略号形を併記
+  'PCL', 'INT',                                  // AAA（パシフィックコースト/インターナショナル）
+  'EAS', 'SOU', 'TEX',                           // AA（イースタン/サザン/テキサス）
+  'CAL', 'CARL', 'CAR', 'FSL', 'FLO', 'SAL', 'MWL', 'MID', 'NWL', 'NOR', 'PAC', // A+/A
+  'ACL', 'FCL', 'AZL', 'GCL', 'PIO', 'APP',      // ルーキー/コンプレックス
+  'DSL', 'VSL',                                  // 中南米サマーリーグ
+  'AFL',                                         // アリゾナ・フォールリーグ
+  // ウィンターリーグ／独立リーグ
+  'VWL', 'DWL', 'MEX', 'LMP', 'PWL', 'ABL', 'CWL', 'LVBP', 'LIDOM', 'RABB',
+]);
+
+/**
+ * 賞名・IDの先頭リーグ略号がMLB以外（マイナー/ウィンター等）かを判定する。
+ * 例: name="VWL Rookie of the Year" / id="VWLROY" → true
+ * @param {{name?:string,id?:string}} award
+ * @returns {boolean}
+ */
+function _isNonMlbLeagueAward(award) {
+  const rawName = String(award.name || '').trim();
+  const rawId   = String(award.id || '').trim().toUpperCase();
+  // ① 賞名の先頭トークンが略号（"PCL Pitcher of the Year" 等）
+  const nameHead = (rawName.match(/^([A-Za-z]{2,5})\b/) || [])[1];
+  if (nameHead && _NON_MLB_LEAGUE_CODES.has(nameHead.toUpperCase())) return true;
+  // ② IDの先頭が略号で始まる（"VWLROY", "PCLPOY", "DSLMSAS" 等）
+  for (const code of _NON_MLB_LEAGUE_CODES) {
+    if (rawId.startsWith(code) && rawId.length > code.length) return true;
+  }
+  return false;
+}
+
 function awardToJa(award) {
   const n = (award.name || award.id || '').toLowerCase();
 
@@ -3514,6 +3552,8 @@ function awardToJa(award) {
   if (n.includes('all-star game mvp') || n.includes('allstar game mvp'))      return null;
   if (n.includes('minor league') || n.includes('milb') ||
       n.includes('triple-a')    || n.includes('double-a'))                    return null;
+  // マイナー／ウィンターリーグの略号を冠した賞（VWL/PCL/DSL等）を除外
+  if (_isNonMlbLeagueAward(award))                                            return null;
 
   // ② リーグ識別
   const isAL = n.includes('american league') || n.includes(' al ') || n.startsWith('al ');
