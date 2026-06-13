@@ -8850,6 +8850,28 @@ function _latestTeamFromData() {
 }
 
 /**
+ * 成績データの最新年の「全所属チーム」を返す（シーズン途中移籍も含む）。
+ * current写真は最新所属のいずれかの可能性が高いため、上書き判定に使う。
+ * @returns {string[]} 写真用正規化済みチームコードの配列
+ */
+function _latestYearTeams() {
+  if (!g_dataRows) return [];
+  const years = [...new Set(
+    g_dataRows.map(r => parseInt(String(r[1] ?? '').trim()))
+              .filter(y => !isNaN(y) && y >= 1900)
+  )].sort((a, b) => b - a);
+  for (const y of years) {
+    const teams = [...new Set(
+      g_dataRows.filter(r => String(r[1] ?? '').trim() === String(y))
+                .map(r => _photoTeamCode(r[2]))
+                .filter(tc => tc && tc !== 'TOT' && tc !== '--')
+    )];
+    if (teams.length) return teams;
+  }
+  return [];
+}
+
+/**
  * 画像が「証明写真のような顔のアップ」かを顔検出で判定する。
  *
  * ブラウザ標準の FaceDetector API が利用できる場合のみ検証を行い、
@@ -9173,13 +9195,18 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
           needFix = true;
           console.log(`[Photo] カードのチーム(${cardTeamCode})の年別写真あり → current写真より優先`);
         } else {
-          // 確証のある年別写真がない場合のみ、current写真のチームを推定して判定
-          let curTeam = null;
-          const curAbbr = await _fetchMlbCurrentTeamAbbr(mlbId);
-          if (curAbbr) curTeam = _photoTeamCode(curAbbr);
-          if (!curTeam) curTeam = _latestTeamFromData();
-          if (curTeam && curTeam === cardTeamCode) {
-            console.log(`[Photo] current写真がカードのチーム(${cardTeamCode})と一致 → そのまま使用`);
+          // 確証のある年別写真がない場合は、current写真がカードのチームの写真か推定する。
+          // current写真は選手の最新所属チームの顔写真である可能性が高いため、
+          // カードのチームが「データ最新年の所属チーム（途中移籍含む）」または
+          // APIの現在所属チームに含まれるなら、current写真をそのまま維持する。
+          // （例: 2025年PHI→COL移籍のCOLカードで、正しいCOL current写真を上書きしない）
+          let curMatch = _latestYearTeams().includes(cardTeamCode);
+          if (!curMatch) {
+            const curAbbr = await _fetchMlbCurrentTeamAbbr(mlbId);
+            if (curAbbr && _photoTeamCode(curAbbr) === cardTeamCode) curMatch = true;
+          }
+          if (curMatch) {
+            console.log(`[Photo] current写真がカードのチーム(${cardTeamCode})の最新所属と一致 → そのまま使用`);
           } else {
             // current写真は別チームの可能性が高い（例: ARI返り咲き年なのにcurrent=CHC）
             needFix = true;
