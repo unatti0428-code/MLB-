@@ -457,6 +457,7 @@ let g_careerTeam = null;   // 通算行専用：キャリア最多試合チー�
 let g_lastAwardsJa      = [];   // 直近カードのawardsJa（通算バナー再描画用）
 let g_lastIsCareer      = false; // 直近カードが通算行かどうか
 let g_baseOverallScore  = 0;    // タイトル加点前の基本総合力
+let g_milbTitleJa       = null; // マイナー/ウィンター賞のベスト称号（MLB肩書がない場合のフォールバック）
 let g_currentTheme      = null; // 現在のカードテーマ（タイトル加点でランクアップした際も最新を保持）
 let g_genId             = 0;   // カード生成のたびにインクリメント（非同期汚染防止）
 let g_selectedRow       = null; // 最後に生成したデータ行（テーマ再適用用）
@@ -3541,6 +3542,175 @@ function _isNonMlbLeagueAward(award) {
   return false;
 }
 
+// ── マイナー／ウィンターリーグの賞 → 列伝・肩書用の日本語 ───────────────
+// リーグ略号 → { レベル, 日本語リーグ名, ウィンターか }
+// バナーの賞からは除外しつつ、列伝には「AAA」「AA」等のレベルを明記して盛り込む。
+const _MILB_LEAGUE_INFO = {
+  PCL: { lv: 'AAA', ja: 'パシフィック・コーストリーグ' },
+  INT: { lv: 'AAA', ja: 'インターナショナルリーグ' },
+  EAS: { lv: 'AA',  ja: 'イースタンリーグ' },
+  SOU: { lv: 'AA',  ja: 'サザンリーグ' },
+  TEX: { lv: 'AA',  ja: 'テキサスリーグ' },
+  SAL: { lv: 'A+',  ja: 'サウスアトランティックリーグ' },
+  MWL: { lv: 'A+',  ja: 'ミッドウェストリーグ' }, MID: { lv: 'A+', ja: 'ミッドウェストリーグ' },
+  NWL: { lv: 'A+',  ja: 'ノースウェストリーグ' },  NOR: { lv: 'A+', ja: 'ノースウェストリーグ' },
+  CAL: { lv: 'A',   ja: 'カリフォルニアリーグ' },
+  CARL:{ lv: 'A',   ja: 'カロライナリーグ' }, CAR: { lv: 'A', ja: 'カロライナリーグ' },
+  FSL: { lv: 'A',   ja: 'フロリダステートリーグ' }, FLO: { lv: 'A', ja: 'フロリダステートリーグ' },
+  ACL: { lv: 'ルーキー', ja: 'アリゾナ・コンプレックスリーグ' },
+  FCL: { lv: 'ルーキー', ja: 'フロリダ・コンプレックスリーグ' },
+  AZL: { lv: 'ルーキー', ja: 'アリゾナリーグ' },
+  GCL: { lv: 'ルーキー', ja: 'ガルフコーストリーグ' },
+  PIO: { lv: 'ルーキー', ja: 'パイオニアリーグ' },
+  APP: { lv: 'ルーキー', ja: 'アパラチアンリーグ' },
+  DSL: { lv: 'ルーキー', ja: 'ドミニカン・サマーリーグ' },
+  VSL: { lv: 'ルーキー', ja: 'ベネズエラ・サマーリーグ' },
+  AFL: { lv: '',    ja: 'アリゾナ・フォールリーグ', winter: true, fall: true },
+  VWL: { lv: '',    ja: 'ベネズエラ・ウインターリーグ', winter: true },
+  DWL: { lv: '',    ja: 'ドミニカ・ウインターリーグ',   winter: true },
+  LIDOM:{ lv: '',   ja: 'ドミニカ・ウインターリーグ',   winter: true },
+  LMP: { lv: '',    ja: 'メキシカン・パシフィックリーグ', winter: true },
+  MEX: { lv: '',    ja: 'メキシカンリーグ', winter: true },
+  PWL: { lv: '',    ja: 'プエルトリコ・ウインターリーグ', winter: true },
+  ABL: { lv: '',    ja: 'オーストラリアン・ベースボールリーグ', winter: true },
+  CWL: { lv: '',    ja: 'カリビアン・ウインターリーグ', winter: true },
+  LVBP:{ lv: '',    ja: 'ベネズエラ・ウインターリーグ', winter: true },
+  RABB:{ lv: '',    ja: '独立リーグ', winter: true },
+};
+
+/**
+ * マイナー／ウィンター賞を分類する。年間タイトル級のみ対象（週間/月間は除外）。
+ * @returns {{lv,ja,winter,fall,kind,prestige}|null}
+ */
+function _classifyMilbAward(award) {
+  if (!_isNonMlbLeagueAward(award)) return null; // MLB賞はここでは扱わない
+  const name = String(award.name || '').trim();
+  const id   = String(award.id || '').trim().toUpperCase();
+  const n    = name.toLowerCase();
+  // 週間・月間は列伝に値しないため除外
+  if (/of the week|of the month|player of the week|pitcher of the week/.test(n)) return null;
+  if (/POWH?$|POMH?$|POW$|POM$/.test(id)) return null;
+
+  // リーグ情報を特定（賞名先頭 → ID先頭 の順）
+  let info = null;
+  const head = (name.match(/^([A-Za-z]{2,5})\b/) || [])[1];
+  if (head && _MILB_LEAGUE_INFO[head.toUpperCase()]) info = _MILB_LEAGUE_INFO[head.toUpperCase()];
+  if (!info) {
+    for (const code of Object.keys(_MILB_LEAGUE_INFO)) {
+      if (id.startsWith(code) && id.length > code.length) { info = _MILB_LEAGUE_INFO[code]; break; }
+    }
+  }
+  if (!info) return null;
+
+  // 賞の種類を判定
+  let kind = null, prestige = 0;
+  if (/rookie of the year/.test(n))                       { kind = 'roy';      prestige = 5; }
+  else if (/defensive player of the year/.test(n))        { kind = 'def';      prestige = 4; } // "player of the year"より先に判定
+  else if (/most valuable player|\bmvp\b/.test(n))        { kind = 'mvp';      prestige = 5; }
+  else if (/pitcher of the year/.test(n))                 { kind = 'poy_pit';  prestige = 5; }
+  else if (/(player|hitter) of the year/.test(n))         { kind = 'poy_bat';  prestige = 5; }
+  else if (/batting (title|champion)|batting champ/.test(n)) { kind = 'champ'; prestige = 4; }
+  else if (/all.?prospect|rising star/.test(n))           { kind = 'prospect'; prestige = 3; }
+  else if (/mid-season all-star|post-season all-star|all-star/.test(n)) { kind = 'allstar'; prestige = 2; }
+  else return null;
+
+  // レベルによる加点（上位リーグほど価値が高い）
+  const lvWeight = { 'AAA': 3, 'AA': 2.5, 'A+': 1.5, 'A': 1, 'ルーキー': 0.5 };
+  prestige += info.winter ? 2 : (lvWeight[info.lv] || 0);
+  return { ...info, kind, prestige };
+}
+
+/** マイナー／ウィンター賞の「リーグ表記」（例: "AAA（パシフィック・コーストリーグ）" / "ウインターリーグ（ベネズエラ）"） */
+function _milbLeagueLabel(info) {
+  if (info.fall)   return 'アリゾナ・フォールリーグ';
+  if (info.winter) return info.ja;
+  return `${info.lv}（${info.ja}）`;
+}
+
+/** マイナー／ウィンター賞 → 列伝の1文（isPitcherで投手/野手の語を調整） */
+function _milbAwardEpisode(info, isPitcher) {
+  const lbl = _milbLeagueLabel(info);
+  const playerWord = isPitcher ? '投手' : '選手';
+  switch (info.kind) {
+    case 'roy':     return `${lbl}で新人王に輝くなど、若くしてその才能を高く評価された逸材。`;
+    case 'mvp':     return `${lbl}でMVPを受賞するなど、同リーグ屈指の実力で頭角を現した。`;
+    case 'poy_pit': return `${lbl}で最優秀投手に選ばれるなど、メジャー昇格を期待される好投手として評価を高めた。`;
+    case 'poy_bat': return `${lbl}で最優秀${playerWord}に選ばれるなど、打棒を高く評価された有望株。`;
+    case 'def':     return `${lbl}で最優秀守備${playerWord}に選ばれるなど、堅実な守備で評価を集めた。`;
+    case 'champ':   return `${lbl}で首位打者を獲得するなど、確かな打撃技術で結果を残した。`;
+    case 'prospect':return `${lbl}で有望株として選抜されるなど、将来を嘱望される存在として注目を集めた。`;
+    case 'allstar': return `${lbl}でオールスターに選出されるなど、同リーグを代表する${playerWord}として活躍した。`;
+    default:        return null;
+  }
+}
+
+/** マイナー／ウィンター賞 → 肩書用の短い称号（例: "AAA最優秀投手" / "ウインターL新人王"） */
+function _milbAwardTitle(info, isPitcher) {
+  const lv = info.fall ? 'AFL' : info.winter ? 'ウインターL' : info.lv;
+  const playerWord = isPitcher ? '投手' : '選手';
+  switch (info.kind) {
+    case 'roy':     return `${lv}新人王`;
+    case 'mvp':     return `${lv}MVP`;
+    case 'poy_pit': return `${lv}最優秀投手`;
+    case 'poy_bat': return `${lv}最優秀${playerWord}`;
+    case 'champ':   return `${lv}首位打者`;
+    case 'def':     return `${lv}守備の名手`;
+    default:        return null;
+  }
+}
+
+// マイナー／ウィンター賞データのキャッシュ（mlbId → { episodes:[], bestTitle:string|null }）
+const _milbAwardCache = {};
+
+/**
+ * 選手の全受賞からマイナー／ウィンターの年間タイトル級を抽出し、
+ * 列伝用エピソード（最大2件）と肩書用ベスト称号を返す。
+ * @param {string|number} mlbId
+ * @param {boolean} isPitcher
+ * @returns {Promise<{episodes:string[], bestTitle:string|null}>}
+ */
+async function _fetchMilbAwardData(mlbId, isPitcher) {
+  if (!mlbId) return { episodes: [], bestTitle: null };
+  const ckey = `${mlbId}_${isPitcher ? 'p' : 'b'}`;
+  if (_milbAwardCache[ckey]) return _milbAwardCache[ckey];
+  try {
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/people/${mlbId}/awards`);
+    if (!res.ok) { _milbAwardCache[ckey] = { episodes: [], bestTitle: null }; return _milbAwardCache[ckey]; }
+    const data = await res.json();
+    const all = (data.awards || []).map(a => ({ name: a.name || '', id: a.id || '', season: a.season || '' }));
+
+    // 分類して prestige 降順に
+    const classified = all
+      .map(a => { const c = _classifyMilbAward(a); return c ? { ...c, season: a.season } : null; })
+      .filter(Boolean)
+      .sort((x, y) => y.prestige - x.prestige);
+
+    // 列伝エピソード（種類×レベルの重複を避けつつ最大2件）
+    const episodes = [];
+    const usedKinds = new Set();
+    for (const c of classified) {
+      if (episodes.length >= 2) break;
+      const k = c.kind + '_' + (c.lv || c.ja);
+      if (usedKinds.has(k)) continue;
+      const ep = _milbAwardEpisode(c, isPitcher);
+      if (ep) { episodes.push(ep); usedKinds.add(k); }
+    }
+    // 肩書用ベスト称号（最上位の年間タイトル級のみ。allstar/prospect等は称号にしない）
+    let bestTitle = null;
+    for (const c of classified) {
+      const t = _milbAwardTitle(c, isPitcher);
+      if (t) { bestTitle = t; break; }
+    }
+    _milbAwardCache[ckey] = { episodes, bestTitle };
+    if (episodes.length) console.log('[MilbAward]', mlbId, '→', episodes.length, '件 / 称号:', bestTitle);
+    return _milbAwardCache[ckey];
+  } catch (e) {
+    console.warn('[MilbAward] 取得失敗:', e.message);
+    _milbAwardCache[ckey] = { episodes: [], bestTitle: null };
+    return _milbAwardCache[ckey];
+  }
+}
+
 function awardToJa(award) {
   const n = (award.name || award.id || '').toLowerCase();
 
@@ -3938,7 +4108,8 @@ function _buildCareerCardType(row, awardsJa) {
     if (_pow >= 85)          return `長打力の${posJa || '野手'}`;
     if (_eye >= 85)          return `出塁型${posJa || '野手'}`;
   }
-  return posJa || '野手';
+  // MLB級の肩書がない場合、マイナー/ウィンターの年間タイトル級称号を優先（あれば）
+  return g_milbTitleJa || posJa || '野手';
 }
 
 // ── ポジション日本語名を取得（DRS優先・g_mlbPosフォールバック） ──────────
@@ -4150,7 +4321,8 @@ function buildCardType(row, awardsJa) {
       if (_eye >= 85)                       return `出塁型${posJa || '野手'}`;
       if (_steal >= 15 && _spd >= 70 && _isOF) return `走塁型外野手`;
     }
-    return posJa || '野手';
+    // MLB級の肩書がない場合、マイナー/ウィンターの年間タイトル級称号を優先（あれば）
+    return g_milbTitleJa || posJa || '野手';
   } else {
     const hasKTitle   = awardsJa.some(a => a.includes('奪三振王'));
     const hasEraTitle = awardsJa.some(a => a.includes('最優秀防御率'));
@@ -4209,8 +4381,8 @@ function buildCardType(row, awardsJa) {
       // WS優勝のみの場合 → 自然な表現で返す
       if (hasWsChamp) return `WS制覇に貢献した${hand}`;
     }
-    // ⑦ タイトルなし → 勝利数＋手腕
-    return `${wins}勝${hand}投手`;
+    // ⑦ タイトルなし → マイナー/ウィンターの年間タイトル級称号があれば優先、なければ勝利数＋手腕
+    return g_milbTitleJa || `${wins}勝${hand}投手`;
   }
 }
 
@@ -7338,6 +7510,21 @@ async function fetchRetsudenFromAPI(row) {
     if (apiBirthLine) {
       wikiEpisodes = wikiEpisodes.filter(ep => !ep.includes('出身') && !ep.includes('生まれ'));
       wikiEpisodes.unshift(apiBirthLine);
+    }
+  }
+
+  // ④-c マイナー／ウィンターリーグの年間タイトル級実績を列伝に盛り込む
+  // （MLB経験の少ない若手選手の列伝を、AAA/AA/ウインターL等のレベルを明記して充実させる）
+  // バナーの賞からは除外済み。出身行の直後・他のWiki文より前に挿入して優先度を上げる。
+  g_milbTitleJa = null;
+  if (g_mlbId) {
+    const milb = await _fetchMilbAwardData(g_mlbId, g_isPitcher);
+    g_milbTitleJa = milb.bestTitle; // 肩書フォールバック用
+    if (milb.episodes.length) {
+      // 既存重複を避けつつ、出身行の後ろに差し込む（先頭が出身行なら2番目以降）
+      const insertAt = (wikiEpisodes[0] && /出身/.test(wikiEpisodes[0])) ? 1 : 0;
+      const fresh = milb.episodes.filter(ep => !wikiEpisodes.includes(ep));
+      wikiEpisodes.splice(insertAt, 0, ...fresh);
     }
   }
 
