@@ -9560,6 +9560,53 @@ async function resolveYearPhotoAsync(mlbId, year, brPhoto, genId) {
 // （例: BAL時代の写真を一度アップロード → 2022〜2025のBAL年度すべてに適用）
 let g_teamPhotoLocked = false; // 保存写真適用中は非同期写真解決を停止するフラグ
 
+// ── 写真の保存先は IndexedDB（大容量）。localStorage は容量が約5MBと小さく、
+//    写真(1枚 約170KB)を数十枚溜めるとすぐ満杯になり、同一オリジンで動く
+//    対戦ゲーム側のチーム編成データまで保存できなくなるため。 ──
+const _PHOTO_DB = 'mlb_photo_db', _PHOTO_STORE = 'teamphotos';
+let _photoDbPromise = null;
+function _photoOpenDB() {
+  if (_photoDbPromise) return _photoDbPromise;
+  _photoDbPromise = new Promise((resolve, reject) => {
+    if (!window.indexedDB) { reject(new Error('no-idb')); return; }
+    const req = indexedDB.open(_PHOTO_DB, 1);
+    req.onupgradeneeded = () => { const db = req.result; if (!db.objectStoreNames.contains(_PHOTO_STORE)) db.createObjectStore(_PHOTO_STORE, { keyPath: 'key' }); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+  return _photoDbPromise;
+}
+function _photoIdbGet(key) {
+  return _photoOpenDB().then(db => new Promise((resolve) => {
+    const r = db.transaction(_PHOTO_STORE, 'readonly').objectStore(_PHOTO_STORE).get(key);
+    r.onsuccess = () => resolve(r.result ? r.result.photo : null);
+    r.onerror   = () => resolve(null);
+  })).catch(() => null);
+}
+function _photoIdbPut(key, photo) {
+  return _photoOpenDB().then(db => new Promise((resolve) => {
+    const tx = db.transaction(_PHOTO_STORE, 'readwrite');
+    tx.objectStore(_PHOTO_STORE).put({ key, photo });
+    tx.oncomplete = () => resolve(true);
+    tx.onerror    = () => resolve(false);
+  })).catch(() => false);
+}
+// 起動時に一度だけ: 旧 localStorage の写真キャッシュを IndexedDB へ移し、localStorage を解放する
+async function _photoMigrateFromLS() {
+  const keys = [];
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.indexOf('mlbcard_teamphoto_') === 0) keys.push(k); } } catch (e) { return; }
+  if (!keys.length) return;
+  let moved = 0;
+  for (const k of keys) {
+    try {
+      const v = localStorage.getItem(k);
+      if (v) { const ok = await _photoIdbPut(k, v); if (ok) { localStorage.removeItem(k); moved++; } }
+    } catch (e) {}
+  }
+  if (moved) console.log(`[TeamPhoto] localStorage→IndexedDB 移行: ${moved}件 (localStorage を解放)`);
+}
+document.addEventListener('DOMContentLoaded', () => { _photoMigrateFromLS(); });
+
 function _teamPhotoStoreKey(row) {
   const playerKey = g_mlbId || String((row && row[0]) || '').trim() || null;
   if (!playerKey) return null;
@@ -9586,21 +9633,25 @@ function _saveTeamPhoto(srcUrl, row) {
       canvas.height = Math.round((img.naturalHeight || maxW) * scale);
       canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      localStorage.setItem(key, dataUrl);
-      console.log('[TeamPhoto] 保存:', key, `(${Math.round(dataUrl.length / 1024)}KB)`);
+      _photoIdbPut(key, dataUrl).then(ok => {
+        if (ok) console.log('[TeamPhoto] 保存(IndexedDB):', key, `(${Math.round(dataUrl.length / 1024)}KB)`);
+        else { try { localStorage.setItem(key, dataUrl); } catch (e) {} } // IDB不可時のみ localStorage へ
+      });
     } catch (e) {
-      // localStorage 容量超過等は無視（保存できなくても生成は続行）
+      // 容量超過等は無視（保存できなくても生成は続行）
       console.warn('[TeamPhoto] 保存失敗:', e.message);
     }
   };
   img.src = srcUrl;
 }
 
-/** 保存済みチーム別写真を取得（なければ null） */
-function _loadTeamPhoto(row) {
+/** 保存済みチーム別写真を取得（なければ null）。IndexedDB優先・旧localStorageもフォールバック参照 */
+async function _loadTeamPhoto(row) {
   const key = _teamPhotoStoreKey(row);
   if (!key) return null;
-  try { return localStorage.getItem(key); } catch (e) { return null; }
+  let v = await _photoIdbGet(key);
+  if (v == null) { try { v = localStorage.getItem(key); } catch (e) {} } // 未移行・IDB不可時のフォールバック
+  return v;
 }
 
 async function _doGenerate(photoInput) {
@@ -9721,7 +9772,7 @@ async function _doGenerate(photoInput) {
       ? `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,h_282,c_fit,q_auto:best/v1/people/${g_mlbId}/headshot/67/current`
       : null;
 
-    const _savedTeamPhoto = _isManualPhoto ? null : _loadTeamPhoto(selectedRow);
+    const _savedTeamPhoto = _isManualPhoto ? null : await _loadTeamPhoto(selectedRow);
 
     if (_isManualPhoto) {
       // ① 手動アップロード最優先
