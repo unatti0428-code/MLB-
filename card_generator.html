@@ -2121,10 +2121,24 @@ function warToScore(war) {
  *   '--' または null の場合は WAR なしとして扱い、calcHitterOverall の
  *   加重平均のみを総合力とする。
  */
+// 年間HR10本未満の野手はパワー最大85・HR能最大2に制限する（単年カードのみ）。
+// row[9]=本塁打数, row[1]=年度（4桁でなければ通算行＝対象外）。
+// @returns {{power:number|null, hrAbil:number|null}} 制限後の値
+function _applyLowHrCaps(row, power, hrAbil) {
+  const isCareerRow = !/^\d{4}$/.test(String(row[1] ?? '').trim());
+  const hrN = parseInt(row[9]) || 0;
+  if (!isCareerRow && hrN < 10) {
+    if (power !== null && power > 85) power = 85;
+    if (hrAbil !== null && hrAbil > 2) hrAbil = 2;
+  }
+  return { power, hrAbil };
+}
+
 function calcHitterOverall(row, isCatcher, realWar = null) {
   // ── 能力値（0–100+ の絶対スコア。0はデータなしとして除外） ──
   const meet   = safeNum(row[44]);
-  const power  = safeNum(row[45]);
+  // 年間HR10本未満はパワー最大85に制限（表示と総合力で一貫させる）
+  const power  = _applyLowHrCaps(row, safeNum(row[45]), null).power;
   const speed  = safeNum(row[46]);
   const chance = safeNum(row[47]);
   const eye    = safeNum(row[48]);
@@ -2222,7 +2236,8 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
 
   // ── HR能ボーナス（ExcelのAY列 = row[50] のHR値を使用） ──
   // 最終スコアにHR能×2を加算してホームラン能力の高い打者を評価
-  const hrAbility = safeNum(row[50]);
+  // 年間HR10本未満はHR能最大2に制限（表示と総合力で一貫させる）
+  const hrAbility = _applyLowHrCaps(row, null, safeNum(row[50])).hrAbil;
   const hrBonus   = (hrAbility !== null && hrAbility > 0) ? hrAbility * 2 : 0;
 
   // ── 安打数ボーナス（単年のみ・通算行は適用なし） ──
@@ -2641,11 +2656,16 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
   const sb   = getSB(row, headers[0]);
   const war  = fmtWAR(resolveWAREffective(row, headers[0], false));
 
-  const meet  = row[44] || 0, power  = row[45] || 0, speed  = row[46] || 0,
+  const meet  = row[44] || 0, speed  = row[46] || 0,
         chance = row[47] || 0, eye   = row[48] || 0, kres   = row[49] || 0,
-        hrAbil = (row[50] !== null && row[50] !== undefined && row[50] !== '') ? parseInt(row[50]) || 0 : null,
         steal  = row[51] || 0, vsLeft = row[52] || 0;
   const lead   = row[53], csRate = row[54];
+  // 年間HR10本未満はパワー最大85・HR能最大2に制限（総合力計算と一貫）
+  const _rawPower = row[45] || 0;
+  const _rawHrAbil = (row[50] !== null && row[50] !== undefined && row[50] !== '') ? parseInt(row[50]) || 0 : null;
+  const _capped = _applyLowHrCaps(row, parseFloat(_rawPower) || 0, _rawHrAbil);
+  const power  = _capped.power;
+  const hrAbil = _capped.hrAbil;
 
   const pitchLabels = ['FB','2C','CT','SL','CB','CH','SF'];
   const pitchVals   = pitchLabels.map((lbl, i) => ({ lbl, val: safeNum(row[55 + i]) }));
