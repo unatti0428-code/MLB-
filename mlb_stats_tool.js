@@ -5501,6 +5501,10 @@ async function processFile(filePath, catcherData = null) {
     if (!isCareer && g < 100 && typeof stealAbility === 'number') {
       while (spdVal + stealAbility > 120) stealAbility -= 10;
     }
+    // 年間盗塁数20未満: 盗塁能はMAX20
+    if (!isCareer && sb < 20 && typeof stealAbility === 'number') {
+      stealAbility = Math.min(20, stealAbility);
+    }
 
     const abilityVals = [
       calcMeet(avg,tier),     // i=0 ミート
