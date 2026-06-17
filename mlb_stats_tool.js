@@ -5501,9 +5501,11 @@ async function processFile(filePath, catcherData = null) {
     if (!isCareer && g < 100 && typeof stealAbility === 'number') {
       while (spdVal + stealAbility > 120) stealAbility -= 10;
     }
-    // 年間盗塁数20未満: 盗塁能はMAX20
-    if (!isCareer && sb < 20 && typeof stealAbility === 'number') {
-      stealAbility = Math.min(20, stealAbility);
+    // 年間盗塁数による盗塁能上限（段階的クランプ）
+    if (!isCareer && typeof stealAbility === 'number') {
+      if (sb < 20) stealAbility = Math.min(20, stealAbility);
+      else if (sb < 25) stealAbility = Math.min(30, stealAbility);
+      else if (sb < 30) stealAbility = Math.min(40, stealAbility);
     }
 
     const abilityVals = [
