@@ -5497,9 +5497,12 @@ async function processFile(filePath, catcherData = null) {
     let   spdVal   = calcSpeed(spd);
     let   stealAbility = calcStealAbility(spdVal, ab, walks, sb, cs);
 
-    // 年間試合数100未満: スピード＋盗塁能が120を超えないよう盗塁能を-10ずつ補正
+    // 年間試合数100未満: スピード＋盗塁能が120を超えないよう盗塁能を-10ずつ補正、削減分の1/3をスピードに加算
     if (!isCareer && g < 100 && typeof stealAbility === 'number') {
+      const stealBefore = stealAbility;
       while (spdVal + stealAbility > 120) stealAbility -= 10;
+      const reduction = stealBefore - stealAbility;
+      if (reduction > 0) spdVal += Math.round(reduction / 3);
     }
     // 年間盗塁数による盗塁能上限（段階的クランプ）、削減分の1/3をスピードに加算
     if (!isCareer && typeof stealAbility === 'number') {
