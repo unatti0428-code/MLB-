@@ -5494,18 +5494,24 @@ async function processFile(filePath, catcherData = null) {
     const tier     = calcHRTier(hr, ab);
     const walkRate = ab > 0 ? walks / ab * 1000 : 0;
     const soRate   = k / ab * 1000;
-    const spdVal   = calcSpeed(spd);
+    let   spdVal   = calcSpeed(spd);
     let   stealAbility = calcStealAbility(spdVal, ab, walks, sb, cs);
 
     // 年間試合数100未満: スピード＋盗塁能が120を超えないよう盗塁能を-10ずつ補正
     if (!isCareer && g < 100 && typeof stealAbility === 'number') {
       while (spdVal + stealAbility > 120) stealAbility -= 10;
     }
-    // 年間盗塁数による盗塁能上限（段階的クランプ）
+    // 年間盗塁数による盗塁能上限（段階的クランプ）、削減分の1/3をスピードに加算
     if (!isCareer && typeof stealAbility === 'number') {
-      if (sb < 20) stealAbility = Math.min(20, stealAbility);
-      else if (sb < 25) stealAbility = Math.min(30, stealAbility);
-      else if (sb < 30) stealAbility = Math.min(40, stealAbility);
+      let cap = null;
+      if (sb < 20) cap = 20;
+      else if (sb < 25) cap = 30;
+      else if (sb < 30) cap = 40;
+      if (cap !== null && stealAbility > cap) {
+        const reduction = stealAbility - cap;
+        spdVal += Math.round(reduction / 3);
+        stealAbility = cap;
+      }
     }
 
     const abilityVals = [
