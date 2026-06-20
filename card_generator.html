@@ -2140,6 +2140,25 @@ function _applyLowHrCaps(row, power, hrAbil) {
   return { power, hrAbil };
 }
 
+// 捕手のリード値（row[53]）を捕手守備イニング（C＝row[28]）に応じてクランプする。
+// 出場が少ない捕手はフレーミング指標が小サンプルで極端に振れるため、
+// 0付近に抑える「歯止め」をかける（単年・通算とも）。
+//   C守備150inn以下 → [-3, 3] / 400inn以下 → [-5, 5] / 800inn以下 → [-7, 7]
+//   800inn超 → 制限なし（十分なサンプルのため実値を尊重）
+// @returns {number|null} クランプ後のリード値（データなしは null）
+function _catcherLeadClamped(row) {
+  const raw = safeNum(row[53]);
+  if (raw === null) return null;
+  const cInn = parseFloat(row[28]) || 0;
+  let cap = null;
+  if (cInn > 0) {
+    if (cInn <= 150)      cap = 3;
+    else if (cInn <= 400) cap = 5;
+    else if (cInn <= 800) cap = 7;
+  }
+  return cap !== null ? Math.max(-cap, Math.min(cap, raw)) : raw;
+}
+
 function calcHitterOverall(row, isCatcher, realWar = null) {
   // ── 能力値（0–100+ の絶対スコア。0はデータなしとして除外） ──
   const meet   = safeNum(row[44]);
@@ -2231,7 +2250,7 @@ function calcHitterOverall(row, isCatcher, realWar = null) {
 
   // ── 捕手専用 ──
   if (isCatcher) {
-    const lead   = safeNum(row[53]);
+    const lead   = _catcherLeadClamped(row); // 小サンプル捕手のリードはクランプ（表示と一貫）
     const csRate = safeNum(row[54]);
     if (lead !== null)   addConv((60 + lead * 5) * 1.1, 1.5); // +10→121, 0→66, -10→11
     // 盗塁阻止スコア: 0%→35, 10%→50, 20%→65, 30%→80, 40%→95, 50%→110（+1.5/1%）
@@ -2665,7 +2684,8 @@ function buildHitterCard(row, headers, photoURL, t, isCatcher, isPeakYear, nameE
   const meet  = row[44] || 0, speed  = row[46] || 0,
         chance = row[47] || 0, eye   = row[48] || 0, kres   = row[49] || 0,
         steal  = row[51] || 0, vsLeft = row[52] || 0;
-  const lead   = row[53], csRate = row[54];
+  // リードは小サンプル捕手のフレーミング極端値を抑えるためクランプ（総合力計算と一貫）
+  const lead   = _catcherLeadClamped(row), csRate = row[54];
   // 本塁打が少ない場合はパワー・HR能を段階制限（HR<10→85/2, HR<15→90/3。総合力計算と一貫）
   const _rawPower = row[45] || 0;
   const _rawHrAbil = (row[50] !== null && row[50] !== undefined && row[50] !== '') ? parseInt(row[50]) || 0 : null;
