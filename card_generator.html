@@ -7596,11 +7596,16 @@ async function fetchRetsudenFromAPI(row) {
 
   // 捕手専用：盗塁阻止率が40%以上（単年）または37%以上（通算）はリーグNo.1タイトルとして追加
   // ※ league-leading の目安。ExcelのcsRate(row[54])を参照
+  // ※ 出場が少ない捕手が高阻止率でNo.1表記される誤りを防ぐため、捕手としての
+  //   守備イニング（C＝row[28]）が750inn以上であることを必須条件とする
+  //   （MLBに捕手CS%の公式規定イニングはないため750innを基準とする）
   if (g_isCatcher) {
-    const csRateVal  = parseFloat(row[54]);
+    const csRateVal   = parseFloat(row[54]);
+    const catcherInn  = parseFloat(row[28]) || 0; // 捕手としての守備イニング
     const isCareerRow = !/^\d{4}$/.test(String(row[1] ?? '').trim());
     const csThreshold = isCareerRow ? 37 : 40;
-    if (!isNaN(csRateVal) && csRateVal >= csThreshold && !awardsJa.includes('盗塁阻止率No.1')) {
+    if (!isNaN(csRateVal) && csRateVal >= csThreshold && catcherInn >= 750 &&
+        !awardsJa.includes('盗塁阻止率No.1')) {
       awardsJa.push('盗塁阻止率No.1');
     }
   }
