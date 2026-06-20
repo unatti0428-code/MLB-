@@ -451,7 +451,8 @@ let g_headers  = null;   // ヘッダー行（rows[0], rows[1]）
 let g_dataRows = null;   // データ行（rows[2]以降）
 let g_peakYear = null;   // 自動検出ピーク年
 let g_isPitcher  = false;
-let g_isCatcher  = false;
+let g_isCatcher  = false;          // 選択中の年が「捕手カード」か（年ごとに判定）
+let g_isCatcherPlayer = false;     // 選手がキャリアで捕手経験を持つか（選手レベル）
 let g_careerWAR  = null;   // 通算行専用：加重平均WAR（_doGenerateで事前計算）
 let g_careerTeam = null;   // 通算行専用：キャリア最多試合チーム（_doGenerateで事前計算）
 let g_lastAwardsJa      = [];   // 直近カードのawardsJa（通算バナー再描画用）
@@ -2841,8 +2842,10 @@ function onExcelChange(input) {
       g_headers  = rows.slice(0, 2);
       g_dataRows = rows.slice(2).filter(r => r[0] && r[0] !== null);
       g_isPitcher = rows[0][3] === '勝利' || rows[0][3] === '勝';
-      g_isCatcher = !g_isPitcher && g_dataRows.some(r =>
+      // 選手レベル：キャリアのどこかで捕手としてプレーした経験があるか
+      g_isCatcherPlayer = !g_isPitcher && g_dataRows.some(r =>
         r[53] !== null && r[53] !== undefined && r[53] !== '--' && String(r[53]).trim() !== '');
+      g_isCatcher = g_isCatcherPlayer; // 仮置き。_doGenerateで選択年ごとに再判定する
 
       // ピーク年検出：総合力スコア（WAR込み）が最高の年を選択
       // ※ Excel読み込み直後はBRef WARが未取得のためWARなしで計算。
@@ -3363,6 +3366,18 @@ function updateYearInfo(selectedYear) {
   document.getElementById('year-info').innerHTML = info + pkTag;
 }
 
+// ── その年（行）を捕手カードとして生成すべきか判定 ──────────────────
+// 選手が捕手経験を持ち、かつ：
+//   ・通算行 → 捕手として生成（キャリアで捕手だったため）
+//   ・単年行 → その年に捕手として守備出場した場合のみ（C守備イニング row[28] > 0）
+// 捕手出場のない年は通常の野手としてカード生成する。
+function _rowIsCatcher(row) {
+  if (g_isPitcher || !g_isCatcherPlayer || !row) return false;
+  const isCareerRow = !/^\d{4}$/.test(String(row[1] ?? '').trim());
+  if (isCareerRow) return true;
+  return (parseFloat(row[28]) || 0) > 0; // C（捕手）守備イニング
+}
+
 // ── ピーク年再計算：総合力（WAR込み）が最高の単年を g_peakYear にセット ──
 // BRef WARが取得済みであれば自動的に反映される
 function recalcPeakYear() {
@@ -3386,9 +3401,10 @@ function recalcPeakYear() {
       }
     }
     // 総合力スコアを計算（WAR利用可能ならブレンド済みスコアになる）
+    // 捕手判定は年ごと（その年に捕手出場した場合のみ捕手として計算）
     const score = g_isPitcher
       ? calcPitcherOverall(r, null, warVal)
-      : calcHitterOverall(r, g_isCatcher, warVal);
+      : calcHitterOverall(r, _rowIsCatcher(r), warVal);
 
     if (score > bestScore) {
       bestScore = score;
@@ -8221,8 +8237,10 @@ function generateCard() {
       g_headers  = rows.slice(0, 2);
       g_dataRows = rows.slice(2).filter(r => r[0] && r[0] !== null);
       g_isPitcher = rows[0][3] === '勝利' || rows[0][3] === '勝';
-      g_isCatcher = !g_isPitcher && g_dataRows.some(r =>
+      // 選手レベル：キャリアのどこかで捕手としてプレーした経験があるか
+      g_isCatcherPlayer = !g_isPitcher && g_dataRows.some(r =>
         r[53] !== null && r[53] !== undefined && r[53] !== '--' && String(r[53]).trim() !== '');
+      g_isCatcher = g_isCatcherPlayer; // 仮置き。_doGenerateで選択年ごとに再判定する
       _doGenerate(photoInput);
     } catch (err) {
       showError('❌ 読み込みエラー: ' + err.message);
@@ -9714,6 +9732,9 @@ async function _doGenerate(photoInput) {
                  || g_dataRows[0];
     }
 
+    // 捕手判定を選択年ごとに確定（捕手出場のない年は通常の野手としてカード生成）
+    g_isCatcher = _rowIsCatcher(selectedRow);
+
     // ピーク年かどうかのフラグ
     const isPeakRow = String(selectedRow[1]) === String(g_peakYear);
 
@@ -9970,6 +9991,7 @@ window._injectTestData = function(rows, isPitcher, isCatcher, peakYear) {
   g_headers   = rows.slice(0, 2);
   g_dataRows  = rows.slice(2).filter(r => r[0] != null);
   g_isPitcher = !!isPitcher;
+  g_isCatcherPlayer = !!isCatcher;
   g_isCatcher = !!isCatcher;
   g_peakYear  = peakYear || (g_dataRows[0] && g_dataRows[0][1]);
   const yearSel = document.getElementById('year-select');
