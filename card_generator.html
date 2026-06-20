@@ -3569,7 +3569,9 @@ function _isNonMlbLeagueAward(award) {
 
 // ── マイナー／ウィンターリーグの賞 → 列伝・肩書用の日本語 ───────────────
 // リーグ略号 → { レベル, 日本語リーグ名, ウィンターか }
-// バナーの賞からは除外しつつ、列伝には「AAA」「AA」等のレベルを明記して盛り込む。
+// バナーの賞からは除外しつつ、列伝にはレベルを明記して盛り込む。
+// ※ lv は内部値（'AAA'/'AA'/'A+'/'A'）。表示時は _milbLevelDisplay で
+//   「トリプルA／ダブルA／ハイA／シングルA」に変換する。
 const _MILB_LEAGUE_INFO = {
   PCL: { lv: 'AAA', ja: 'パシフィック・コーストリーグ' },
   INT: { lv: 'AAA', ja: 'インターナショナルリーグ' },
@@ -3645,11 +3647,22 @@ function _classifyMilbAward(award) {
   return { ...info, kind, prestige };
 }
 
-/** マイナー／ウィンター賞の「リーグ表記」（例: "AAA（パシフィック・コーストリーグ）" / "ウインターリーグ（ベネズエラ）"） */
+/** マイナーリーグのレベル略号を日本語の通称に変換（表示用。内部のlv値は維持） */
+function _milbLevelDisplay(lv) {
+  switch (lv) {
+    case 'AAA': return 'トリプルA';
+    case 'AA':  return 'ダブルA';
+    case 'A+':  return 'ハイA';
+    case 'A':   return 'シングルA';
+    default:    return lv; // 'ルーキー' 等はそのまま
+  }
+}
+
+/** マイナー／ウィンター賞の「リーグ表記」（例: "トリプルA（パシフィック・コーストリーグ）" / "ウインターリーグ（ベネズエラ）"） */
 function _milbLeagueLabel(info) {
   if (info.fall)   return 'アリゾナ・フォールリーグ';
   if (info.winter) return info.ja;
-  return `${info.lv}（${info.ja}）`;
+  return `${_milbLevelDisplay(info.lv)}（${info.ja}）`;
 }
 
 /** マイナー／ウィンター賞 → 列伝の1文（isPitcherで投手/野手の語を調整） */
@@ -3669,9 +3682,9 @@ function _milbAwardEpisode(info, isPitcher) {
   }
 }
 
-/** マイナー／ウィンター賞 → 肩書用の短い称号（例: "AAA最優秀投手" / "ウインターL新人王"） */
+/** マイナー／ウィンター賞 → 肩書用の短い称号（例: "トリプルA最優秀投手" / "ウインターL新人王"） */
 function _milbAwardTitle(info, isPitcher) {
-  const lv = info.fall ? 'AFL' : info.winter ? 'ウインターL' : info.lv;
+  const lv = info.fall ? 'AFL' : info.winter ? 'ウインターL' : _milbLevelDisplay(info.lv);
   const playerWord = isPitcher ? '投手' : '選手';
   switch (info.kind) {
     case 'roy':     return `${lv}新人王`;
