@@ -2127,7 +2127,8 @@ function warToScore(war) {
 //   HR6本未満  → パワー最大75・HR能最大1
 //   HR9本未満  → パワー最大80・HR能最大2
 //   HR12本未満 → パワー最大85・HR能最大2
-//   HR12本以上 → 制限なし
+//   HR15本未満 → パワー最大90・HR能最大3
+//   HR15本以上 → 制限なし
 // @returns {{power:number|null, hrAbil:number|null}} 制限後の値
 function _applyLowHrCaps(row, power, hrAbil) {
   const hrN = parseInt(row[9]) || 0;
@@ -2135,6 +2136,7 @@ function _applyLowHrCaps(row, power, hrAbil) {
   if (hrN < 6)       { powCap = 75; hrCap = 1; }
   else if (hrN < 9)  { powCap = 80; hrCap = 2; }
   else if (hrN < 12) { powCap = 85; hrCap = 2; }
+  else if (hrN < 15) { powCap = 90; hrCap = 3; }
   if (powCap !== null) {
     if (power  !== null && power  > powCap) power  = powCap;
     if (hrAbil !== null && hrAbil > hrCap)  hrAbil = hrCap;
