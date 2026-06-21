@@ -3785,6 +3785,79 @@ async function _fetchMilbAwardData(mlbId, isPitcher) {
   }
 }
 
+// MLB通算実績ハイライトのキャッシュ（mlbId → episodes[]）
+const _careerHiliteCache = {};
+
+/**
+ * 選手の全受賞からMLBの主要タイトル（MVP/サイヤング/新人王/シルバースラッガー/
+ * ゴールドグラブ/オールスター等）を年とともに抽出し、列伝用の実績ハイライト文を返す。
+ * 単年カードでも他年度の輝かしいMLB実績を盛り込めるようにする。
+ * @param {string|number} mlbId
+ * @returns {Promise<string[]>} 列伝用エピソード（最大1〜2件）
+ */
+async function _fetchCareerAwardHighlights(mlbId) {
+  if (!mlbId) return [];
+  const ckey = String(mlbId);
+  if (_careerHiliteCache[ckey]) return _careerHiliteCache[ckey];
+  try {
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/people/${mlbId}/awards`);
+    if (!res.ok) { _careerHiliteCache[ckey] = []; return []; }
+    const data = await res.json();
+    const all = data.awards || [];
+
+    // MLB主要タイトルの分類（マイナー/ウィンター・週間/月間は除外）。order昇順で表示。
+    // { key, label, verb(受賞/選出), order }
+    const cats = {}; // key → { label, verb, order, years:Set }
+    const add = (key, label, verb, order, season) => {
+      if (!season) return;
+      if (!cats[key]) cats[key] = { label, verb, order, years: new Set() };
+      cats[key].years.add(parseInt(season));
+    };
+    let alCount = 0, nlCount = 0;
+    for (const a of all) {
+      if (_isNonMlbLeagueAward(a)) continue;
+      const n = (a.name || '').toLowerCase();
+      const id = (a.id || '').toUpperCase();
+      // 週間/月間・マイナー(MiLB.com等)はMLB主要タイトルではないため除外
+      if (/of the week|of the month|player of the week|pitcher of the week/.test(n)) continue;
+      if (/minor league|milb|triple-a|double-a/.test(n)) continue;
+      if (/AL/.test(id) && !/NL/.test(id)) alCount++;
+      else if (/NL/.test(id)) nlCount++;
+      const season = a.season;
+      if (/world series.*mvp/.test(n))                          add('wsmvp','ワールドシリーズMVP','受賞',1,season);
+      else if (/most valuable player|\bmvp\b/.test(n) && (/AL|NL/.test(id))) add('mvp','MVP','受賞',2,season);
+      else if (/cy young/.test(n))                              add('cy','サイ・ヤング賞','受賞',3,season);
+      else if (/rookie of the year/.test(n))                    add('roy','新人王','受賞',4,season);
+      else if (/silver slugger/.test(n))                        add('ss','シルバースラッガー賞','受賞',6,season);
+      else if (/gold glove/.test(n))                            add('gg','ゴールドグラブ賞','受賞',7,season);
+      else if (/hank aaron/.test(n))                            add('haa','ハンク・アーロン賞','受賞',8,season);
+      else if (/batting (title|champion)|batting champ/.test(n))add('bat','首位打者','獲得',5,season);
+      else if (/all-star|allstar/.test(n) && !/game mvp/.test(n)) add('as','オールスター','選出',9,season);
+    }
+    const entries = Object.values(cats).sort((a, b) => a.order - b.order);
+    if (!entries.length) { _careerHiliteCache[ckey] = []; return []; }
+
+    const lgWord = alCount > nlCount ? 'ア・リーグ' : nlCount > alCount ? 'ナ・リーグ' : 'リーグ';
+    // 名詞句で列挙（1〜2回は年を明記、3回以上は「○度の△」で集約）。
+    // オールスターは「△選出」、その他はタイトル名のみ。
+    const frag = (e) => {
+      const ys = [...e.years].sort((a, b) => a - b);
+      const label = (e.verb === '選出') ? `${e.label}選出` : e.label;
+      return ys.length >= 3 ? `${ys.length}度の${label}` : `${ys.join('・')}年の${label}`;
+    };
+    const parts = entries.slice(0, 4).map(frag);
+    const sentence = `${parts.join('、')}など、${lgWord}を代表する輝かしい実績を残した名選手。`;
+
+    _careerHiliteCache[ckey] = [sentence];
+    console.log('[CareerHilite]', mlbId, '→', sentence);
+    return _careerHiliteCache[ckey];
+  } catch (e) {
+    console.warn('[CareerHilite] 取得失敗:', e.message);
+    _careerHiliteCache[ckey] = [];
+    return [];
+  }
+}
+
 function awardToJa(award) {
   const n = (award.name || award.id || '').toLowerCase();
 
@@ -7599,7 +7672,19 @@ async function fetchRetsudenFromAPI(row) {
     }
   }
 
-  // ④-c マイナー／ウィンターリーグの年間タイトル級実績を列伝に盛り込む
+  // ④-c MLB通算の主要タイトル実績を列伝に盛り込む（他年度の輝かしい実績を反映）
+  // 例: 2025年カードでも「2020年にシルバースラッガー賞、2021・2022年にオールスター…」
+  // 単年カードでその年の実績が乏しくても、キャリアの功績で列伝を充実させる。
+  if (g_mlbId) {
+    const hilites = await _fetchCareerAwardHighlights(g_mlbId);
+    const fresh = hilites.filter(ep => !wikiEpisodes.includes(ep));
+    if (fresh.length) {
+      const insertAt = (wikiEpisodes[0] && /出身/.test(wikiEpisodes[0])) ? 1 : 0;
+      wikiEpisodes.splice(insertAt, 0, ...fresh);
+    }
+  }
+
+  // ④-d マイナー／ウィンターリーグの年間タイトル級実績を列伝に盛り込む
   // （MLB経験の少ない若手選手の列伝を、AAA/AA/ウインターL等のレベルを明記して充実させる）
   // バナーの賞からは除外済み。出身行の直後・他のWiki文より前に挿入して優先度を上げる。
   g_milbTitleJa = null;
