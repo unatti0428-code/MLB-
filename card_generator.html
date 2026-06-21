@@ -5788,12 +5788,24 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   return lines.join('\n');
 }
 
+// AL/NL接頭辞付きの賞があれば、接頭辞なしの同種賞を除外して重複を防ぐ。
+// 例: 公式の「AL新人王」(Jackie Robinson AL ROY)と
+//     接頭辞なしの「新人王」(Baseball America ML ROY)が併存 → 接頭辞なしを除去。
+// 「MVP」と「AL MVP」、「サイ・ヤング賞」と「ALサイ・ヤング賞」等にも一般的に効く。
+// ※ 各要素の出現回数（通算カウント用の重複）は維持する。
+function _dedupeLeaguePrefixedAwards(list) {
+  const set = new Set(list);
+  return list.filter(a =>
+    !(set.has('AL' + a) || set.has('NL' + a) || set.has('AL ' + a) || set.has('NL ' + a))
+  );
+}
+
 // ── MLB データから列伝全体を構築 ────────────────────────────
 function buildRetsudenFromMLBData(row, mlbData, rankData = {}, trajectory = {}, wikiEpisodes = []) {
   const year     = String(row[1] || '');
   const awards   = mlbData?.awards || [];
   const apiSt    = mlbData?.stats  || {};
-  const awardsJa = [...new Set(awards.map(awardToJa).filter(Boolean))];
+  const awardsJa = _dedupeLeaguePrefixedAwards([...new Set(awards.map(awardToJa).filter(Boolean))]);
   console.log('[MLB] 受賞（日本語）:', awardsJa);
   if (g_isPitcher) return buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData, trajectory, wikiEpisodes);
   return buildHitterRetsuden(row, year, awardsJa, apiSt, rankData, trajectory, wikiEpisodes);
@@ -7612,7 +7624,7 @@ async function fetchRetsudenFromAPI(row) {
   // MLB公式アワード + リーグリーダー1位タイトルをマージ（重複除去）
   const apiAwards   = (mlbData.awards || []).map(awardToJa).filter(Boolean);
   const rankAwards  = rankDataToAwards(rankData);
-  const awardsJa    = [...new Set([...apiAwards, ...rankAwards])];
+  let   awardsJa    = [...new Set([...apiAwards, ...rankAwards])];
   if (rankAwards.length) console.log('[LeagueLeaders] 追加アワード:', rankAwards);
 
   // 通算行：全年度の受賞歴を awardsJa に集計（重複あり＝カウント可能）
@@ -7645,6 +7657,9 @@ async function fetchRetsudenFromAPI(row) {
       awardsJa.push('盗塁阻止率No.1');
     }
   }
+
+  // 接頭辞付き/なしの同種賞（例:「新人王」と「AL新人王」）の重複を除去
+  awardsJa = _dedupeLeaguePrefixedAwards(awardsJa);
 
   const cardType  = buildCardType(row, awardsJa);
 
