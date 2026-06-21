@@ -3705,19 +3705,20 @@ function _milbLeagueLabel(info) {
   return `${_milbLevelDisplay(info.lv)}（${info.ja}）`;
 }
 
-/** マイナー／ウィンター賞 → 列伝の1文（isPitcherで投手/野手の語を調整） */
-function _milbAwardEpisode(info, isPitcher) {
+/** マイナー／ウィンター賞 → 列伝の1文（isPitcherで投手/野手の語を調整、yearStrで年度を明記） */
+function _milbAwardEpisode(info, isPitcher, yearStr = '') {
   const lbl = _milbLeagueLabel(info);
   const playerWord = isPitcher ? '投手' : '選手';
+  const pre = yearStr ? `${yearStr}に` : '';   // 例:「2018年に」（エリート選手の若手時代を判別できるよう年度を明記）
   switch (info.kind) {
-    case 'roy':     return `${lbl}で新人王に輝くなど、若くしてその才能を高く評価された逸材。`;
-    case 'mvp':     return `${lbl}でMVPを受賞するなど、同リーグ屈指の実力で頭角を現した。`;
-    case 'poy_pit': return `${lbl}で最優秀投手に選ばれるなど、メジャー昇格を期待される好投手として評価を高めた。`;
-    case 'poy_bat': return `${lbl}で最優秀${playerWord}に選ばれるなど、打棒を高く評価された有望株。`;
-    case 'def':     return `${lbl}で最優秀守備${playerWord}に選ばれるなど、堅実な守備で評価を集めた。`;
-    case 'champ':   return `${lbl}で首位打者を獲得するなど、確かな打撃技術で結果を残した。`;
-    case 'prospect':return `${lbl}で有望株として選抜されるなど、将来を嘱望される存在として注目を集めた。`;
-    case 'allstar': return `${lbl}でオールスターに選出されるなど、同リーグを代表する${playerWord}として活躍した。`;
+    case 'roy':     return `${pre}${lbl}で新人王に輝くなど、若くしてその才能を高く評価された逸材。`;
+    case 'mvp':     return `${pre}${lbl}でMVPを受賞するなど、同リーグ屈指の実力で頭角を現した。`;
+    case 'poy_pit': return `${pre}${lbl}で最優秀投手に選ばれるなど、メジャー昇格を期待される好投手として評価を高めた。`;
+    case 'poy_bat': return `${pre}${lbl}で最優秀${playerWord}に選ばれるなど、打棒を高く評価された有望株。`;
+    case 'def':     return `${pre}${lbl}で最優秀守備${playerWord}に選ばれるなど、堅実な守備で評価を集めた。`;
+    case 'champ':   return `${pre}${lbl}で首位打者を獲得するなど、確かな打撃技術で結果を残した。`;
+    case 'prospect':return `${pre}${lbl}で有望株として選抜されるなど、将来を嘱望される存在として注目を集めた。`;
+    case 'allstar': return `${pre}${lbl}でオールスターに選出されるなど、同リーグを代表する${playerWord}として活躍した。`;
     default:        return null;
   }
 }
@@ -3763,15 +3764,22 @@ async function _fetchMilbAwardData(mlbId, isPitcher) {
       .filter(Boolean)
       .sort((x, y) => y.prestige - x.prestige);
 
-    // 列伝エピソード（種類×レベルの重複を避けつつ最大2件）
-    const episodes = [];
-    const usedKinds = new Set();
+    // 種類×レベルでグループ化し、各グループの受賞年度を集約（複数年は「2018・2019年」）
+    // ※ classified は prestige 降順 → Map挿入順もその順を保持
+    const groups = new Map();
     for (const c of classified) {
-      if (episodes.length >= 2) break;
       const k = c.kind + '_' + (c.lv || c.ja);
-      if (usedKinds.has(k)) continue;
-      const ep = _milbAwardEpisode(c, isPitcher);
-      if (ep) { episodes.push(ep); usedKinds.add(k); }
+      if (!groups.has(k)) groups.set(k, { info: c, years: new Set() });
+      const yr = parseInt(c.season);
+      if (!isNaN(yr)) groups.get(k).years.add(yr);
+    }
+    // 列伝エピソード（種類×レベルの重複を避けつつ最大2件・年度を明記）
+    const episodes = [];
+    for (const { info, years } of groups.values()) {
+      if (episodes.length >= 2) break;
+      const yearStr = years.size ? [...years].sort((a, b) => a - b).join('・') + '年' : '';
+      const ep = _milbAwardEpisode(info, isPitcher, yearStr);
+      if (ep) episodes.push(ep);
     }
     // 肩書用ベスト称号（最上位の年間タイトル級のみ。allstar/prospect等は称号にしない）
     let bestTitle = null;
