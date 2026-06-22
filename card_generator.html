@@ -3560,6 +3560,18 @@ function _teamEngToJa(str) {
   }
   return null;
 }
+// チームコード（"LAD"等）→日本語チーム名（"ドジャース"）。不明なら null。
+// _TEAM_CODE_EN_MAP（コード→英語名）と _teamEngToJa を経由して変換する。
+function _teamCodeToJa(code) {
+  const c = _photoTeamCode(code);
+  const enNames = (typeof _TEAM_CODE_EN_MAP !== 'undefined') ? _TEAM_CODE_EN_MAP[c] : null;
+  if (!enNames) return null;
+  for (const en of enNames) {
+    const ja = _teamEngToJa(en);
+    if (ja) return ja;
+  }
+  return null;
+}
 
 // 「受賞」ではなく「選出」と表現すべき栄誉（チーム選抜系）
 // buildBatterRetsuden・buildPitcherRetsuden でテンプレート分岐に使用
@@ -3826,6 +3838,7 @@ async function _fetchCareerAwardHighlights(mlbId) {
       cats[key].years.add(parseInt(season));
     };
     let alCount = 0, nlCount = 0;
+    const wsYears = new Set(); // ワールドシリーズ制覇の年
     for (const a of all) {
       if (_isNonMlbLeagueAward(a)) continue;
       const n = (a.name || '').toLowerCase();
@@ -3836,7 +3849,12 @@ async function _fetchCareerAwardHighlights(mlbId) {
       if (/AL/.test(id) && !/NL/.test(id)) alCount++;
       else if (/NL/.test(id)) nlCount++;
       const season = a.season;
-      if (/world series.*mvp/.test(n))                          add('wsmvp','ワールドシリーズMVP','受賞',1,season);
+      // ワールドシリーズ制覇（MVPは別カテゴリ）→ 年つきで別文に
+      if (/world series/.test(n) && !/mvp/.test(n) &&
+          (/champ|title|winner|ring/.test(n) || id === 'WSCHAMP')) {
+        if (season) wsYears.add(parseInt(season));
+      }
+      else if (/world series.*mvp/.test(n))                     add('wsmvp','ワールドシリーズMVP','受賞',1,season);
       else if (/most valuable player|\bmvp\b/.test(n) && (/AL|NL/.test(id))) add('mvp','MVP','受賞',2,season);
       else if (/cy young/.test(n))                              add('cy','サイ・ヤング賞','受賞',3,season);
       else if (/rookie of the year/.test(n))                    add('roy','新人王','受賞',4,season);
@@ -3846,22 +3864,47 @@ async function _fetchCareerAwardHighlights(mlbId) {
       else if (/batting (title|champion)|batting champ/.test(n))add('bat','首位打者','獲得',5,season);
       else if (/all-star|allstar/.test(n) && !/game mvp/.test(n)) add('as','オールスター','選出',9,season);
     }
-    const entries = Object.values(cats).sort((a, b) => a.order - b.order);
-    if (!entries.length) { _careerHiliteCache[ckey] = []; return []; }
 
-    const lgWord = alCount > nlCount ? 'ア・リーグ' : nlCount > alCount ? 'ナ・リーグ' : 'リーグ';
-    // 名詞句で列挙（1〜2回は年を明記、3回以上は「○度の△」で集約）。
-    // オールスターは「△選出」、その他はタイトル名のみ。
-    const frag = (e) => {
-      const ys = [...e.years].sort((a, b) => a - b);
-      const label = (e.verb === '選出') ? `${e.label}選出` : e.label;
-      return ys.length >= 3 ? `${ys.length}度の${label}` : `${ys.join('・')}年の${label}`;
-    };
-    const parts = entries.slice(0, 4).map(frag);
-    const sentence = `${parts.join('、')}など、${lgWord}を代表する輝かしい実績を残した名選手。`;
+    const episodes = [];
 
-    _careerHiliteCache[ckey] = [sentence];
-    console.log('[CareerHilite]', mlbId, '→', sentence);
+    // ── ワールドシリーズ制覇（年＋チームを明記。古い順）──
+    if (wsYears.size) {
+      const ys = [...wsYears].sort((a, b) => a - b);
+      // チーム別にまとめる（年→日本語チーム名）
+      const byTeam = new Map(); // teamJa(またはnull) → years[]
+      for (const y of ys) {
+        const teamJa = _teamCodeToJa(_yearTeamFromData(y)) || null;
+        if (!byTeam.has(teamJa)) byTeam.set(teamJa, []);
+        byTeam.get(teamJa).push(y);
+      }
+      // チームグループを最古年で並べる（「ワールドシリーズ制覇」は末尾に1回だけ）
+      const groups = [...byTeam.entries()].sort((a, b) => Math.min(...a[1]) - Math.min(...b[1]));
+      const frags = groups.map(([teamJa, years]) =>
+        teamJa ? `${years.join('・')}年に${teamJa}で` : `${years.join('・')}年に`
+      );
+      episodes.push(`${frags.join('、')}ワールドシリーズ制覇を達成した実績を持つ。`);
+    }
+
+    // ── 個人タイトル（代表的なものを古い順に列挙）──
+    const entries = Object.values(cats);
+    if (entries.length) {
+      const lgWord = alCount > nlCount ? 'ア・リーグ' : nlCount > alCount ? 'ナ・リーグ' : 'リーグ';
+      // 名詞句で列挙（1〜2回は年を明記、3回以上は「○度の△」で集約）。
+      const frag = (e) => {
+        const ys = [...e.years].sort((a, b) => a - b);
+        const label = (e.verb === '選出') ? `${e.label}選出` : e.label;
+        return ys.length >= 3 ? `${ys.length}度の${label}` : `${ys.join('・')}年の${label}`;
+      };
+      // 代表的なものを重要度で最大4件選び、表示は受賞年の古い順に並べる
+      const top = entries.sort((a, b) => a.order - b.order).slice(0, 4);
+      top.sort((a, b) => Math.min(...a.years) - Math.min(...b.years));
+      const parts = top.map(frag);
+      episodes.push(`${parts.join('、')}など、${lgWord}を代表する輝かしい実績を残した名選手。`);
+    }
+
+    if (!episodes.length) { _careerHiliteCache[ckey] = []; return []; }
+    _careerHiliteCache[ckey] = episodes;
+    console.log('[CareerHilite]', mlbId, '→', episodes.join(' / '));
     return _careerHiliteCache[ckey];
   } catch (e) {
     console.warn('[CareerHilite] 取得失敗:', e.message);
@@ -3960,7 +4003,7 @@ async function _fetchMlbStatRankHighlights(mlbId, isPitcher, excludeYear = '') {
     const all = Object.values(groups);
     if (!all.length) { _statRankCache[ckey] = []; return []; }
 
-    // 並び順: タイトル保持を最優先、次に部門重要度、次に順位の良さ
+    // 代表性の優先度: タイトル保持→部門重要度→順位の良さ（どれを残すかの選定用）
     all.sort((a, b) => {
       const at = a.titleYears.length > 0 ? 0 : 1;
       const bt = b.titleYears.length > 0 ? 0 : 1;
@@ -3968,19 +4011,17 @@ async function _fetchMlbStatRankHighlights(mlbId, isPitcher, excludeYear = '') {
       if ((catRank[a.cat] ?? 9) !== (catRank[b.cat] ?? 9)) return (catRank[a.cat] ?? 9) - (catRank[b.cat] ?? 9);
       return a.bestRank - b.bestRank;
     });
-
-    // 代表的なもののみ（最大4件）に割愛
-    const frags = [];
-    for (const g of all) {
-      if (frags.length >= 4) break;
+    // 代表的なもののみ（最大4件）に割愛し、表示は受賞年の古い順に並べる
+    const sortYear = g => g.titleYears.length ? Math.min(...g.titleYears) : g.bestYear;
+    const picked = all.slice(0, 4).sort((a, b) => sortYear(a) - sortYear(b));
+    const frags = picked.map(g => {
       if (g.titleYears.length) {
         const label = titleJa[g.cat] || `${catJa[g.cat]}1位`;
         const ys = [...new Set(g.titleYears)].sort((x, y) => x - y);
-        frags.push(ys.length >= 3 ? `${g.lg}${label}${ys.length}度` : `${ys.join('・')}年の${g.lg}${label}`);
-      } else {
-        frags.push(`${g.bestYear}年の${g.lg}${catJa[g.cat]}${g.bestRank}位`);
+        return ys.length >= 3 ? `${g.lg}${label}${ys.length}度` : `${ys.join('・')}年の${g.lg}${label}`;
       }
-    }
+      return `${g.bestYear}年の${g.lg}${catJa[g.cat]}${g.bestRank}位`;
+    });
     const sentence = `${frags.join('、')}など、MLBの第一線で輝かしい実績を残した名選手。`;
     _statRankCache[ckey] = [sentence];
     console.log('[StatRank]', mlbId, '→', sentence);
@@ -7274,10 +7315,14 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
     // 複数球団在籍（選手紹介文に複数チームが列挙される）
     const multiTeamM = s.match(/played\s+for\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25}?),\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25}?)/i);
     if (multiTeamM && !results.some(r => r.includes('在籍'))) {
-      const t1 = teamJa(multiTeamM[1].trim());
-      const t2 = teamJa(multiTeamM[2].trim());
-      results.push(`${t1}・${t2}など複数球団に在籍し、移籍を経るたびに新たな力をチームにもたらし続けた。`);
-      continue;
+      const raw1 = multiTeamM[1].trim(), raw2 = multiTeamM[2].trim();
+      const t1 = teamJa(raw1), t2 = teamJa(raw2);
+      // 両方が実在のチーム名に変換できた場合のみ採用（"in a single season"等の
+      // 非チーム文字列がそのまま出力されるのを防ぐ）
+      if (t1 !== raw1 && t2 !== raw2) {
+        results.push(`${t1}・${t2}など複数球団に在籍し、移籍を経るたびに新たな力をチームにもたらし続けた。`);
+        continue;
+      }
     }
 
     // 出身地・生まれ（"born in City, State" も "born Month D, YYYY, in City, State" も対応）
