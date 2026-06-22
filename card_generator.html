@@ -3894,12 +3894,13 @@ function _mlbEstablished() {
 const _statRankCache = {};
 
 /**
- * 選手のキャリアの好成績年についてリーグ順位を取得し、
- * 「2020年にア・リーグ打率7位」のようなMLB統計ハイライト文を返す。
- * APIコストを抑えるため、成績上位の最大3年のみリーグリーダーを取得する。
+ * 選手のキャリアからリーグタイトル（部門1位）・上位ランクを取得し、
+ * 「2021年にア・リーグ最多セーブ」「2020年にア・リーグ打率7位」等のハイライト文を返す。
+ * どの年のカードでも、過去にタイトルを獲っていれば年つきで掲載する。
+ * APIコストを抑えるため、実働シーズンを出場数上位最大8年に限定して取得する。
  * @param {string|number} mlbId
  * @param {boolean} isPitcher
- * @param {string} [excludeYear] カード年（重複回避のため除外）
+ * @param {string} [excludeYear] カード年（その年は重複回避のため除外）
  * @returns {Promise<string[]>} 列伝用エピソード（最大1件）
  */
 async function _fetchMlbStatRankHighlights(mlbId, isPitcher, excludeYear = '') {
@@ -3907,54 +3908,80 @@ async function _fetchMlbStatRankHighlights(mlbId, isPitcher, excludeYear = '') {
   const ckey = `${mlbId}_${isPitcher ? 'p' : 'b'}_${excludeYear}`;
   if (_statRankCache[ckey]) return _statRankCache[ckey];
 
-  // 単年行から候補年を抽出（同年はTOT優先で1件）。実働シーズンのみ。
+  // 単年行から実働シーズンを抽出（同年はTOT優先で出場集計、リーグはTOT以外の球団から判定）
   const minG = isPitcher ? 20 : 40;
   const byYear = {};
   for (const r of g_dataRows) {
     const y = String(r[1] ?? '').trim();
     if (!/^\d{4}$/.test(y) || y === String(excludeYear)) continue;
     const g = isPitcher ? (parseInt(r[6]) || 0) : getHitterGames(r);
-    if (g < minG) continue;
+    if (g <= 0) continue;
     const tc = String(r[2] ?? '').toUpperCase();
-    // 成績の良さの目安: 野手OPS / 投手は防御率の低さ（小さいほど良いので符号反転）
-    const metric = isPitcher ? -(parseFloat(r[5]) || 99) : (parseFloat(fmtOPS(r[17])) || 0);
-    if (!byYear[y] || tc === 'TOT') byYear[y] = { row: r, metric };
+    if (!byYear[y]) byYear[y] = { games: 0, team: '' };
+    byYear[y].games = Math.max(byYear[y].games, g);
+    if (tc && tc !== 'TOT' && tc !== '--' && !byYear[y].team) byYear[y].team = tc;
   }
+  // 出場数の多い順に最大8年（タイトル年は出場が多いため取りこぼしにくい）
   const candidates = Object.entries(byYear)
-    .sort((a, b) => b[1].metric - a[1].metric)
-    .slice(0, 3); // 成績上位3年まで
+    .filter(([, v]) => v.games >= minG)
+    .sort((a, b) => b[1].games - a[1].games)
+    .slice(0, 8);
   if (!candidates.length) { _statRankCache[ckey] = []; return []; }
 
-  const catJa = { avg:'打率', hr:'本塁打', rbi:'打点', ops:'OPS', obp:'出塁率', sb:'盗塁', war:'WAR',
-                  era:'防御率', k:'奪三振', wins:'勝利', sv:'セーブ', hld:'ホールド', whip:'WHIP' };
-  // 表示優先度（低いほど優先して1項目選ぶ）
-  const catOrder = ['avg','era','hr','wins','sv','hld','sb','rbi','k','ops','obp','war','whip'];
+  const catJa    = { avg:'打率', hr:'本塁打', rbi:'打点', ops:'OPS', obp:'出塁率', sb:'盗塁', war:'WAR',
+                     era:'防御率', k:'奪三振', wins:'勝利', sv:'セーブ', hld:'ホールド', whip:'WHIP' };
+  // 部門1位の「タイトル名」（無い部門は「○○1位」表記）
+  const titleJa  = { avg:'首位打者', hr:'本塁打王', rbi:'打点王', sb:'盗塁王',
+                     era:'最優秀防御率', k:'奪三振王', wins:'最多勝', sv:'最多セーブ', hld:'最多ホールド' };
+  // 重要度順（小さいほど代表的＝優先表示）
+  const catRank  = { avg:0, hr:1, rbi:2, era:0, wins:1, sv:1, hld:3, k:4, sb:2, ops:5, obp:6, war:7, whip:8 };
 
   try {
-    const results = await Promise.all(candidates.map(async ([year, info]) => {
-      const { leagueId, leagueLabel } = getLeagueInfo(String(info.row[2] ?? ''));
+    const perYear = await Promise.all(candidates.map(async ([year, info]) => {
+      const { leagueId, leagueLabel } = getLeagueInfo(info.team);
       const leaders = await fetchLeagueLeaders(year, isPitcher, leagueId);
       const rd = buildRankData(leaders, mlbId, leagueLabel, {});
-      // その年の最良順位の1カテゴリを選ぶ
-      let best = null;
-      for (const k of catOrder) {
-        if (rd[k] && rd[k].rank >= 1 && rd[k].rank <= 7) {
-          if (!best || rd[k].rank < best.rank) best = { cat: k, rank: rd[k].rank };
-        }
-      }
-      return best ? { year, lg: leagueLabel, cat: best.cat, rank: best.rank } : null;
+      return { year, lg: leagueLabel, rd };
     }));
 
-    const hits = results.filter(Boolean)
-      .sort((a, b) => a.rank - b.rank) // 順位の良い順
-      .slice(0, 3);
-    if (!hits.length) { _statRankCache[ckey] = []; return []; }
+    // 部門×リーグで集約（タイトル年・最良順位）
+    const groups = {}; // key=cat|lg → { cat, lg, titleYears:[], bestRank, bestYear }
+    for (const { year, lg, rd } of perYear) {
+      for (const cat of Object.keys(catJa)) {
+        const e = rd[cat];
+        if (!e || e.rank < 1 || e.rank > 7) continue;
+        const key = cat + '|' + lg;
+        if (!groups[key]) groups[key] = { cat, lg, titleYears: [], bestRank: 99, bestYear: null };
+        const grp = groups[key];
+        if (e.rank === 1) grp.titleYears.push(parseInt(year));
+        if (e.rank < grp.bestRank) { grp.bestRank = e.rank; grp.bestYear = parseInt(year); }
+      }
+    }
+    const all = Object.values(groups);
+    if (!all.length) { _statRankCache[ckey] = []; return []; }
 
-    const frags = hits.map(h => {
-      const catName = catJa[h.cat] || h.cat;
-      return h.rank === 1 ? `${h.year}年に${h.lg}${catName}1位` : `${h.year}年に${h.lg}${catName}${h.rank}位`;
+    // 並び順: タイトル保持を最優先、次に部門重要度、次に順位の良さ
+    all.sort((a, b) => {
+      const at = a.titleYears.length > 0 ? 0 : 1;
+      const bt = b.titleYears.length > 0 ? 0 : 1;
+      if (at !== bt) return at - bt;
+      if ((catRank[a.cat] ?? 9) !== (catRank[b.cat] ?? 9)) return (catRank[a.cat] ?? 9) - (catRank[b.cat] ?? 9);
+      return a.bestRank - b.bestRank;
     });
-    const sentence = `${frags.join('、')}にランクインするなど、MLBの第一線で確かな実績を残した実力者。`;
+
+    // 代表的なもののみ（最大4件）に割愛
+    const frags = [];
+    for (const g of all) {
+      if (frags.length >= 4) break;
+      if (g.titleYears.length) {
+        const label = titleJa[g.cat] || `${catJa[g.cat]}1位`;
+        const ys = [...new Set(g.titleYears)].sort((x, y) => x - y);
+        frags.push(ys.length >= 3 ? `${g.lg}${label}${ys.length}度` : `${ys.join('・')}年の${g.lg}${label}`);
+      } else {
+        frags.push(`${g.bestYear}年の${g.lg}${catJa[g.cat]}${g.bestRank}位`);
+      }
+    }
+    const sentence = `${frags.join('、')}など、MLBの第一線で輝かしい実績を残した名選手。`;
     _statRankCache[ckey] = [sentence];
     console.log('[StatRank]', mlbId, '→', sentence);
     return _statRankCache[ckey];
