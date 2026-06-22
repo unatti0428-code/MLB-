@@ -3812,6 +3812,38 @@ async function _fetchMilbAwardData(mlbId, isPitcher) {
 // MLB通算実績ハイライトのキャッシュ（mlbId → episodes[]）
 const _careerHiliteCache = {};
 
+// ワールドシリーズ出場年キャッシュ（mlbId → Set<year>）
+const _wsParticipationCache = {};
+
+/**
+ * 選手が実際にワールドシリーズで出場記録を持つ年の集合を返す。
+ * （WSロスター入りせずに優勝チームの一員として記録だけ残る選手を除外するための判定）
+ * 投手・野手いずれかでWSの出場(G>0)があればその年を含める。
+ * @param {string|number} mlbId
+ * @returns {Promise<Set<number>>}
+ */
+async function _fetchWsParticipationYears(mlbId) {
+  if (!mlbId) return new Set();
+  if (_wsParticipationCache[mlbId]) return _wsParticipationCache[mlbId];
+  const years = new Set();
+  try {
+    const groups = ['pitching', 'hitting'];
+    await Promise.all(groups.map(async (grp) => {
+      const r = await fetch(`https://statsapi.mlb.com/api/v1/people/${mlbId}/stats?stats=yearByYear&group=${grp}&gameType=W`);
+      if (!r.ok) return;
+      const d = await r.json();
+      (d?.stats?.[0]?.splits || []).forEach(s => {
+        const g = parseInt(s?.stat?.gamesPlayed) || 0;
+        if (g > 0 && s.season) years.add(parseInt(s.season));
+      });
+    }));
+  } catch (e) {
+    console.warn('[WSPart] 取得失敗:', e.message);
+  }
+  _wsParticipationCache[mlbId] = years;
+  return years;
+}
+
 /**
  * 選手の全受賞からMLBの主要タイトル（MVP/サイヤング/新人王/シルバースラッガー/
  * ゴールドグラブ/オールスター等）を年とともに抽出し、列伝用の実績ハイライト文を返す。
@@ -3868,21 +3900,25 @@ async function _fetchCareerAwardHighlights(mlbId) {
     const episodes = [];
 
     // ── ワールドシリーズ制覇（年＋チームを明記。古い順）──
+    // ※ WSに実際に出場記録がある年のみ採用（ロスター外で優勝記録だけ残る選手を除外）
     if (wsYears.size) {
-      const ys = [...wsYears].sort((a, b) => a - b);
-      // チーム別にまとめる（年→日本語チーム名）
-      const byTeam = new Map(); // teamJa(またはnull) → years[]
-      for (const y of ys) {
-        const teamJa = _teamCodeToJa(_yearTeamFromData(y)) || null;
-        if (!byTeam.has(teamJa)) byTeam.set(teamJa, []);
-        byTeam.get(teamJa).push(y);
+      const wsPart = await _fetchWsParticipationYears(mlbId);
+      const ys = [...wsYears].filter(y => wsPart.has(y)).sort((a, b) => a - b);
+      if (ys.length) {
+        // チーム別にまとめる（年→日本語チーム名）
+        const byTeam = new Map(); // teamJa(またはnull) → years[]
+        for (const y of ys) {
+          const teamJa = _teamCodeToJa(_yearTeamFromData(y)) || null;
+          if (!byTeam.has(teamJa)) byTeam.set(teamJa, []);
+          byTeam.get(teamJa).push(y);
+        }
+        // チームグループを最古年で並べる（「ワールドシリーズ制覇」は末尾に1回だけ）
+        const groups = [...byTeam.entries()].sort((a, b) => Math.min(...a[1]) - Math.min(...b[1]));
+        const frags = groups.map(([teamJa, years]) =>
+          teamJa ? `${years.join('・')}年に${teamJa}で` : `${years.join('・')}年に`
+        );
+        episodes.push(`${frags.join('、')}ワールドシリーズ制覇を達成した実績を持つ。`);
       }
-      // チームグループを最古年で並べる（「ワールドシリーズ制覇」は末尾に1回だけ）
-      const groups = [...byTeam.entries()].sort((a, b) => Math.min(...a[1]) - Math.min(...b[1]));
-      const frags = groups.map(([teamJa, years]) =>
-        teamJa ? `${years.join('・')}年に${teamJa}で` : `${years.join('・')}年に`
-      );
-      episodes.push(`${frags.join('、')}ワールドシリーズ制覇を達成した実績を持つ。`);
     }
 
     // ── 個人タイトル（代表的なものを古い順に列挙）──
