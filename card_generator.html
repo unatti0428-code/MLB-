@@ -7176,12 +7176,11 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
       const nM = s.match(/(\d+)[- ]?times?\s+World Series/i);
       if (nM) {
         results.push(`ワールドシリーズ${nM[1]}回出場を経験し、大舞台でチームを牽引した真のクラッチプレーヤー。`);
-      } else if (/won|champion|title/i.test(s)) {
-        results.push('ワールドシリーズ制覇を経験し、球団の栄光を手繰り寄せた歴史的な貢献を残した。');
-      } else {
-        results.push('ワールドシリーズの舞台を経験し、球団の黄金時代を支えた重要な存在として語り継がれる。');
+        continue;
       }
-      continue;
+      // ※ 単発の「World Series」言及は、Wikipedia文だけでは「制覇」か「出場(敗退)」かを
+      //   正確に判定できず、誤って制覇と記載してしまう（例: リーグ優勝のみで敗退した選手）。
+      //   WS制覇はMLB APIの正確なデータ(年＋チーム)で別途記載するため、ここでは生成しない。
     }
 
     // 完全試合・ノーヒットノーラン（投手）
