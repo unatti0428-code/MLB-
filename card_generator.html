@@ -3870,6 +3870,101 @@ async function _fetchCareerAwardHighlights(mlbId) {
   }
 }
 
+/**
+ * 選手がMLBでレギュラー級の活躍を確立しているか（g_dataRowsの出場から判定）。
+ * 確立済み → 列伝はMLB中心（マイナー実績は載せない）。未確立 → マイナー実績を載せる。
+ * @returns {boolean}
+ */
+function _mlbEstablished() {
+  if (!g_dataRows) return false;
+  const byYear = {};
+  for (const r of g_dataRows) {
+    const y = String(r[1] ?? '').trim();
+    if (!/^\d{4}$/.test(y)) continue; // 単年行のみ
+    const g = g_isPitcher ? (parseInt(r[6]) || 0) : getHitterGames(r);
+    byYear[y] = Math.max(byYear[y] || 0, g);
+  }
+  // 投手は20登板以上、野手は40試合以上を「実働シーズン」とし、2年以上で確立とみなす
+  const minG = g_isPitcher ? 20 : 40;
+  const solidSeasons = Object.values(byYear).filter(g => g >= minG).length;
+  return solidSeasons >= 2;
+}
+
+// MLB統計順位ハイライトのキャッシュ（mlbId_p/b → episodes[]）
+const _statRankCache = {};
+
+/**
+ * 選手のキャリアの好成績年についてリーグ順位を取得し、
+ * 「2020年にア・リーグ打率7位」のようなMLB統計ハイライト文を返す。
+ * APIコストを抑えるため、成績上位の最大3年のみリーグリーダーを取得する。
+ * @param {string|number} mlbId
+ * @param {boolean} isPitcher
+ * @param {string} [excludeYear] カード年（重複回避のため除外）
+ * @returns {Promise<string[]>} 列伝用エピソード（最大1件）
+ */
+async function _fetchMlbStatRankHighlights(mlbId, isPitcher, excludeYear = '') {
+  if (!mlbId || !g_dataRows) return [];
+  const ckey = `${mlbId}_${isPitcher ? 'p' : 'b'}_${excludeYear}`;
+  if (_statRankCache[ckey]) return _statRankCache[ckey];
+
+  // 単年行から候補年を抽出（同年はTOT優先で1件）。実働シーズンのみ。
+  const minG = isPitcher ? 20 : 40;
+  const byYear = {};
+  for (const r of g_dataRows) {
+    const y = String(r[1] ?? '').trim();
+    if (!/^\d{4}$/.test(y) || y === String(excludeYear)) continue;
+    const g = isPitcher ? (parseInt(r[6]) || 0) : getHitterGames(r);
+    if (g < minG) continue;
+    const tc = String(r[2] ?? '').toUpperCase();
+    // 成績の良さの目安: 野手OPS / 投手は防御率の低さ（小さいほど良いので符号反転）
+    const metric = isPitcher ? -(parseFloat(r[5]) || 99) : (parseFloat(fmtOPS(r[17])) || 0);
+    if (!byYear[y] || tc === 'TOT') byYear[y] = { row: r, metric };
+  }
+  const candidates = Object.entries(byYear)
+    .sort((a, b) => b[1].metric - a[1].metric)
+    .slice(0, 3); // 成績上位3年まで
+  if (!candidates.length) { _statRankCache[ckey] = []; return []; }
+
+  const catJa = { avg:'打率', hr:'本塁打', rbi:'打点', ops:'OPS', obp:'出塁率', sb:'盗塁', war:'WAR',
+                  era:'防御率', k:'奪三振', wins:'勝利', sv:'セーブ', hld:'ホールド', whip:'WHIP' };
+  // 表示優先度（低いほど優先して1項目選ぶ）
+  const catOrder = ['avg','era','hr','wins','sv','hld','sb','rbi','k','ops','obp','war','whip'];
+
+  try {
+    const results = await Promise.all(candidates.map(async ([year, info]) => {
+      const { leagueId, leagueLabel } = getLeagueInfo(String(info.row[2] ?? ''));
+      const leaders = await fetchLeagueLeaders(year, isPitcher, leagueId);
+      const rd = buildRankData(leaders, mlbId, leagueLabel, {});
+      // その年の最良順位の1カテゴリを選ぶ
+      let best = null;
+      for (const k of catOrder) {
+        if (rd[k] && rd[k].rank >= 1 && rd[k].rank <= 7) {
+          if (!best || rd[k].rank < best.rank) best = { cat: k, rank: rd[k].rank };
+        }
+      }
+      return best ? { year, lg: leagueLabel, cat: best.cat, rank: best.rank } : null;
+    }));
+
+    const hits = results.filter(Boolean)
+      .sort((a, b) => a.rank - b.rank) // 順位の良い順
+      .slice(0, 3);
+    if (!hits.length) { _statRankCache[ckey] = []; return []; }
+
+    const frags = hits.map(h => {
+      const catName = catJa[h.cat] || h.cat;
+      return h.rank === 1 ? `${h.year}年に${h.lg}${catName}1位` : `${h.year}年に${h.lg}${catName}${h.rank}位`;
+    });
+    const sentence = `${frags.join('、')}にランクインするなど、MLBの第一線で確かな実績を残した実力者。`;
+    _statRankCache[ckey] = [sentence];
+    console.log('[StatRank]', mlbId, '→', sentence);
+    return _statRankCache[ckey];
+  } catch (e) {
+    console.warn('[StatRank] 取得失敗:', e.message);
+    _statRankCache[ckey] = [];
+    return [];
+  }
+}
+
 function awardToJa(award) {
   const n = (award.name || award.id || '').toLowerCase();
 
@@ -7695,27 +7790,35 @@ async function fetchRetsudenFromAPI(row) {
     }
   }
 
-  // ④-c MLB通算の主要タイトル実績を列伝に盛り込む（他年度の輝かしい実績を反映）
-  // 例: 2025年カードでも「2020年にシルバースラッガー賞、2021・2022年にオールスター…」
-  // 単年カードでその年の実績が乏しくても、キャリアの功績で列伝を充実させる。
+  // ④-c MLBでの活躍を列伝に盛り込む（賞＋リーグ統計順位）
+  //   ・主要タイトル実績（MVP/シルバースラッガー/オールスター等、受賞年つき）
+  //   ・リーグ統計順位（例: 2020年にア・リーグ打率7位）
+  // 出身行の直後・他のWiki文より前に挿入して優先度を上げる。
+  g_milbTitleJa = null;
+  let _mlbActive = false; // MLB実績が存在するか（マイナー実績の出し分けに使用）
   if (g_mlbId) {
-    const hilites = await _fetchCareerAwardHighlights(g_mlbId);
-    const fresh = hilites.filter(ep => !wikiEpisodes.includes(ep));
-    if (fresh.length) {
+    const cardYear = /^\d{4}$/.test(yearKey) ? yearKey : '';
+    const [awardHi, statHi] = await Promise.all([
+      _fetchCareerAwardHighlights(g_mlbId),
+      _fetchMlbStatRankHighlights(g_mlbId, g_isPitcher, cardYear),
+    ]);
+    const mlbHilites = [...awardHi, ...statHi].filter(ep => !wikiEpisodes.includes(ep));
+    if (mlbHilites.length) {
+      _mlbActive = true;
       const insertAt = (wikiEpisodes[0] && /出身/.test(wikiEpisodes[0])) ? 1 : 0;
-      wikiEpisodes.splice(insertAt, 0, ...fresh);
+      wikiEpisodes.splice(insertAt, 0, ...mlbHilites);
     }
   }
 
-  // ④-d マイナー／ウィンターリーグの年間タイトル級実績を列伝に盛り込む
-  // （MLB経験の少ない若手選手の列伝を、AAA/AA/ウインターL等のレベルを明記して充実させる）
-  // バナーの賞からは除外済み。出身行の直後・他のWiki文より前に挿入して優先度を上げる。
-  g_milbTitleJa = null;
-  if (g_mlbId) {
+  // ④-d マイナー／ウィンターリーグの実績は「MLBでの活躍が乏しい選手」のみ盛り込む
+  //   ・MLB主要タイトル/リーグ順位がある、またはレギュラー級に確立した選手は対象外
+  //     （その場合は④-cのMLB実績やシーズン成績で列伝を構成する）
+  //   ・MLB経験の少ない若手等は、トリプルA/ダブルA/ウインターL等の実績を明記して充実させる
+  const _established = _mlbActive || _mlbEstablished();
+  if (g_mlbId && !_established) {
     const milb = await _fetchMilbAwardData(g_mlbId, g_isPitcher);
-    g_milbTitleJa = milb.bestTitle; // 肩書フォールバック用
+    g_milbTitleJa = milb.bestTitle; // 肩書フォールバック用（MLB未確立選手のみ）
     if (milb.episodes.length) {
-      // 既存重複を避けつつ、出身行の後ろに差し込む（先頭が出身行なら2番目以降）
       const insertAt = (wikiEpisodes[0] && /出身/.test(wikiEpisodes[0])) ? 1 : 0;
       const fresh = milb.episodes.filter(ep => !wikiEpisodes.includes(ep));
       wikiEpisodes.splice(insertAt, 0, ...fresh);
