@@ -3973,6 +3973,18 @@ function _mlbEstablished() {
 const _statRankCache = {};
 
 /**
+ * 「完了済みの最新シーズン」を返す。
+ * シーズン中(WS終了前)の年は成績が未確定のため、防御率1位等のタイトル・順位を
+ * 列伝に記載しないよう、この年以前のみを対象とする。
+ * WSは概ね11月初旬に終わるため、11月以降はその年を完了とみなす。
+ * @returns {number}
+ */
+function _latestCompletedSeason() {
+  const now = new Date();
+  return now.getMonth() >= 10 ? now.getFullYear() : now.getFullYear() - 1; // getMonth: 10=11月
+}
+
+/**
  * 選手のキャリアからリーグタイトル（部門1位）・上位ランクを取得し、
  * 「2021年にア・リーグ最多セーブ」「2020年にア・リーグ打率7位」等のハイライト文を返す。
  * どの年のカードでも、過去にタイトルを獲っていれば年つきで掲載する。
@@ -3988,11 +4000,14 @@ async function _fetchMlbStatRankHighlights(mlbId, isPitcher, excludeYear = '') {
   if (_statRankCache[ckey]) return _statRankCache[ckey];
 
   // 単年行から実働シーズンを抽出（同年はTOT優先で出場集計、リーグはTOT以外の球団から判定）
+  // シーズン中の年（完了済み最新シーズンより後）は成績未確定のため対象外
+  const maxSeason = _latestCompletedSeason();
   const minG = isPitcher ? 20 : 40;
   const byYear = {};
   for (const r of g_dataRows) {
     const y = String(r[1] ?? '').trim();
     if (!/^\d{4}$/.test(y) || y === String(excludeYear)) continue;
+    if (parseInt(y) > maxSeason) continue; // シーズン中の年は除外
     const g = isPitcher ? (parseInt(r[6]) || 0) : getHitterGames(r);
     if (g <= 0) continue;
     const tc = String(r[2] ?? '').toUpperCase();
@@ -7850,8 +7865,10 @@ async function fetchRetsudenFromAPI(row) {
   }
 
   // ③ リーグ年度別ランキング取得（1位のみアワードとして使用）
+  // ※ シーズン中の年（完了済み最新シーズンより後）は成績未確定のため取得しない
+  //   （防御率1位・最多セーブ等を未完了シーズンで記載しないため）
   let rankData = {};
-  if (g_mlbId && row[1] && /^\d{4}$/.test(yearKey)) {
+  if (g_mlbId && row[1] && /^\d{4}$/.test(yearKey) && parseInt(yearKey) <= _latestCompletedSeason()) {
     try {
       const { leagueId, leagueLabel } = getLeagueInfo(row[2]);
       const localStats = g_isPitcher
@@ -8839,9 +8856,10 @@ async function _enrichBackCrownsAsync() {
     }
   });
 
-  // 未取得年度のみ処理
+  // 未取得年度のみ処理（シーズン中の年は成績未確定のためタイトル・王冠の対象外）
+  const _maxSeasonCrown = _latestCompletedSeason();
   const years = Object.keys(yearRowsAll)
-    .filter(y => !_rankDataByYear[y])
+    .filter(y => !_rankDataByYear[y] && parseInt(y) <= _maxSeasonCrown)
     .sort();
   if (years.length === 0) {
     // 全年度取得済み：王冠・通算バナーを即時更新して終了
