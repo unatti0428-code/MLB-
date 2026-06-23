@@ -7242,18 +7242,42 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
       // 未達成・別人の文脈（惜しくも逃した/合同/打ち崩した 等）は除外
       const negative = /near[- ]?perfect|almost|came close|lost the perfect|broke up|broke a|witness|caught (?:a|the|his)|combined/i.test(s);
       const yM = s.match(/\b(?:19|20)\d{2}\b/);
-      if (!negative && yM) {
+      // 選手のMLB在籍年範囲（g_dataRowsより）。年がこの窓から外れる場合は
+      // 同姓の別人物（Wikipedia取り違え）の恐れが高いため記載しない。
+      const _mlbYrs = (g_dataRows || []).map(r => parseInt(String(r[1] ?? '').trim())).filter(y => !isNaN(y) && y >= 1900);
+      const _firstMlb = _mlbYrs.length ? Math.min(..._mlbYrs) : null;
+      const _lastMlb  = _mlbYrs.length ? Math.max(..._mlbYrs) : null;
+      const _year = yM ? parseInt(yM[0]) : null;
+      // 妥当な年: MLB初年の8年前(マイナー時代)〜MLB最終年の翌年 まで
+      const _plausible = (_firstMlb === null) ||
+        (_year !== null && _year >= _firstMlb - 8 && _year <= _lastMlb + 1);
+      if (!negative && yM && _plausible) {
         const eventJa = isPerfect ? '完全試合' : 'ノーヒットノーラン';
+        // MLBかマイナーかを明記（マイナーは級も併記）
+        let level = 'メジャーリーグ', minor = false;
+        if (/triple-?a|\baaa\b|pacific coast league|international league/i.test(s)) { level = 'トリプルA'; minor = true; }
+        else if (/double-?a|\baa\b|eastern league|southern league|texas league/i.test(s)) { level = 'ダブルA'; minor = true; }
+        else if (/high-?a|single-?a|class[- ]?a|low-?a|california league|carolina league|florida state league|midwest league|south atlantic league|northwest league/i.test(s)) { level = 'シングルA級'; minor = true; }
+        else if (/rookie league|complex league|dominican summer|arizona (?:complex )?league|gulf coast league/i.test(s)) { level = 'ルーキー級'; minor = true; }
+        else if (/minor league|\bmilb\b/i.test(s)) { level = 'マイナーリーグ'; minor = true; }
+        // 明示的なマイナー表記がなくても、MLB初出場年より前の年ならメジャー昇格前＝マイナー扱い
+        if (!minor && _firstMlb !== null && _year < _firstMlb) { level = 'マイナーリーグ（メジャー昇格前）'; minor = true; }
+        const placeStr = minor ? (level.includes('マイナーリーグ') ? `${level}で` : `${level}（マイナーリーグ）で`) : 'メジャーリーグで';
+        // 相手チームはMLBチーム名のみ変換（マイナーは相手不明として省略）
         const oppM = s.match(/(?:against|versus|vs\.?)\s+(?:the\s+)?([A-Z][a-zA-Z'. ]{3,25}?)(?:\s+(?:on|in|at)\b|[,.)]|$)/);
         const oppRaw = oppM ? oppM[1].trim() : null;
-        const oppJa  = oppRaw ? teamJa(oppRaw) : null;
+        const oppJa  = (!minor && oppRaw) ? teamJa(oppRaw) : null;
         const oppStr = (oppJa && oppJa !== oppRaw) ? `${oppJa}を相手に` : '';
-        results.push(isPerfect
-          ? `${yM[0]}年に${oppStr}${eventJa}を達成した一夜は、投手として至高の境地に達した証として球史に刻まれる。`
-          : `${yM[0]}年に${oppStr}${eventJa}を成し遂げた快投は、投球の完璧さを証明した輝かしい偉業。`);
+        if (minor) {
+          results.push(`${yM[0]}年に${placeStr}${eventJa}を達成し、卓越した制球と投球術を示す快挙を成し遂げた。`);
+        } else {
+          results.push(isPerfect
+            ? `${yM[0]}年に${placeStr}${oppStr}${eventJa}を達成した一夜は、投手として至高の境地に達した証として球史に刻まれる。`
+            : `${yM[0]}年に${placeStr}${oppStr}${eventJa}を成し遂げた快投は、投球の完璧さを証明した輝かしい偉業。`);
+        }
         continue;
       }
-      // 年が取れない等で確証がなければ記載しない（曖昧・誤検出の回避）
+      // 年が取れない/キャリア窓外（別人物の取り違え等）→ 曖昧・誤記回避のため記載しない
     }
 
     // 伝説的選手との比較（投手/野手共通）
