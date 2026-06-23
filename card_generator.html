@@ -7235,13 +7235,25 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
     }
 
     // 完全試合・ノーヒットノーラン（投手）
-    if (isPitcher && /perfect game/i.test(s)) {
-      results.push('完全試合を達成した伝説の一夜は、投手として至高の境地に達した証として球史に刻まれる。');
-      continue;
-    }
-    if (isPitcher && /no-hitter|no hitter/i.test(s)) {
-      results.push('ノーヒットノーランを成し遂げた歴史的快投は、投球の完璧さを世界に証明した輝かしい偉業。');
-      continue;
+    // ※ 年が特定できる場合のみ記載（年・相手を明記）。年が取れない場合は曖昧・誤検出
+    //   （未達成/別人/捕手として関与等）の恐れがあるため記載しない。
+    if (isPitcher && /perfect game|no-hitter|no hitter/i.test(s)) {
+      const isPerfect = /perfect game/i.test(s);
+      // 未達成・別人の文脈（惜しくも逃した/合同/打ち崩した 等）は除外
+      const negative = /near[- ]?perfect|almost|came close|lost the perfect|broke up|broke a|witness|caught (?:a|the|his)|combined/i.test(s);
+      const yM = s.match(/\b(?:19|20)\d{2}\b/);
+      if (!negative && yM) {
+        const eventJa = isPerfect ? '完全試合' : 'ノーヒットノーラン';
+        const oppM = s.match(/(?:against|versus|vs\.?)\s+(?:the\s+)?([A-Z][a-zA-Z'. ]{3,25}?)(?:\s+(?:on|in|at)\b|[,.)]|$)/);
+        const oppRaw = oppM ? oppM[1].trim() : null;
+        const oppJa  = oppRaw ? teamJa(oppRaw) : null;
+        const oppStr = (oppJa && oppJa !== oppRaw) ? `${oppJa}を相手に` : '';
+        results.push(isPerfect
+          ? `${yM[0]}年に${oppStr}${eventJa}を達成した一夜は、投手として至高の境地に達した証として球史に刻まれる。`
+          : `${yM[0]}年に${oppStr}${eventJa}を成し遂げた快投は、投球の完璧さを証明した輝かしい偉業。`);
+        continue;
+      }
+      // 年が取れない等で確証がなければ記載しない（曖昧・誤検出の回避）
     }
 
     // 伝説的選手との比較（投手/野手共通）
