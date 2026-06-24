@@ -5507,7 +5507,7 @@ async function processFile(filePath, catcherData = null) {
     // 年間盗塁数による盗塁能上限（段階的クランプ）、削減分の1/3をスピードに加算
     if (!isCareer && typeof stealAbility === 'number') {
       let cap = null;
-      if (sb < 7)  cap = 10;
+      if (sb < 10) cap = 10;
       else if (sb < 20) cap = 20;
       else if (sb < 25) cap = 30;
       else if (sb < 30) cap = 40;
