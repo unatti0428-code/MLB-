@@ -8726,6 +8726,8 @@ function getFirstColVal(row, headerRow, names) {
 function normalizeTeamCode(code) {
   if (!code) return code;
   const s = String(code).trim().toUpperCase();
+  // 「ALL」(全球団の集計を意味する所属)はスティント番号付き("ALL2"等)でも常に "ALL" と表示する
+  if (/^ALL\d*$/.test(s)) return 'ALL';
   // 表示用の略称正規化のみ行う（末尾数字は除去しない: "SEA2"はそのまま"SEA2"）
   const MAP = {
     'ST.':  'STL',  // St. Louis Cardinals
@@ -10199,9 +10201,12 @@ async function _doGenerate(photoInput) {
         g_careerWAR = null;
       }
       // 通算行専用：キャリア最多試合チームを事前計算（表面・裏面で共有）
-      // 通算行の入力値は使わず、常にシーズンデータから自動計算する
+      // 通算行の所属が「ALL」(全球団集計)の場合はそのまま「ALL」を表示する。
+      // それ以外は入力値を使わず、常にシーズンデータから自動計算する
       // （"SEA2"→"SEA" のように末尾数字を正規化して集計）
-      g_careerTeam = careerPrimaryTeam(g_dataRows, g_isPitcher);
+      g_careerTeam = (normalizeTeamCode(String(selectedRow[2] || '')) === 'ALL')
+        ? 'ALL'
+        : careerPrimaryTeam(g_dataRows, g_isPitcher);
     }
 
     // 総合力 → 星数 → テーマ（キャップなし・100超で6星ホログラム）
