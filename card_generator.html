@@ -5649,7 +5649,7 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
         `本来の打撃を取り戻せず苦しんだが、復調を期して打席に立ち続けたシーズン。`,
         `成績は伸び悩んだものの、経験を積み重ねて次への糧としたシーズン。`,
         `厳しい一年となったが、持ち味を取り戻すべく奮闘を続けたシーズン。`,
-        `打撃に苦しんだシーズンながら、守備や走塁でチームを支えようと奮闘した。`,
+        `打撃に苦しんだシーズンながら、次の飛躍を期して奮闘を続けた。`,
       ];
       lines.push(strugLines[(hr + Math.round(opsN * 100)) % strugLines.length]);
     } else {
@@ -5658,8 +5658,12 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
         `打線の中で安定した存在感を示し、相手バッテリーに的を絞らせなかったシーズン。`,
         `コンタクト能力を活かし、チームの攻撃の一角として役割を果たしたシーズン。`,
         `勝負どころでの集中力を発揮し、チームの得点機にたびたび絡んだシーズン。`,
-        `粘り強い打席と走塁センスで、チームに好機をもたらしたシーズン。`,
       ];
+      // 走力のある選手のみ走塁系の表現を追加（盗塁少・スピード低い選手には使わない）
+      const _spd = parseInt(row[46]) || 0;
+      if (sb >= 10 || _spd >= 75) {
+        styleLines.push(`粘り強い打席と走塁センスで、チームに好機をもたらしたシーズン。`);
+      }
       lines.push(styleLines[(hr + rbi) % styleLines.length]);
     }
   }
@@ -6105,9 +6109,15 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
 // ※ 各要素の出現回数（通算カウント用の重複）は維持する。
 function _dedupeLeaguePrefixedAwards(list) {
   const set = new Set(list);
-  return list.filter(a =>
+  // ① 接頭辞付き(AL/NL)があれば接頭辞なしの同種賞を除外
+  let out = list.filter(a =>
     !(set.has('AL' + a) || set.has('NL' + a) || set.has('AL ' + a) || set.has('NL ' + a))
   );
+  // ② 「新人王」(Rookie of the Year)があれば、実質同じ「最優秀新人賞」
+  //    (Players Choice等のOutstanding Rookie)を重複として除外
+  const hasRoy = out.some(a => a.includes('新人王'));
+  if (hasRoy) out = out.filter(a => !a.includes('最優秀新人賞'));
+  return out;
 }
 
 // ── MLB データから列伝全体を構築 ────────────────────────────
