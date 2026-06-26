@@ -6212,6 +6212,11 @@ function _parseJaWikiCharacteristics(wikitext, isPitcher) {
     .replace(/^=+[^=]+=+\s*$/gm, '')
     // ⑩ テーブル行記法の残骸（行頭の | や ! で始まる行）を除去
     .replace(/^[|!][^\n]*/gm, '')
+    // ⑩-b 定義リスト記法の整理（二刀流選手の「;投手」「;野手」見出し等）
+    //   例: ";野手\n:打撃が…" → 見出し行(;野手)を除去し、説明行の先頭コロンを外す
+    //   （"強肩も武器。　; 野手 :年齢離れした…" のような見出し残骸を防ぐ）
+    .replace(/^[;；][^\n]*$/gm, '')   // ;投手 / ;野手 等の見出し行を丸ごと除去
+    .replace(/^[\s　]*[:：][\s　]*/gm, '') // :説明 / ：説明 の先頭コロンを除去
     // ⑪ ファイルリンク除去後に残ったパラメータ残骸を除去
     //   例: "thumb|right|2016年" → 行頭や文頭に孤立して残るケースを想定
     .replace(/^(?:thumb|right|left|center|upright|frameless)\|[^\n]*/gm, '')  // 行頭残骸
@@ -6338,6 +6343,12 @@ function _buildCharacteristicsLines(chars, isPitcher, isCareer) {
   if (!chars) return [];
   const lines = [];
 
+  // レギュラー級に確立した選手は、プロスペクト向けの将来予測（「将来は20-20も可能」等）を
+  // 列伝に載せると新人のような表現になるため除外する。
+  const _established = _mlbEstablished();
+  const _isProjection = (t) =>
+    /将来(?:は|的に|性)|今後の成長|潜在能力|ポテンシャル|伸びしろ|成長すれば|化ければ|期待される逸材|将来を(?:嘱望|期待)|見込まれ|可能と(?:見る|される|の声|期待)/.test(t || '');
+
   /**
    * 文を適切な長さに収めてから重複チェックしてpush。
    * 優先順位: ① 250字以内なら全文使用（Wikipedia文は1文が長いため）
@@ -6347,6 +6358,8 @@ function _buildCharacteristicsLines(chars, isPitcher, isCareer) {
    */
   const _push = (text) => {
     if (!text) return;
+    // 確立選手には将来予測（プロスペクト評）を載せない
+    if (_established && _isProjection(text)) return;
     let t = text;
     if (t.length > 250) {
       // 250字以内の最後の「。」で切る
