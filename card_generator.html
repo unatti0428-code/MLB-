@@ -9102,20 +9102,12 @@ function buildAndAttachCardBack() {
   }).join('');
 
   // 投球腕・打席の表示テキストを生成
-  const _handCode2Ja = c => c === 'L' ? '左' : c === 'R' ? '右' : c === 'S' ? '両' : '';
-  let handLabel = '';
-  if (g_pitchHand || g_batSide) {
-    const ph = _handCode2Ja(g_pitchHand);
-    const bs = _handCode2Ja(g_batSide);
-    if (g_isPitcher && ph) {
-      handLabel = `${ph}投${bs ? bs + '打' : ''}`;
-    } else if (!g_isPitcher && (ph || bs)) {
-      handLabel = `${ph ? ph + '投' : ''}${bs ? bs + '打' : ''}`;
-    }
-  }
-  const handHtml = handLabel
-    ? `<span class="card-back-banner-hand">${escapeHtml(handLabel)}</span>`
-    : `<span></span>`; // レイアウト維持用の空スパン
+  // 選手データを取得できず不明の場合は「右投右打」を既定値とする
+  // （左投手/左打者/スイッチのみ実データを反映し、それ以外・不明はすべて「右」）
+  const ph = (g_pitchHand === 'L') ? '左' : '右';
+  const bs = (g_batSide === 'L') ? '左' : (g_batSide === 'S') ? '両' : '右';
+  const handLabel = `${ph}投${bs}打`;
+  const handHtml = `<span class="card-back-banner-hand">${escapeHtml(handLabel)}</span>`;
 
   backFace.innerHTML =
     `<div class="card-back-card">` +
