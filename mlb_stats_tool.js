@@ -6208,6 +6208,7 @@ function pick(mode, id, name, debut) {
   document.getElementById(prefix+'pid').value      = id;
   document.getElementById(prefix+'fullName').value = name;
   document.getElementById(prefix+'slug').value     = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  if (debut && debut !== '?') document.getElementById(prefix+'y1').value = debut;
   const debutStr = debut ? '、' + debut + '年デビュー' : '';
   document.getElementById(prefix+'results').innerHTML =
     '<div style="font-size:12px;color:#7030A0">✓ ' + name + '（ID: ' + id + debutStr + '）</div>';
