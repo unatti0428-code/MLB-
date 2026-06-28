@@ -4703,6 +4703,19 @@ function buildCardType(row, awardsJa) {
     const hasSvTitle  = awardsJa.some(a => a.includes('最多セーブ'));
     const hasHldTitle = awardsJa.some(a => a.includes('最多ホールド'));
 
+    // 投手能力値（肩書バリエーション用）: 球速(最速)・奪三振能力・制球力
+    //   row[59+i*3]=各球種の球速(km/h), row[54]=奪三振能力, row[51]=制球力
+    const _veloMax = (() => {
+      let v = 0;
+      for (let i = 0; i < 7; i++) {
+        const sp = parseFloat(row[59 + i * 3]) || 0;
+        if (sp >= 100 && sp <= 175) v = Math.max(v, sp);
+      }
+      return v;
+    })();
+    const _strkAbl = parseInt(row[54]) || 0;  // 奪三振能力
+    const _ctrlAbl = parseInt(row[51]) || 0;  // 制球力
+
     // ① 奪三振数が極めて多い
     if (k >= 300) return `${k}奪三振${hand}`;
     if (k >= 250) {
@@ -4729,16 +4742,38 @@ function buildCardType(row, awardsJa) {
       const hldRankVal = _rankDataByYear[hldYearKey]?.hld?.rank;
       if (hldRankVal && hldRankVal >= 2 && hldRankVal <= 5) return `リーグHLD${hldRankVal}位投手`;
     }
-    // ⑤ クローザー実績（タイトルなし）
-    // ※「不滅の守護神」を名乗るには、実際のクローザー/セットアッパー級の働きが必要：
-    //   - イニング数: 40回以上（リリーフ実働量の最低水準）
-    //   - セーブ or ホールド: 10以上（実際の救援役割を担った証拠）
-    //   いずれかが欠ければ単なる「低防御率の救援投手」止まりとして肩書には使用しない
-    if (!isStarter && era < 2.20) {
+    // ⑤ リリーフ投手：役割（クローザー/セットアッパー/中継ぎ）＋能力で肩書を多彩化
+    //   セーブ主体＝クローザー系、ホールド主体＝セットアッパー系として区別し、
+    //   球速160km/h以上＝剛腕/速球派、奪三振能力100以上＝奪三振型、制球力100以上＝技巧派/精密 を反映
+    if (!isStarter) {
       const _ipN  = parseFloat(row[10]) || 0;
       const _svN  = parseInt(getFirstColVal(row, g_headers && g_headers[0], ['SV','セーブ','Saves','Save'])) || 0;
       const _hldN = parseInt(getFirstColVal(row, g_headers && g_headers[0], ['HLD','ホールド','Holds','Hold','HD'])) || 0;
-      if (_ipN >= 40 && (_svN >= 10 || _hldN >= 10)) return '不滅の守護神';
+      // 役割判定：セーブが主体ならクローザー、ホールドが主体ならセットアッパー
+      const _closerRole = _svN >= 15 || (_svN >= 8 && _svN >= _hldN);
+      const _setupRole  = !_closerRole && _hldN >= 10;
+
+      if (_closerRole) {
+        if (_veloMax >= 160)          return '剛腕クローザー';
+        if (_strkAbl >= 100)          return '奪三振型クローザー';
+        if (_ctrlAbl >= 100)          return '精密機械のクローザー';
+        if (_svN >= 35 && era < 2.00) return '不滅の守護神';
+        if (_svN >= 30 || (era < 2.20 && _ipN >= 40)) return '鉄壁の守護神';
+        if (_svN >= 20)               return '頼れる守護神';
+        return 'クローザー';
+      }
+      if (_setupRole) {
+        if (_veloMax >= 160)           return '速球派セットアッパー';
+        if (_ctrlAbl >= 100)           return '技巧派セットアッパー';
+        if (_strkAbl >= 100)           return '奪三振型セットアッパー';
+        if (_hldN >= 25 || era < 2.50) return 'チームの中継エース';
+        return '勝利の方程式を担うセットアッパー';
+      }
+      // 中継ぎ（セーブ・ホールドとも少ない）
+      if (_veloMax >= 160)          return '剛腕リリーバー';
+      if (_strkAbl >= 100)          return '奪三振型リリーバー';
+      if (_ctrlAbl >= 100)          return '精密機械のリリーバー';
+      if (era < 2.50 && _ipN >= 30) return 'ブルペンの安定感';
     }
     // ⑥ その他のタイトルがあれば手腕を付けて整形
     // 「ワールドシリーズ優勝」は「受賞」でなく「制覇」なので別途処理
@@ -4754,7 +4789,14 @@ function buildCardType(row, awardsJa) {
       // WS優勝のみの場合 → 自然な表現で返す
       if (hasWsChamp) return `WS制覇に貢献した${hand}`;
     }
-    // ⑦ タイトルなし → マイナー/ウィンターの年間タイトル級称号があれば優先、なければ勝利数＋手腕
+    // ⑦ 能力ベースの肩書（タイトルなし・先発／役割の薄い投手）
+    //   球速160km/h以上＝剛腕、奪三振能力100以上＝ドクターK（主に先発）、制球力100以上＝精密機械
+    if (_veloMax >= 160)              return isStarter ? '剛腕エース' : '剛腕リリーバー';
+    if (_strkAbl >= 100 && isStarter) return 'ドクターK';
+    if (_strkAbl >= 100)              return '奪三振型リリーバー';
+    if (_ctrlAbl >= 100)              return isStarter ? '精密機械' : '精密機械のリリーバー';
+
+    // ⑧ タイトルなし → マイナー/ウィンターの年間タイトル級称号があれば優先、なければ勝利数＋手腕
     return g_milbTitleJa || `${wins}勝${hand}投手`;
   }
 }
