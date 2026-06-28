@@ -4744,7 +4744,8 @@ function buildCardType(row, awardsJa) {
     }
     // ⑤ リリーフ投手：役割（クローザー/セットアッパー/中継ぎ）＋能力で肩書を多彩化
     //   セーブ主体＝クローザー系、ホールド主体＝セットアッパー系として区別し、
-    //   球速160km/h以上＝剛腕/速球派、奪三振能力100以上＝奪三振型、制球力100以上＝技巧派/精密 を反映
+    //   球速162km/h以上＝剛腕/速球派（先発以外は閾値を162に設定）、
+    //   奪三振能力100以上＝奪三振型、制球力100以上＝技巧派/精密 を反映
     if (!isStarter) {
       const _ipN  = parseFloat(row[10]) || 0;
       const _svN  = parseInt(getFirstColVal(row, g_headers && g_headers[0], ['SV','セーブ','Saves','Save'])) || 0;
@@ -4754,7 +4755,7 @@ function buildCardType(row, awardsJa) {
       const _setupRole  = !_closerRole && _hldN >= 10;
 
       if (_closerRole) {
-        if (_veloMax >= 160)          return '剛腕クローザー';
+        if (_veloMax >= 162)          return '剛腕クローザー';
         if (_strkAbl >= 100)          return '奪三振型クローザー';
         if (_ctrlAbl >= 100)          return '精密機械のクローザー';
         if (_svN >= 35 && era < 2.00) return '不滅の守護神';
@@ -4763,14 +4764,14 @@ function buildCardType(row, awardsJa) {
         return 'クローザー';
       }
       if (_setupRole) {
-        if (_veloMax >= 160)           return '速球派セットアッパー';
+        if (_veloMax >= 162)           return '速球派セットアッパー';
         if (_ctrlAbl >= 100)           return '技巧派セットアッパー';
         if (_strkAbl >= 100)           return '奪三振型セットアッパー';
         if (_hldN >= 25 || era < 2.50) return 'チームの中継エース';
         return '勝利の方程式を担うセットアッパー';
       }
       // 中継ぎ（セーブ・ホールドとも少ない）
-      if (_veloMax >= 160)          return '剛腕リリーバー';
+      if (_veloMax >= 162)          return '剛腕リリーバー';
       if (_strkAbl >= 100)          return '奪三振型リリーバー';
       if (_ctrlAbl >= 100)          return '精密機械のリリーバー';
       if (era < 2.50 && _ipN >= 30) return 'ブルペンの安定感';
@@ -4790,8 +4791,9 @@ function buildCardType(row, awardsJa) {
       if (hasWsChamp) return `WS制覇に貢献した${hand}`;
     }
     // ⑦ 能力ベースの肩書（タイトルなし・先発／役割の薄い投手）
-    //   球速160km/h以上＝剛腕、奪三振能力100以上＝ドクターK（主に先発）、制球力100以上＝精密機械
-    if (_veloMax >= 160)              return isStarter ? '剛腕エース' : '剛腕リリーバー';
+    //   球速160km/h以上＝剛腕（先発以外は162以上）、奪三振能力100以上＝ドクターK（主に先発）、制球力100以上＝精密機械
+    if (_veloMax >= 160 && isStarter)  return '剛腕エース';
+    if (_veloMax >= 162 && !isStarter) return '剛腕リリーバー';
     if (_strkAbl >= 100 && isStarter) return 'ドクターK';
     if (_strkAbl >= 100)              return '奪三振型リリーバー';
     if (_ctrlAbl >= 100)              return isStarter ? '精密機械' : '精密機械のリリーバー';
