@@ -1,0 +1,2543 @@
+/* === 基本リセット === */
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  background: radial-gradient(ellipse at center, #1e0a3c 0%, #12001e 70%);
+  min-height: 100vh;
+  font-family: 'MS Gothic','Yu Gothic','Hiragino Kaku Gothic Pro',sans-serif;
+  color: #fff;
+}
+
+.app { max-width: 1280px; margin: 0 auto; padding: 6px 12px; }
+/* 結果画面では幅を最大化して、テーブルがスクロール不要に */
+.app:has(#result:not(.hidden)) { max-width: 100%; padding: 12px 16px; }
+/* 試合画面: 左右の余白を縮め (元の約1/6)、その分を スコアボード・実況・走者・選手データの拡幅にあてる */
+.app:has(#game:not(.hidden)) {
+  max-width: none;
+  width: min(calc((5 * 100vw + 1280px) / 6), calc(100vw - 24px));
+  padding: 6px 12px;
+}
+
+/* === ヘッダー === */
+.app-header {
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid #6677cc;
+  padding-bottom: 4px; margin-bottom: 6px;
+}
+.app-header h1 {
+  font-size: 18px; letter-spacing: 2px; margin: 0;
+  background: linear-gradient(90deg,#ffcc00,#ff66ff,#66ccff,#ffcc00);
+  background-size: 200% auto;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 4s linear infinite;
+  text-shadow: 2px 2px 0 #000;
+}
+@keyframes shimmer { to { background-position: 200% center; } }
+.header-actions { display: flex; gap: 8px; }
+
+/* === 共通ボタン === */
+.btn {
+  display: inline-block; padding: 8px 16px; border: none; border-radius: 6px;
+  font-weight: 900; font-size: 14px; letter-spacing: 1px;
+  cursor: pointer; text-decoration: none; color: #fff;
+  font-family: inherit;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.btn:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,0.4); }
+.btn:active { transform: translateY(0); }
+.btn-primary { background: linear-gradient(135deg,#ff4444,#cc0000); }
+.btn-sub     { background: linear-gradient(135deg,#4488ff,#1144aa); }
+.btn-danger  { background: linear-gradient(135deg,#666,#333); }
+
+.hidden { display: none !important; }
+
+/* === セットアップ === */
+.setup-top-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  background: rgba(0,0,0,0.4); border: 2px solid #6677cc;
+  border-radius: 8px;
+  padding: 8px 14px; margin-bottom: 12px;
+  gap: 12px;
+}
+.setup-top-actions { display: flex; gap: 8px; flex-shrink: 0; }
+#setup h2 {
+  font-size: 18px; margin: 0;
+  letter-spacing: 2px; color: #ffcc66;
+  flex: 1;
+}
+.setup-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+}
+.setup-col {
+  background: rgba(0,0,0,0.4);
+  border: 2px solid #6677cc;
+  border-radius: 10px; padding: 14px;
+}
+.setup-col h3 {
+  font-size: 14px; letter-spacing: 1px; margin-bottom: 10px;
+  border-left: 4px solid #8899ff; padding-left: 8px;
+  display: flex; align-items: center; gap: 10px;
+}
+.setup-col h3 .side-tag {
+  color: #ffcc66; font-weight: 900;
+}
+.setup-col h3 .team-filter {
+  flex: 1;
+  background: #003355; color: #fff;
+  border: 1px solid #6699ff;
+  border-radius: 4px; padding: 4px 6px;
+  font-family: inherit; font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.setup-col h3 .order-filter {
+  flex: 0 0 auto;
+  background: #1a3a22; color: #ffe08a;
+  border: 1px solid #66cc88;
+  border-radius: 4px; padding: 4px 6px;
+  font-family: inherit; font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.lineup-area label {
+  display: block; font-size: 12px; color: #c8d4ff;
+  margin-top: 8px; margin-bottom: 4px;
+}
+.lineup-area select {
+  width: 100%; padding: 6px; background: #222; color: #fff;
+  border: 1px solid #6677cc; border-radius: 4px; font-family: inherit;
+}
+.batter-slots { list-style: none; }
+.batter-slots li {
+  display: flex; align-items: center; gap: 4px; margin: 4px 0;
+  cursor: grab;
+  user-select: none;
+  transition: background 0.15s, transform 0.15s, opacity 0.15s, box-shadow 0.15s;
+  padding: 2px 4px; border-radius: 4px;
+  border: 1px solid transparent;
+}
+.batter-slots li:active { cursor: grabbing; }
+.batter-slots li.dragging {
+  opacity: 0.4;
+  background: rgba(100,100,100,0.3);
+}
+.batter-slots li.drag-over {
+  background: rgba(255,204,0,0.15);
+  border-color: #ffcc66;
+  outline: 2px dashed #ffcc66;
+}
+.batter-slots li.swapped {
+  background: rgba(100,255,150,0.2);
+  border-color: #88ff88;
+  animation: swapFlash 0.6s ease-out;
+}
+@keyframes swapFlash {
+  0%   { background: rgba(100,255,150,0.4); }
+  100% { background: rgba(100,255,150,0); }
+}
+.batter-slots li::before {
+  content: attr(data-num); display: inline-block; width: 22px;
+  font-weight: 900; color: #ffcc66; text-align: center;
+  background: #000; border-radius: 4px; font-size: 12px;
+  flex-shrink: 0;
+}
+.batter-slots .drag-handle {
+  display: inline-block;
+  color: #88aaff; font-size: 14px;
+  padding: 0 2px;
+  cursor: grab;
+  flex-shrink: 0;
+  user-select: none;
+}
+.batter-slots .drag-handle:hover { color: #ffcc66; }
+.batter-slots .sel-pos {
+  width: 80px; flex: none;
+  background: #003355; color: #ffcc66;
+  font-weight: 900; font-size: 11px;
+  cursor: pointer;
+}
+.batter-slots .sel-batter { flex: 1; cursor: pointer; }
+.batter-slots select { cursor: pointer; }
+
+.setup-options {
+  margin-top: 16px; display: flex; gap: 10px; align-items: center;
+  flex-wrap: wrap;
+}
+.setup-options select {
+  background: #222; color: #fff; border: 1px solid #6677cc;
+  border-radius: 4px; padding: 4px 8px; font-family: inherit;
+}
+
+/* === 試合画面: スコアボード === */
+.scoreboard {
+  background: rgba(0,0,0,0.5);
+  border: 1px solid #6677cc; border-radius: 6px;
+  padding: 2px; margin-bottom: 0;
+  overflow-x: auto;  /* 表が広くなりすぎたら横スクロールで救済 */
+}
+.scoreboard table {
+  width: 100%;  /* スコアボード枠 (＋カードを追加 右端付近まで) いっぱいに伸ばす */
+  border-collapse: collapse; text-align: center;
+  font-weight: 900;
+  table-layout: fixed;
+}
+.scoreboard th, .scoreboard td {
+  border: 1px solid #6677cc55; padding: 2px 2px;
+  min-width: 20px;
+  /* width を指定しない: team-name (150px固定) 以外の列はテーブル幅の残りを均等分配 */
+}
+.scoreboard th {
+  background: rgba(0,30,80,0.6); font-size: 13px; color: #c8d4ff;
+}
+.scoreboard th.team-name {
+  text-align: left; padding-left: 8px; padding-right: 8px;
+  min-width: 150px; width: 150px;  /* 投手交代ボタン (102px) の約1.5倍 */
+  background: rgba(0,80,30,0.6);
+  font-size: 17px; letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.scoreboard td { font-size: 15px; color: #fff; background: rgba(0,0,0,0.3); }
+.scoreboard td.current { background: rgba(255,200,0,0.25); border-color: #ffcc00; }
+/* 延長戦 (10回以降): 各回の列を縮めて折り返さず全回表示 */
+.scoreboard table.extra th,
+.scoreboard table.extra td { font-size: 12px; padding: 1px 1px; min-width: 16px; }
+.scoreboard table.extra th.team-name {
+  min-width: 112px; width: 112px; font-size: 14px; padding-left: 6px; padding-right: 6px;
+}
+/* 結果画面のスコアボードも延長時はコンパクトに */
+.result-scoreboard table.extra th,
+.result-scoreboard table.extra td { font-size: 12px; padding: 2px 3px; }
+
+/* ============================================================
+   === 試合画面 新レイアウト (上部バー / 左[VS+成績] + 右[スコア+ダイヤ]) ===
+   ============================================================ */
+.game-topbar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  border-bottom: 1px solid #6677cc;
+  padding-bottom: 5px; margin-bottom: 8px;
+}
+.game-topbar .game-title {
+  font-size: 18px; letter-spacing: 2px; margin: 0;
+  background: linear-gradient(90deg,#ffcc00,#ff66ff,#66ccff,#ffcc00);
+  background-size: 200% auto;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 4s linear infinite;
+  text-shadow: 2px 2px 0 #000; white-space: nowrap;
+}
+.game-topbar .game-controls { flex: 1; border: none; background: none; padding: 0; }
+
+.game-main {
+  /* 右(スコア+ダイヤ)を約2cm(≈76px)拡大。左(カード+成績)はその分縮小。
+     ダイヤは width:100% なので横幅拡大に伴い縦も自動で大きくなる。 */
+  display: grid; grid-template-columns: 1fr 476px; gap: 12px; align-items: start;
+}
+.game-left  { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.game-right { display: flex; flex-direction: column; gap: 8px; }
+
+/* VSカード 2枚 (左上) */
+.game-left .vs-area {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0; align-items: stretch;
+}
+/* AWAY/HOME 成績 (VSカードの下) */
+.stats-area {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start;
+}
+.stats-area .side-board { font-size: 12px; }
+
+/* 右カラム: スコアボードを縮小、その下にダイヤモンド */
+.game-right .scoreboard { margin: 0; }
+.game-right .scoreboard th { font-size: 11px; }
+.game-right .scoreboard td { font-size: 12px; padding: 1px 2px; }
+.game-right .scoreboard th, .game-right .scoreboard td { min-width: 15px; }
+.game-right .scoreboard th.team-name {
+  min-width: 58px; width: 58px; font-size: 12px; padding-left: 5px; padding-right: 5px;
+}
+.game-right .field-area { width: 100%; }
+
+/* 実況パネルは撤廃 (logLine 用の #log は非表示) */
+#log[hidden] { display: none !important; }
+
+/* VSカードを大きめに (写真・文字を拡大して閲覧カードに近づける) */
+.game-left .vs-card { padding: 10px; }
+.game-left .vs-card .card-grid { grid-template-columns: 150px 1fr; gap: 10px; min-height: 256px; }
+.game-left .vs-card .card-photo { width: 150px; height: 256px; }
+.game-left .vs-card .card-photo .name-overlay { font-size: 15px; }
+.game-left .vs-card .mini-stats .sname { font-size: 11px; }
+.game-left .vs-card .mini-stats .sval  { font-size: 17px; }
+.game-left .vs-card .mini-rec { font-size: 12px; }
+.game-left .vs-card .pitch-buttons-inline .pitch-btn { min-height: 48px; }
+.game-left .vs-card .pitch-buttons-inline .pitch-btn .pn { font-size: 13px; }
+
+/* カード内: 年間成績バー / 対球種ポイント / 守備DRS (閲覧カードに近づける) */
+.vs-card .card-rec {
+  display: flex; justify-content: space-between; gap: 2px;
+  background: rgba(0,0,12,0.42); border: 1px solid rgba(120,150,255,0.45);
+  border-radius: 5px; padding: 3px 5px; margin: 3px 0;
+}
+.vs-card .card-rec span { flex: 1; display: flex; flex-direction: column; align-items: center; line-height: 1; }
+.vs-card .card-rec i { font-style: normal; font-size: 8.5px; color: #9fb0e0; }
+.vs-card .card-rec b { font-size: 13px; color: #fff; font-weight: 900; }
+.vs-card .card-rec b.hl { color: #ffcc66; }
+.vs-card .card-rec b.pp { color: #ff88cc; }
+
+.vs-card .card-pp { display: flex; flex-direction: column; gap: 3px; margin: 3px 0; }
+/* 上下段とも4列グリッド = 各枠が同じ幅 (下段CB/CH/SFも上段と同サイズ、4枠目は空き) */
+.vs-card .card-pp .ppr { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
+.vs-card .card-pp .ppr span {
+  display: flex; align-items: baseline; justify-content: center; gap: 4px;
+  background: rgba(0,0,0,0.32); border-radius: 4px; padding: 2px 0;
+  font-size: 13px; font-weight: 900; color: #9fb0e0; line-height: 1.1;  /* 1段表示「FB -7」を大きく */
+}
+.vs-card .card-pp .ppr b { font-size: 15px; font-weight: 900; color: #cccccc; }
+.vs-card .card-pp .pos b { color: #66dd88; }
+.vs-card .card-pp .neg b { color: #ff8888; }
+
+.vs-card .card-drs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; color: #9fb0e0; margin: 3px 0 0; }
+.vs-card .card-drs .dlbl { color: #88aaff; font-weight: 900; }
+.vs-card .card-drs span b { font-weight: 900; font-size: 15px; margin-left: 2px; }
+.vs-card .card-drs .pos b { color: #66dd88; }
+.vs-card .card-drs .neg b { color: #ff8888; }
+.vs-card .card-drs .neu b { color: #cccccc; }
+
+/* カードの光彩 (フルカード風のグロー＋シャイン) */
+.game-left .vs-card { box-shadow: 0 0 0 1px rgba(255,255,255,0.45), 0 0 16px rgba(120,180,255,0.5), 0 6px 22px rgba(0,0,0,0.6); }
+.game-left .vs-card.vs-pitcher { border-color: #66ccff; box-shadow: 0 0 0 1px rgba(255,255,255,0.45), 0 0 18px rgba(80,200,255,0.6), 0 6px 22px rgba(0,0,0,0.6); }
+.game-left .vs-card.vs-batter  { border-color: #ffd27a; box-shadow: 0 0 0 1px rgba(255,255,255,0.45), 0 0 18px rgba(255,200,90,0.55), 0 6px 22px rgba(0,0,0,0.6); }
+.game-left .vs-card::after {
+  content: ''; position: absolute; top: -10%; left: -70%; width: 45%; height: 120%;
+  background: linear-gradient(105deg, transparent, rgba(255,255,255,0.38), transparent);
+  transform: skewX(-18deg); pointer-events: none; z-index: 4;
+  animation: cardShine 6s ease-in-out infinite;
+}
+@keyframes cardShine { 0%, 20% { left: -70%; } 55%, 100% { left: 135%; } }
+
+/* 球種選択テーブル (HTMLカード風: 球種/球速/球威/割合。各行クリックで投球) */
+.vs-card .pitch-table-inline { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.vs-card .pti-head {
+  display: grid; grid-template-columns: 1fr 42px 42px 46px; gap: 3px;
+  padding: 0 6px; font-size: 9.5px; color: #9fb0e0; font-weight: 900;
+}
+.vs-card .pti-head span { text-align: right; }
+.vs-card .pti-head span.pn { text-align: left; }
+.vs-card .pitch-btn.pti-row {
+  display: grid; grid-template-columns: 1fr 42px 42px 46px; gap: 3px; align-items: center;
+  background: linear-gradient(135deg, #1a4a8a, #0a2a5a);
+  border: 1.5px solid #6699ff; border-radius: 5px;
+  padding: 3px 6px; cursor: pointer; font-family: inherit;
+  min-height: 0; width: 100%; text-align: left; line-height: 1.05;
+}
+.vs-card .pitch-btn.pti-row:hover { background: linear-gradient(135deg, #2a5faa, #133a7a); }
+.vs-card .pitch-btn.pti-row .pn  { color: #fff;    font-size: 14px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vs-card .pitch-btn.pti-row .psp { color: #8fd0ff; font-size: 16px; font-weight: 900; text-align: right; }
+.vs-card .pitch-btn.pti-row .ppw { color: #ffe08a; font-size: 16px; font-weight: 900; text-align: right; }
+.vs-card .pitch-btn.pti-row .prt { color: #88ee99; font-size: 14px; font-weight: 900; text-align: right; }
+
+/* ステータス数値を大きく太く (HTMLカード風) */
+.game-left .vs-card .pitcher-stats-list .pst .val { font-size: 19px; }
+.game-left .vs-card .pitcher-stats-list .pst .lbl { font-size: 10px; }
+.game-left .vs-card .mini-stats .sval { font-size: 18px; }
+.game-left .vs-card .card-rec b { font-size: 14px; }
+/* 情報パネルは暗い背景にして、レアリティの明るい地色でも数値が読みやすいように */
+.game-left .vs-card .card-info { background: rgba(8,12,30,0.55); border-radius: 8px; padding: 6px 7px; }
+
+/* レアリティ別 背景色 (総合力で判定: RR=銀 / SR=金 / SSR=UR特殊 / R=ブロンズ / N=赤 / N相当=黒) */
+.game-left .vs-card.rar-r {
+  background: linear-gradient(160deg,#8a6a4a 0%,#c8a878 14%,#9a7a56 30%,#d8b888 48%,#8a6a4a 64%,#b89868 80%,#9a7a56 100%);
+  border-color: #d8b888;
+}
+.game-left .vs-card.rar-n {
+  background: linear-gradient(160deg,#7a1a1a 0%,#d05858 14%,#9a2a2a 30%,#e87070 48%,#7a1a1a 64%,#c04040 80%,#9a2a2a 100%);
+  border-color: #f0a0a0;
+}
+.game-left .vs-card.rar-n0 {
+  background: linear-gradient(160deg,#0e0e0e 0%,#2a2a2a 50%,#080808 100%);
+  border-color: #fff; color: #fff;
+}
+.game-left .vs-card.rar-rr {
+  background: linear-gradient(160deg,#9898b8 0%,#d8d8f0 12%,#a8a8c8 28%,#e8e8ff 46%,#9898b8 62%,#d0d0ec 78%,#b0b0cc 100%);
+  border-color: #d6deff;
+}
+.game-left .vs-card.rar-sr {
+  background: linear-gradient(160deg,#9a7a1a 0%,#f0d878 12%,#c8a838 28%,#fff0a8 46%,#9a7a1a 62%,#e8d068 78%,#c0a040 100%);
+  border-color: #ffe080;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.5), 0 0 22px rgba(255,200,70,0.75), 0 6px 22px rgba(0,0,0,0.6);
+}
+.game-left .vs-card.rar-ssr {
+  /* 本物のSSRカード風: 水色(シアン/アクア)で統一した地色 + 同系の薄いシャイン + 明るいシアン発光。光沢は下の::afterで強調 */
+  background:
+    linear-gradient(120deg, rgba(170,235,255,0.16) 0%, rgba(120,205,255,0.08) 45%, rgba(160,238,255,0.16) 74%, rgba(120,205,255,0.08) 100%),
+    linear-gradient(160deg, #11405a 0%, #1c5c7c 48%, #0e3046 100%);
+  border-color: #d2f4ff;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.85), 0 0 26px rgba(130,225,255,0.9), 0 0 10px rgba(185,238,255,0.55), 0 6px 24px rgba(0,0,0,0.78);
+}
+/* SSRは光沢(シャインの帯)を明るく・広めにして際立たせる */
+.game-left .vs-card.rar-ssr::after {
+  background: linear-gradient(105deg, transparent, rgba(255,255,255,0.6) 50%, transparent);
+  width: 55%;
+}
+.game-left .vs-card.rar-ur {
+  /* UR: 虹色ホログラムを濃く前面に出し、ゆっくり流れるアニメーション + 白枠・多色発光 */
+  background:
+    linear-gradient(115deg, rgba(255,60,150,0.55) 0%, rgba(120,80,255,0.55) 17%, rgba(60,170,255,0.55) 34%, rgba(60,255,200,0.55) 51%, rgba(230,255,70,0.55) 68%, rgba(255,150,60,0.55) 85%, rgba(255,60,150,0.55) 100%),
+    linear-gradient(160deg, #0a0e1c 0%, #141228 50%, #0a0e1c 100%);
+  background-size: 280% 100%, 100% 100%;
+  border-color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.95), 0 0 32px rgba(255,120,220,0.85), 0 0 22px rgba(120,220,255,0.85), 0 6px 26px rgba(0,0,0,0.8);
+  animation: urHolo 7s linear infinite;
+}
+/* URは情報パネルをやや透かして背後の虹色を見せる */
+.game-left .vs-card.rar-ur .card-info { background: rgba(8,10,26,0.46); }
+@keyframes urHolo { from { background-position: 0% 0%, 0 0; } to { background-position: 280% 0%, 0 0; } }
+
+/* カード高さを固定 (最大6球種に合わせる)。選手交代でサイズが変わらない / 高速試合でも安定。 */
+.game-left .vs-card { height: 326px; box-sizing: border-box; }
+.game-left .vs-card .card-grid { height: 100%; min-height: 0; }
+
+/* 写真の下に「年/守備位置/投打」バナーを配置 */
+.game-left .vs-card .card-left { width: 150px; align-self: stretch; display: flex; flex-direction: column; gap: 5px; }
+.game-left .vs-card .card-photo { width: 100%; height: 224px; flex: 0 0 auto; }
+.game-left .vs-card .card-left .mini-banner {
+  margin: 0; padding: 3px 2px; justify-content: center; text-align: center;
+  font-size: 10px; line-height: 1.2; white-space: nowrap; overflow: hidden;
+}
+.game-left .vs-card .card-left .mini-banner .season { font-size: 10px; white-space: nowrap; letter-spacing: 0; }
+/* 対左/対盗塁/回復量 (3連): 改行なしでもう少し大きく、上詰めにせず中央に */
+.game-left .vs-card .pitcher-stats-list .psr-r2 { align-items: center; }
+.game-left .vs-card .pitcher-stats-list .psub3 { gap: 4px; }
+.game-left .vs-card .pitcher-stats-list .pst.pst-sm { justify-content: center; }
+.game-left .vs-card .pitcher-stats-list .pst.pst-sm .lbl { font-size: 10px; white-space: nowrap; }
+.game-left .vs-card .pitcher-stats-list .pst.pst-sm .val { font-size: 16px; }
+/* 打者stats 5列(選球眼/三振耐性/盗塁能/対左/HR能)はやや小さめに */
+/* 盗塁能/対左/HR能 の3連は小さめ (投手の対左/対盗塁/回復量と同様)。選球眼/三振耐性は上段と同サイズのまま */
+.game-left .vs-card .mini-stats .mssub3 .sname { font-size: 9px; white-space: nowrap; }
+.game-left .vs-card .mini-stats .mssub3 .sval  { font-size: 16px; }
+/* 球種行を約1mm圧縮して下スペースを節約 */
+.vs-card .pitch-table-inline { gap: 1px; }
+.vs-card .pitch-btn.pti-row { padding: 1px 6px; }
+
+/* スタミナ残量ゲージを写真下(バナーの下)にコンパクト配置 */
+.game-left .vs-card .card-left .card-stamina {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px 5px; margin: 0;
+  background: rgba(0,0,0,0.35); border-radius: 4px; padding: 3px 5px;
+}
+.game-left .vs-card .card-left .card-stamina .cs-lbl { font-size: 10px; color: #a0b0e0; }
+.game-left .vs-card .card-left .card-stamina .cs-num { font-size: 11px; font-weight: 900; color: #fff; margin-left: auto; }
+.game-left .vs-card .card-left .card-stamina .cs-bar { flex: 1 0 100%; height: 8px; }
+
+/* === スタート画面 === */
+#start .start-menu {
+  display: flex; flex-direction: column;
+  gap: 14px; padding: 30px;
+  max-width: 480px; margin: 30px auto;
+  background: rgba(0,0,0,0.5);
+  border: 2px solid #6677cc; border-radius: 12px;
+}
+#start .start-title {
+  text-align: center; font-size: 24px; color: #ffcc66;
+  margin: 0 0 12px;
+}
+#start .mode-btn {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 20px;
+  background: linear-gradient(135deg, #2a4488, #1a3268);
+  color: #fff; border: 2px solid #4488ff;
+  border-radius: 8px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s;
+  text-align: left;
+  text-decoration: none;  /* <a> 版 (カード追加) の下線を消す */
+}
+#start .mode-btn:hover { background: linear-gradient(135deg, #3a5499, #2a4288); transform: translateY(-1px); }
+#start .mode-btn.disabled { opacity: 0.5; cursor: not-allowed; }
+#start .mode-btn.disabled:hover { transform: none; }
+#start .mode-icon { font-size: 28px; }
+#start .mode-name { font-size: 17px; font-weight: 900; }
+#start .mode-desc { font-size: 11px; color: #aabbff; margin-left: auto; }
+
+/* === チーム編成画面 === */
+#teambuild .tb-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 6px 10px; margin-bottom: 8px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid #6677cc; border-radius: 6px;
+}
+#teambuild .tb-topbar h2 { margin: 0; font-size: 18px; color: #ffcc66; }
+#teambuild .tb-controls { display: flex; align-items: center; gap: 10px; }
+#teambuild .tb-body {
+  display: grid;
+  /* 打順パネルをさらに広げ(226→252), ダイヤモンドを少し狭めて名前が1行に収まるように */
+  grid-template-columns: 252px auto 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
+  align-items: start;
+}
+#teambuild .tb-lineup-panel {
+  background: rgba(0,0,0,0.4); border: 1px solid #6677cc;
+  border-radius: 6px; padding: 6px 10px;
+}
+#teambuild .tb-lineup-panel h3 {
+  font-size: 14px; color: #c8d4ff; margin: 4px 0 6px;
+  border-left: 3px solid #ffcc66; padding-left: 6px;
+}
+#teambuild .tb-lineup-panel .tb-ph-title { margin-top: 12px; }
+/* 控え (PH、代走、守備固め) のかっこ内サブテキスト - 小さめ */
+#teambuild .tb-ph-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: #aabbff;
+  margin-left: 2px;
+}
+#teambuild .tb-lineup-panel ol { list-style: none; }
+#teambuild .tb-lineup-panel li {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 4px; border-bottom: 1px dashed #6677cc55;
+  font-size: 12px;
+}
+#teambuild .tbl-num {
+  background: #cc2222; color: #fff;
+  font-weight: 900; font-size: 12px;
+  min-width: 40px; text-align: center;
+  padding: 1px 5px; border-radius: 3px;
+  white-space: nowrap;
+}
+/* 打順番号 (1-9) のみ: 幅を半分、数字を大きく → 選手名表示が広がる */
+#teambuild .tb-lineup-panel li[data-order] .tbl-num {
+  min-width: 22px;
+  font-size: 17px;
+  padding: 1px 3px;
+}
+#teambuild .tbl-pos {
+  background: rgba(0,40,80,0.6); color: #aaccff;
+  font-weight: 900; font-size: 13px;  /* 11→13 (心持大きく) */
+  min-width: 26px; text-align: center;
+  padding: 1px 4px; border-radius: 3px;
+}
+#teambuild .tbl-name {
+  font-weight: 700; color: #fff; flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#teambuild .tbl-name.empty { color: #888; font-weight: 400; }
+/* 打順・控えリスト内の総合力バッジは小さめにして名前の幅を確保 */
+#teambuild .tb-lineup-panel .ovr-badge {
+  font-size: 10px; min-width: 16px; padding: 0 4px; flex: none;
+}
+#teambuild .tb-ph-select { font-size: 11px; padding: 1px 3px; min-width: 0; flex: 1; }
+
+/* ダイヤモンド (中サイズ) — 視認性アップ、左寄せ、トップ揃え */
+#teambuild .tb-diamond {
+  position: relative;
+  width: 500px; max-width: 100%;
+  display: flex; flex-direction: column;
+  background: rgba(0,0,0,0.3); border: 1px solid #6677cc;
+  border-radius: 8px; overflow: visible;
+  margin: 0;  /* 左寄せ・上端揃え (打順/投手陣ヘッダーと同じ高さに) */
+}
+/* 守備フィールド本体 (SVG + 9枠)。凡例はこの下(枠外)に出すため別ラップにする。 */
+#teambuild .tb-field {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 200/180;
+}
+#teambuild .tb-center { display: flex; flex-direction: column; }
+
+/* 守備フィールドの下(枠外)に置く 打順/DRS 凡例 + 守備位置別人数 (DH枠等と重ならない) */
+#teambuild .tb-diamond-legend {
+  margin: 6px; align-self: flex-start;
+  display: flex; flex-direction: column; gap: 4px;
+  align-items: flex-start;
+  background: rgba(0,0,0,0.75);
+  padding: 6px 12px;
+  border: 1px solid #6677cc;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #c8d4ff;
+}
+#teambuild .tb-diamond-legend .tb-legend-row {
+  display: flex; gap: 12px; align-items: center;
+}
+#teambuild .tb-diamond-legend .tb-legend-row > span {
+  display: inline-flex; align-items: center; gap: 5px;
+}
+#teambuild .tb-diamond-legend .tb-poscount {
+  font-size: 12px; color: #ffe08a; font-weight: 700;
+  letter-spacing: 0.5px; white-space: nowrap;
+}
+#teambuild .tb-diamond-legend .tb-legend-box {
+  display: inline-block; min-width: 24px; text-align: center;
+  font-weight: 900; padding: 2px 6px; border-radius: 3px; font-size: 14px;
+}
+#teambuild .tb-diamond-legend .tb-legend-box.red { background: #cc2222; color: #fff; }
+#teambuild .tb-diamond-legend .tb-legend-box.yellow { background: #ffcc00; color: #000; }
+/* ダイヤモンド左上: チーム総合力 (2cm大)。背景の箱は付けず数字だけを浮かせ、
+   背後の左翼(LF)枠が透けて見え・クリックも通るようにする (pointer-events:none)。 */
+#teambuild .tb-team-ovr {
+  position: absolute;
+  left: 4px; top: 2px;
+  z-index: 20;
+  display: flex; flex-direction: column; align-items: flex-start;
+  pointer-events: none;  /* 背後の守備枠クリックを妨げない */
+}
+#teambuild .tb-team-ovr .tto-label {
+  font-size: 11px; color: #ffe08a; font-weight: 700; letter-spacing: 1px;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px #000, 0 0 4px #000;
+}
+#teambuild .tb-team-ovr .tto-value {
+  font-size: 1.2cm; line-height: 1; font-weight: 900;  /* 2cm の 3/5 */
+  color: #ffd24a;
+  /* 緑の芝・背後の枠の上でも読めるよう濃い縁取り */
+  text-shadow:
+    -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000,
+     0 0 6px rgba(0,0,0,0.9);
+}
+/* ダイヤモンド右上: 打順オーダー(1/2/3)切り替え + 年度選択を縦に配置。チーム総合力(左上)の対角。 */
+#teambuild .tb-topright {
+  position: absolute;
+  right: 4px; top: 2px;
+  z-index: 21;
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-end;
+}
+#teambuild .tb-order-switch,
+#teambuild .tb-year-row {
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(0,0,0,0.6);
+  padding: 3px 6px;
+  border: 1px solid #6677cc;
+  border-radius: 6px;
+}
+#teambuild .tb-order-switch .tos-label,
+#teambuild .tb-year-row .tos-label {
+  font-size: 11px; color: #ffe08a; font-weight: 700; letter-spacing: 1px;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px #000;
+}
+#teambuild .tb-year-row .tb-year-select {
+  background: #1a3a22; color: #ffe08a;
+  border: 1px solid #66cc88; border-radius: 4px;
+  padding: 2px 4px; font-family: inherit; font-size: 12px; font-weight: 900;
+  cursor: pointer;
+}
+#teambuild .tb-order-switch .tb-order-btn {
+  min-width: 26px; height: 26px;
+  border: 1px solid #6677cc;
+  background: rgba(20,28,60,0.9);
+  color: #c8d4ff;
+  font-weight: 900; font-size: 14px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+#teambuild .tb-order-switch .tb-order-btn:hover { background: rgba(60,80,150,0.9); }
+#teambuild .tb-order-switch .tb-order-btn.active {
+  background: #ffd24a; color: #1a1a2a; border-color: #ffd24a;
+  box-shadow: 0 0 6px rgba(255,210,74,0.7);
+}
+#teambuild .tb-field-svg {
+  position: absolute; left: 0; top: 0;
+  width: 100%; height: 100%;
+}
+#teambuild .tb-slot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: rgba(0,0,0,0.85);
+  border: 2px solid #6677cc;
+  border-radius: 5px;
+  padding: 4px 6px;
+  display: flex; flex-direction: column;
+  gap: 3px;
+  min-width: 145px;  /* 1.1倍 (130 → 145) */
+  z-index: 2;
+}
+#teambuild .tb-slot.ext {
+  background: rgba(40,20,60,0.9);
+  border-color: #aa66cc;
+}
+#teambuild .tb-slot-head {
+  display: flex; align-items: center; gap: 3px;
+}
+#teambuild .tb-order-sel {
+  background: #cc2222; color: #fff;
+  font-weight: 900; font-size: 17px;
+  min-width: 32px; text-align: center;
+  padding: 1px 2px; border-radius: 3px;
+  border: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+#teambuild .tb-order-sel.empty { background: #555; color: #ddd; }
+#teambuild .tb-order-sel option { background: #222; color: #fff; font-weight: 900; }
+#teambuild .tb-drs {
+  background: #ffcc00; color: #000;
+  font-weight: 900; font-size: 17px;
+  min-width: 30px; text-align: center;
+  padding: 1px 4px; border-radius: 3px;
+}
+#teambuild .tb-drs.empty { background: #555; color: #ddd; }
+
+/* 総合力バッジ (ワンポイント表示: チーム編成・セットアップ・カード追加で共通) */
+.ovr-badge {
+  display: inline-block;
+  min-width: 22px; padding: 1px 5px;
+  border-radius: 9px;
+  font-size: 12px; font-weight: 900; line-height: 1.4;
+  text-align: center; vertical-align: middle;
+  background: #cfd8e6; color: #1a2230;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
+/* バッジ色はカードのレアリティ色に合わせる (R=ブロンズ / RR=銀 / SR=金 / SSR=水色 / UR=虹) */
+.ovr-badge.ovr-rar-r   { background: linear-gradient(135deg,#d8b888,#9a7a56); color: #3a2a16; }
+.ovr-badge.ovr-rar-rr  { background: linear-gradient(135deg,#eaeaff,#a8a8c8); color: #2a2a3a; }
+.ovr-badge.ovr-rar-sr  { background: linear-gradient(135deg,#ffe08a,#c8a838); color: #3a2400; box-shadow: 0 0 6px rgba(255,200,70,0.55); }
+.ovr-badge.ovr-rar-ssr { background: linear-gradient(135deg,#aaebff,#1c5c7c); color: #fff; box-shadow: 0 0 7px rgba(130,225,255,0.7); }
+.ovr-badge.ovr-rar-ur  {
+  background: linear-gradient(115deg,#ff3c96,#7850ff,#3caaff,#3cffc8,#e6ff46,#ff963c,#ff3c96);
+  background-size: 280% 100%; color: #fff; text-shadow: 0 0 3px rgba(0,0,0,0.6);
+  box-shadow: 0 0 8px rgba(255,120,220,0.7); animation: urHoloBadge 7s linear infinite;
+}
+.ovr-badge.ovr-rar-n   { background: linear-gradient(135deg,#e05a5a,#a01e1e); color: #fff; }
+.ovr-badge.ovr-rar-n0  { background: #161616; color: #fff; border: 1px solid #fff; }
+@keyframes urHoloBadge { from { background-position: 0% 0; } to { background-position: 280% 0; } }
+/* ダイヤモンド内は枠が小さいので少し小さめに */
+#teambuild .tb-slot-head .ovr-badge { font-size: 13px; min-width: 24px; }
+#teambuild .tb-pos-label {
+  font-size: 14px; color: #aaccff; margin-left: auto;
+  letter-spacing: 1.5px; font-weight: 900;
+  text-shadow: 1px 1px 0 #000;
+}
+#teambuild .tb-name {
+  font-size: 16px; font-weight: 900; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer;
+}
+#teambuild .tb-name:hover { color: #ffcc66; }
+#teambuild .tb-name-row {
+  display: flex; align-items: center; gap: 4px;
+}
+#teambuild .tb-change-btn,
+#teambuild .tb-add-btn {
+  background: #2a4488; color: #fff;
+  border: 1px solid #4488ff;
+  border-radius: 3px;
+  padding: 1px 6px; font-size: 11px; font-weight: 900;
+  cursor: pointer; font-family: inherit;
+}
+#teambuild .tb-add-btn { width: 100%; padding: 3px 6px; font-size: 12px; background: #444; }
+#teambuild .tb-add-btn:hover, #teambuild .tb-change-btn:hover { background: #3a5499; }
+#teambuild .tb-select-hidden {
+  position: absolute; z-index: 9999;
+  left: 0; top: 100%;
+  width: 100%; min-width: 200px;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.7);
+}
+/* ドロップダウンが開いている時、そのスロットを最前面に */
+#teambuild .tb-slot.tb-slot-open { z-index: 9000 !important; }
+#teambuild .tbp-slot.tbp-slot-open { z-index: 9000; position: relative; }
+#teambuild .tbp-slot { position: relative; }
+
+/* レジェンド (打順/DRS の説明) */
+#teambuild .tb-legend {
+  display: flex; gap: 14px; justify-content: center;
+  margin: 4px 0 8px;
+  font-size: 11px; color: #c8d4ff;
+}
+#teambuild .tb-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+#teambuild .tb-legend-item .tb-legend-box {
+  display: inline-block; min-width: 22px; text-align: center;
+  font-weight: 900; padding: 1px 4px; border-radius: 3px;
+  font-size: 12px;
+}
+#teambuild .tb-legend-item .tb-legend-box.red { background: #cc2222; color: #fff; }
+#teambuild .tb-legend-item .tb-legend-box.yellow { background: #ffcc00; color: #000; }
+
+/* 打順 D&D */
+#teambuild .tb-lineup-panel li[draggable="true"] { cursor: move; }
+#teambuild .tb-lineup-panel li.dragging { opacity: 0.4; }
+#teambuild .tb-lineup-panel li.drag-over { background: rgba(255,204,102,0.2); border-radius: 4px; }
+#teambuild .tb-lineup-panel li.empty-slot { opacity: 0.6; }
+#teambuild .tbl-handle { color: #888; cursor: move; font-size: 14px; }
+#teambuild .tbl-add-btn, #teambuild .tbl-change-btn {
+  background: #2a4488; color: #fff; border: 1px solid #4488ff;
+  border-radius: 3px; padding: 1px 6px; font-size: 11px; font-weight: 900;
+  cursor: pointer; font-family: inherit;
+}
+#teambuild .tbl-add-btn { width: auto; }
+#teambuild .tb-ph-select { position: absolute; min-width: 200px; }
+#teambuild .tb-lineup-panel li { position: relative; }
+
+/* 投手陣 (大きく) — D&D 対応 */
+#teambuild .tb-pitcher-area {
+  background: rgba(0,0,0,0.4); border: 1px solid #6677cc;
+  border-radius: 6px; padding: 8px 12px;
+}
+#teambuild .tb-pitcher-area h3 {
+  font-size: 14px; color: #c8d4ff; margin: 0 0 8px;
+  border-left: 3px solid #ffcc66; padding-left: 6px;
+}
+#teambuild .tb-pitcher-row {
+  /* 2列グリッド (左上=先発, 右上=中継ぎ, …) */
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+}
+#teambuild .tb-pitcher-area {
+  /* 投手陣枠を2文字分狭く (収まる範囲で2列) */
+  min-width: 240px;
+}
+#teambuild .tbp-group {
+  background: rgba(0,30,60,0.5);
+  border: 1px solid #4488ff66;
+  border-radius: 6px;
+  padding: 6px 8px;
+  min-width: 110px;
+  flex: 0 0 auto;
+}
+#teambuild .tbp-group-title {
+  font-size: 13px; color: #ffcc66; font-weight: 900;
+  letter-spacing: 1.5px; margin-bottom: 6px;
+  border-bottom: 1px solid #6677cc55;
+  padding-bottom: 3px;
+}
+#teambuild .tbp-count {
+  font-size: 10px; color: #aaa; margin-left: 4px;
+}
+#teambuild .tbp-slot {
+  position: relative;
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 4px; margin-bottom: 3px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid #6677cc55;
+  border-radius: 4px;
+  min-height: 28px;
+}
+#teambuild .tbp-slot[draggable="true"] { cursor: move; }
+#teambuild .tbp-slot.dragging { opacity: 0.4; }
+#teambuild .tbp-slot.drag-over { background: rgba(255,204,102,0.25); border-color: #ffcc66; }
+#teambuild .tbp-handle { color: #888; font-size: 14px; cursor: move; }
+#teambuild .tbp-name {
+  font-size: 12px; font-weight: 900; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 1 1 0;       /* 残り幅を全て吸収 */
+  min-width: 0;       /* flex で省略可 */
+  cursor: pointer;
+}
+#teambuild .tbp-change-btn { margin-left: auto; flex-shrink: 0; }
+#teambuild .tbp-add-btn { flex-shrink: 0; }
+#teambuild .tbp-name:hover { color: #ffcc66; }
+#teambuild .tbp-add-btn, #teambuild .tbp-change-btn {
+  background: #2a4488; color: #fff;
+  border: 1px solid #4488ff;
+  border-radius: 3px;
+  padding: 2px 7px; font-size: 12px; font-weight: 900;
+  cursor: pointer; font-family: inherit;
+}
+#teambuild .tbp-add-btn { width: 100%; background: #444; }
+#teambuild .tbp-add-btn:hover, #teambuild .tbp-change-btn:hover { background: #3a5499; }
+#teambuild .tbp-select { position: absolute; z-index: 100; left: 0; top: 100%; min-width: 200px; font-size: 13px; }
+
+/* === 上部ストリップ (操作バー + スコアボード + 実況 | 野球場ビュー) === */
+.top-strip {
+  display: grid;
+  grid-template-columns: 1fr 396px;   /* 右(ダイヤ)列を狭めてダイヤを縦に縮小(約-57px≒1.5cm)。空いた分は左の実況/スコアが広がる */
+  grid-template-rows: auto auto auto minmax(0, 1fr);   /* タイトル / 操作 / スコア / 実況。実況は残り高さを埋める */
+  row-gap: 2px; column-gap: 8px;
+  margin-bottom: 4px;
+  align-items: stretch;
+  /* 右ダイヤ列は固定396px幅=ダイヤ高さ約417pxで一定。上部全体をこの高さに固定し、
+     実況(左下)はダイヤの下端に揃うまで伸び、それ以上はスクロール(内容で間延びしない)。 */
+  height: 417px;
+}
+/* 左カラム最上段: タイトル + 回/アウト。アンダーバーはこの左カラム幅で切れる */
+.top-strip .ts-titlebar {
+  grid-column: 1; grid-row: 1;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  border-bottom: 1px solid #6677cc;
+  padding-bottom: 3px; margin-bottom: 2px;
+}
+.top-strip .ts-titlebar .game-title {
+  font-size: 18px; letter-spacing: 2px; margin: 0;
+  background: linear-gradient(90deg,#ffcc00,#ff66ff,#66ccff,#ffcc00);
+  background-size: 200% auto;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 4s linear infinite;
+  text-shadow: 2px 2px 0 #000;
+  white-space: nowrap;
+}
+.top-strip .ts-game-state {
+  display: inline-flex; align-items: baseline; gap: 12px;
+  background: rgba(0,0,0,0.55);
+  border: 1px solid #6677cc; border-radius: 6px;
+  padding: 1px 12px; white-space: nowrap;
+}
+.top-strip .ts-game-state #state-inning {
+  font-size: 22px; font-weight: 900; color: #ffcc66;
+  text-shadow: 2px 2px 0 #000; letter-spacing: 1px; line-height: 1;
+}
+.top-strip .ts-game-state .fs-outs {
+  font-size: 12px; color: #c8d4ff; display: inline-flex; align-items: baseline; gap: 5px;
+}
+.top-strip .ts-game-state #state-outs {
+  font-size: 22px; font-weight: 900; color: #ff7a7a; text-shadow: 2px 2px 0 #000; line-height: 1;
+}
+.top-strip .game-controls {
+  grid-column: 1; grid-row: 2;
+  margin-bottom: 0;
+}
+.top-strip .scoreboard {
+  grid-column: 1; grid-row: 3;
+  margin: 0;
+}
+.top-strip .game-state {
+  grid-column: 1; grid-row: 4;
+  margin: 0;       /* スコアボードとの間隔を 0 に */
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.top-strip .scoreboard {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom: none;
+}
+.top-strip .field-area {
+  grid-column: 2; grid-row: 1 / span 4;   /* タイトル行から最下段まで右カラムを縦に占有 (最上部から表示) */
+  align-self: start;
+}
+/* 試合画面ではグローバルヘッダーを隠し、タイトルは top-strip 内(左上)に表示する */
+body.in-game .app-header { display: none; }
+
+/* ヘッダー(MLB CARD BASEBALL の位置) に試合中だけ表示する 回 / アウト */
+.header-game-state {
+  display: none;
+  align-items: center; gap: 18px;
+  background: rgba(0,0,0,0.55);
+  border: 1px solid #6677cc;
+  border-radius: 6px;
+  padding: 3px 14px;
+  white-space: nowrap;
+}
+body.in-game .header-game-state { display: inline-flex; }
+.header-game-state #state-inning {
+  font-size: 24px; font-weight: 900;
+  color: #ffcc66; text-shadow: 2px 2px 0 #000;
+  letter-spacing: 1px; line-height: 1;
+}
+.header-game-state .fs-outs {
+  font-size: 13px; color: #c8d4ff;
+  display: inline-flex; align-items: baseline; gap: 6px;
+}
+.header-game-state .fs-outs #state-outs {
+  font-size: 24px; font-weight: 900;
+  color: #ff7a7a; text-shadow: 2px 2px 0 #000;
+  line-height: 1;
+}
+
+/* 野球場ビュー (右側): 左右の余白を縮めてコンパクトに */
+.field-area {
+  position: relative;
+  background: rgba(0,0,0,0.45);
+  border: 1px solid #6677cc;
+  border-radius: 6px;
+  padding: 3px 2px;
+  overflow: visible;
+}
+/* グラウンド本体 (芝・軌道・走者): 上面に打球結果テキスト(2行)用の余白を空けて少し下げる */
+.field-area .field-inner {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 200 / 180;
+  margin-top: 58px;
+}
+.field-area .field-svg {
+  display: block;
+  width: 100%; height: 100%;
+}
+/* 走者バッジ: 円(数字)の真下に名前を配置 (縦並び) */
+.field-area .runner-badge {
+  position: absolute;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  z-index: 5;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+.field-area .runner-badge.visible { display: flex; }
+.field-area .runner-badge .rn-circle {
+  flex: 0 0 auto;
+  width: 34px; height: 34px;
+  background: radial-gradient(circle at 35% 30%, #5a82e0, #1f3f9c 70%);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.7);
+}
+.field-area .runner-badge .rn-speed {
+  color: #fff; font-weight: 900; font-size: 15px;
+  text-shadow: 1px 1px 0 #000;
+  line-height: 1;
+}
+.field-area .runner-badge .rn-name {
+  background: rgba(255,255,255,0.95);
+  color: #111;
+  font-weight: 800; font-size: 11px;
+  padding: 1px 5px; border-radius: 3px;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  margin-top: 3px;
+}
+/* 各塁の中心位置 (viewBox 200x180 → %換算; transform で円中心を base に合わせる) */
+.field-area .runner-1st { top: 56%; left: 70%; }    /* 一塁 (右) */
+.field-area .runner-2nd { top: 33%; left: 50%; }    /* 二塁 (上) */
+.field-area .runner-3rd { top: 56%; left: 30%; }    /* 三塁 (左) */
+
+/* 打球軌道オーバーレイ (フィールドSVGと同じ viewBox/サイズで重ねる)。走者バッジの下に描画。 */
+.field-area .bb-overlay {
+  position: absolute; left: 0; top: 0;
+  width: 100%; height: 100%;
+  z-index: 3;
+  pointer-events: none;
+}
+.field-area .bb-overlay svg { width: 100%; height: 100%; display: block; }
+.field-area .bb-overlay path {
+  filter: drop-shadow(0 0 2px rgba(0,0,0,0.9));
+}
+/* 打球結果ラベル (1球速報風の上部バナー。2行: 投手の球種 / 打者の結果) */
+.field-area .bb-label {
+  position: absolute; top: 6px; left: 0; right: 0; margin: 0 auto;   /* left:50%だと fit-content幅が半分に制限されるため left/right:0 + auto中央寄せ */
+  z-index: 6;
+  background: rgba(0,0,0,0.7);
+  border: 1px solid rgba(255,255,255,0.35);
+  border-radius: 6px;
+  padding: 4px 12px;
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  /* 枠内に収める: 基本は折り返さず、長い時はキリの良い所(スペース/語境界)で改行 */
+  white-space: normal; word-break: keep-all; overflow-wrap: anywhere; text-align: center;
+  text-shadow: 2px 2px 0 #000;
+  pointer-events: none;
+  width: fit-content;   /* 本来の幅(最長行)を使い、収まらない時のみ改行 */
+  max-width: 96%;
+}
+.field-area .bb-label:empty { display: none; }
+.field-area .bb-pitch {
+  font-size: 14px; font-weight: 700; color: #cdd6f0; letter-spacing: 0.3px;
+}
+.field-area .bb-result {
+  font-size: 18px; font-weight: 900; letter-spacing: 0.5px; color: #e6e6e6;
+  line-height: 1.2;
+}
+.field-area .bb-label.hr  { border-color: #ff66cc; }
+.field-area .bb-label.hit { border-color: #8aff66; }
+.field-area .bb-label.err { border-color: #ffcc44; }
+.field-area .bb-label.hr  .bb-result { color: #ff8ad6; }
+.field-area .bb-label.hit .bb-result { color: #9dff7a; }
+.field-area .bb-label.err .bb-result { color: #ffd24a; font-size: 15px; }  /* エラー出塁は文言が長いので少し小さく */
+
+/* インフォメーション (イニング/交代/盗塁/試合終了 等) を外野付近にオレンジ太字で表示 */
+.field-area .bb-info {
+  position: absolute;
+  top: 9%; left: 50%; transform: translateX(-50%);
+  z-index: 7;            /* 一時的な通知なので走者バッジ(5)より前面に表示 */
+  width: 88%;
+  text-align: center;
+  color: #ff9a1f; font-weight: 900;
+  -webkit-text-stroke: 0.35px #ff9a1f;   /* 若干だけ太く */
+  font-size: 14px; line-height: 1.25; letter-spacing: 0.3px;
+  text-shadow: 1px 1px 0 #000, 0 0 5px rgba(0,0,0,0.95);
+  white-space: pre-line; word-break: keep-all; overflow-wrap: anywhere;  /* メッセージ中の改行(\n)を反映 */
+  pointer-events: none;
+}
+.field-area .bb-info[hidden] { display: none; }
+
+/* ダイヤモンド右下の 回 + アウトカウント(赤丸)。電光掲示板風 */
+.field-area .bb-state {
+  position: absolute;
+  right: 8px; bottom: 8px;
+  z-index: 6;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;  /* 回の下中央にアウト丸を並べる */
+  background: rgba(0,0,0,0.7);
+  border: 1px solid #6677cc;
+  border-radius: 6px;
+  padding: 5px 12px;
+  pointer-events: none;
+}
+.field-area .bb-state .bs-inning {
+  font-size: 20px; font-weight: 900; color: #ffcc66;
+  text-shadow: 2px 2px 0 #000; letter-spacing: 1px; white-space: nowrap; line-height: 1;
+}
+.field-area .bb-state .bs-outs { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.field-area .bb-state .out-dot {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1px solid #a33;
+  background: rgba(255,255,255,0.10);
+  box-shadow: inset 0 1px 1px rgba(0,0,0,0.5);
+}
+.field-area .bb-state .out-dot.on {   /* アウト点灯: 赤丸 */
+  background: radial-gradient(circle at 35% 30%, #ff7a7a, #d61b1b 72%);
+  border-color: #ff9a9a;
+  box-shadow: 0 0 5px rgba(255,40,40,0.85);
+}
+.field-area .bb-label.bb  .bb-result { color: #ffe8aa; }
+
+/* 試合終了後の振り返りバー (戻る/進む)。ダイヤ枠内・下部にオーバーレイ(高さを変えない) */
+.field-area .bb-history {
+  position: absolute;
+  left: 8px; bottom: 6px;          /* 左寄せ。右下の回/アウト表示(bb-state)と重ならないように */
+  z-index: 8;
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(0,0,0,0.78);
+  border: 1px solid #6677cc;
+  border-radius: 8px;
+  padding: 4px 7px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+}
+.field-area .bb-history[hidden] { display: none; }   /* [hidden] を確実に効かせる */
+.field-area .bb-hist-sel {
+  background: #2a3866; color: #ffe08a;
+  border: 1px solid #8899dd; border-radius: 4px;
+  padding: 2px 3px; font-size: 12px; font-weight: 700;
+  cursor: pointer;
+}
+.field-area .bb-hist-btn {
+  background: #3a4a82; color: #fff;
+  border: 1px solid #8899dd; border-radius: 4px;
+  padding: 3px 8px; font-size: 12px; font-weight: 700;
+  cursor: pointer; white-space: nowrap;
+}
+.field-area .bb-hist-btn:hover { background: #4a5fa0; }
+.field-area .bb-hist-btn:disabled { opacity: 0.4; cursor: default; }
+.field-area .bb-hist-count { color: #ffe08a; font-size: 12px; font-weight: 700; white-space: nowrap; }
+
+/* === 試合中の3カラムレイアウト === */
+.game-body {
+  display: grid;
+  grid-template-columns: 360px 1fr 360px;
+  gap: 8px;
+  align-items: start;
+}
+.game-center {
+  min-width: 0;
+}
+.side-board {
+  background: linear-gradient(180deg, rgba(0,40,20,0.7), rgba(0,20,10,0.7));
+  border: 2px solid #228822;
+  border-radius: 6px;
+  padding: 4px;
+  color: #fff;
+  font-size: 11px;
+}
+.board-title {
+  background: rgba(0,0,0,0.5);
+  color: #ffcc66;
+  font-size: 12px;
+  text-align: center;
+  padding: 4px 6px;
+  margin-bottom: 4px;
+  border-radius: 3px;
+  letter-spacing: 1px;
+}
+.board-title .bt-name { color: #66ddff; font-size: 11px; margin-left: 4px; }
+.board-lineup table,
+.board-pitchers table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.board-lineup th,
+.board-lineup td,
+.board-pitchers th,
+.board-pitchers td {
+  border: 1px solid rgba(255,255,255,0.15);
+  padding: 2px 4px;
+  text-align: center;
+  white-space: nowrap;
+}
+.board-lineup th,
+.board-pitchers th {
+  background: rgba(0,0,0,0.5);
+  color: #c8d4ff;
+  font-size: 10px;
+  font-weight: 900;
+}
+.board-lineup .ln-name,
+.board-pitchers .pt-name {
+  text-align: left;
+  padding-left: 4px;
+  color: #fff;
+  font-weight: 900;
+  overflow: hidden; text-overflow: ellipsis;
+  max-width: 110px;
+}
+.board-lineup .ln-pos { color: #ffcc66; font-weight: 900; }
+.board-lineup .ln-num {
+  background: #000; color: #ffcc66;
+  font-weight: 900; width: 18px;
+}
+/* 現在打席中の打者ハイライト */
+.board-lineup tr.is-batting {
+  background: rgba(66,153,255,0.45);
+  outline: 1px solid #66bbff;
+  font-weight: 900;
+}
+.board-lineup tr.is-batting .ln-num {
+  background: #4488ff; color: #fff;
+}
+/* 控え選手 */
+.board-lineup tr.bench .ln-num {
+  background: #aa2222; color: #fff; font-size: 9px;
+}
+.board-lineup tr.bench { opacity: 0.7; }
+
+/* 投手ボード: 現在登板中の投手ハイライト */
+.board-pitchers tr.is-pitching {
+  background: rgba(255,200,50,0.35);
+  outline: 1px solid #ffcc66;
+  font-weight: 900;
+}
+.board-pitchers .pt-slot {
+  width: 16px; background: #000; color: #ffcc66; font-weight: 900;
+  position: relative;  /* W/L/H/S バッジを左外側へ絶対配置するための基準 */
+  overflow: visible;
+}
+.board-pitchers tr.empty-slot { opacity: 0.3; }
+
+/* 交代選手の成績 (投手表示の下) */
+.sub-stats-block { margin-top: 6px; }
+.sub-stats-title {
+  font-size: 10px; color: #ff9bb0; font-weight: 900;
+  margin: 0 0 2px; padding: 2px 4px;
+  background: rgba(0,0,0,0.45); border-radius: 3px; letter-spacing: 1px;
+}
+.sub-stats-table {
+  width: 100%; border-collapse: collapse; font-size: 11px;
+}
+.sub-stats-table th,
+.sub-stats-table td {
+  border: 1px solid rgba(255,255,255,0.15);
+  padding: 2px 4px; text-align: center; white-space: nowrap;
+}
+.sub-stats-table th {
+  background: rgba(0,0,0,0.5); color: #f0c0cc; font-size: 10px; font-weight: 900;
+}
+.sub-stats-table .ln-name { text-align: left; padding-left: 4px; color: #fff; font-weight: 900; overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
+.sub-stats-table .ln-pos { color: #ff9bb0; font-weight: 900; }
+.sub-stats-table .ln-num { background: #000; color: #ff9bb0; font-weight: 900; width: 18px; }
+
+/* === 試合状況 === */
+.game-state {
+  background: rgba(0,0,0,0.4); border: 2px solid #6677cc;
+  border-radius: 8px; padding: 4px 10px;
+  margin-top: -2px; margin-bottom: 6px;
+}
+/* 左: 回・アウト・ランナー・スタミナをまとめる */
+.state-runner {
+  display: grid;
+  grid-template-columns: auto 100px;
+  align-items: center;
+  gap: 8px;
+}
+.state-info {
+  display: flex; flex-direction: column;
+  gap: 4px;
+}
+.state-info .state-row { display: flex; align-items: center; gap: 6px; }
+.state-info .state-row .lbl {
+  font-size: 10px; color: #c8d4ff;
+  background: rgba(0,0,0,0.5);
+  padding: 1px 6px; border-radius: 3px;
+  min-width: 40px; text-align: center;
+}
+.state-info .state-row span:not(.lbl) {
+  font-weight: 900; font-size: 16px; color: #ffcc66;
+}
+.state-stamina {
+  grid-column: 1 / span 2;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px;
+}
+.state-stamina .lbl { color: #c8d4ff; font-size: 11px; }
+.state-stamina .stamina-bar { flex: 1; width: auto; height: 12px; }
+.state-stamina #stamina-num { font-size: 11px; color: #ffcc66; min-width: 50px; }
+/* 旧 state-line 用フォールバック */
+.state-line {
+  display: flex; flex-direction: column;
+  justify-content: center; gap: 6px;
+  font-size: 14px;
+  min-width: 100px;
+}
+.state-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.state-row .lbl {
+  color: #c8d4ff; font-size: 10px;
+  background: rgba(0,0,0,0.5);
+  padding: 2px 6px; border-radius: 3px;
+  min-width: 40px; text-align: center;
+}
+.state-row span:not(.lbl) {
+  font-weight: 900; font-size: 16px;
+  color: #ffcc66; text-shadow: 1px 1px 0 #000;
+}
+
+/* スタミナバー */
+.stamina-row { min-width: 220px; }
+.stamina-wrap {
+  display: flex; align-items: center; gap: 6px;
+  flex: 1;
+}
+.stamina-bar {
+  width: 130px; height: 14px;
+  background: #333; border: 1px solid #666;
+  border-radius: 8px; overflow: hidden;
+}
+.stamina-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #44dd66, #88ff88);
+  transition: width 0.3s ease, background 0.3s ease;
+}
+.stamina-fill.low  { background: linear-gradient(90deg, #ffaa44, #ffcc66); }
+.stamina-fill.crit { background: linear-gradient(90deg, #ff4444, #ff8866); animation: pulseRed 1s infinite; }
+@keyframes pulseRed { 0%,100%{opacity:1} 50%{opacity:.6} }
+#stamina-num { font-size: 12px !important; color: #ffcc66; min-width: 60px; }
+
+/* 投手・リリーフ・控えスロットのリスト表示 */
+.pitcher-slots, .relief-slots, .bench-slots {
+  list-style: none;
+}
+.pitcher-slots li, .relief-slots li, .bench-slots li {
+  display: flex; align-items: center; gap: 6px; margin: 4px 0;
+}
+.pitcher-slots li::before,
+.relief-slots li::before,
+.bench-slots li::before {
+  content: attr(data-num);
+  display: inline-block; min-width: 56px;
+  font-weight: 900; color: #66ddff;
+  background: rgba(0,30,80,0.6); border-radius: 4px;
+  padding: 2px 6px; font-size: 11px; text-align: center;
+}
+.relief-slots li::before { color: #88ccff; background: rgba(0,40,70,0.6); }
+.bench-slots li::before  { color: #ffcc88; background: rgba(60,40,0,0.5); }
+.pitcher-slots select, .relief-slots select, .bench-slots select { flex: 1; min-width: 0; }
+/* セクション見出しラベル */
+.lineup-relief > label, .lineup-bench > label {
+  display: block; margin-top: 8px; font-size: 11px; color: #aabbcc;
+  border-left: 3px solid #6677cc; padding-left: 6px;
+}
+
+/* === 中央実況 === */
+.log-center {
+  background: rgba(0,0,0,0.5);
+  border: 1px solid #6677cc88;
+  border-radius: 6px;
+  padding: 4px 8px;
+  display: flex; flex-direction: column;
+  /* 右のダイヤモンドと同じ高さまで伸ばし、行数を増やす(7〜8行以上)。内部の #log がスクロール */
+  height: 100%;
+  min-height: 160px;
+  overflow: hidden;
+}
+.log-center h4 {
+  font-size: 13px; color: #c8d4ff;
+  border-left: 3px solid #ffcc66; padding-left: 6px;
+  margin-bottom: 4px; letter-spacing: 1px;
+}
+#log {
+  list-style: none;
+  font-size: 14px; line-height: 1.5;
+  overflow-y: auto; flex: 1;
+  min-height: 0;  /* flex 子要素のスクロール許可 */
+}
+#log li {
+  padding: 2px 6px;
+  border-bottom: 1px dashed #6677cc33;
+  transition: background 0.3s;
+}
+/* 最新の実況を強調(リスト最後の項目) */
+#log li:last-child {
+  background: rgba(255,204,0,0.15);
+  font-weight: 900;
+  font-size: 15px;
+}
+#log li.event-hr     { color: #ff88cc; font-weight: 900; text-shadow: 1px 1px 0 #000, 0 0 8px #ff44aa; }
+#log li.event-hit    { color: #88ff88; }
+#log li.event-out    { color: #ccccaa; }
+#log li.event-k      { color: #ff8866; }
+#log li.event-bb     { color: #ffe8aa; }
+#log li.event-inning { color: #ffcc00; font-weight: 900; border-bottom: 2px solid #ffcc66; background: rgba(255,204,0,0.1); margin: 2px 0; padding: 4px 6px; }
+
+.diamond {
+  position: relative; width: 100px; height: 100px;
+}
+.base {
+  position: absolute; width: 18px; height: 18px;
+  background: #444; border: 2px solid #888;
+  transform: rotate(45deg);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+.base.on {
+  background: #ffcc00;
+  box-shadow: 0 0 12px #ffcc00;
+}
+.base-1st { top: 40px; right: 10px; }
+.base-2nd { top: 10px; left: 40px; }
+.base-3rd { top: 40px; left: 10px; }
+.base-home { top: 70px; left: 40px; background: #fff; }
+
+/* === ゲーム中の操作バー (画面上部) === */
+.game-controls {
+  display: flex; gap: 3px; flex-wrap: wrap;
+  background: rgba(0,0,0,0.4); border: 1px solid #6677cc;
+  border-radius: 6px; padding: 3px 6px;
+  align-items: center;
+}
+.game-controls .btn { padding: 3px 9px; font-size: 12px; white-space: nowrap; }
+.game-controls #autoFinish.is-running {
+  background: linear-gradient(135deg, #cc4444, #882222);
+  border-color: #ff8866;
+  color: #fff;
+  animation: autoPulse 1s infinite alternate;
+}
+@keyframes autoPulse {
+  from { box-shadow: 0 0 4px rgba(255,80,80,0.4); }
+  to   { box-shadow: 0 0 12px rgba(255,80,80,0.9); }
+}
+/* 試合終了後「🏁 試合結果へ」: 赤塗りで目立たせる */
+.game-controls #autoFinish.is-result {
+  background: linear-gradient(135deg, #ff3b3b, #b51111);
+  border-color: #ffd0d0;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 4px 14px;
+  animation: autoPulse 0.9s infinite alternate;
+}
+
+/* === HR サマリー === */
+.hr-summary {
+  background: rgba(40,0,40,0.5);
+  border-top: 2px solid #ff66cc;
+  margin-top: 4px; padding: 4px 12px;
+  font-size: 13px; display: flex; gap: 8px; align-items: center;
+  flex-wrap: wrap;
+}
+.hr-summary .lbl { color: #ff88cc; font-weight: 900; }
+.hr-list {
+  color: #ffcc66; font-weight: 900;
+  flex: 1; min-width: 0;
+}
+.hr-list .hr-entry {
+  display: inline-block;
+  background: rgba(255,100,200,0.2);
+  border: 1px solid #ff66cc55;
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin-right: 4px; margin-bottom: 2px;
+  font-size: 12px;
+}
+
+/* === VSエリア(カード) === */
+.vs-area {
+  /* VS幅を狭めて両カードに余裕を持たせる */
+  display: grid; grid-template-columns: 1fr 32px 1fr; gap: 6px;
+  margin-bottom: 4px; align-items: stretch;
+}
+.vs-divider {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px; font-weight: 900; color: #ffcc00;
+  text-shadow: 2px 2px 0 #000, 0 0 14px #ff6600;
+}
+.vs-card {
+  background: linear-gradient(160deg,#9898b8 0%,#d8d8f0 12%,#a8a8c8 28%,#e8e8ff 46%,#9898b8 62%,#d0d0ec 78%,#b0b0cc 100%);
+  border: 3px solid #aabbff;
+  border-radius: 12px;
+  padding: 8px;
+  color: #fff;
+  position: relative; overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.3);
+}
+/* 投手・打者カード横長レイアウト: 写真 + 情報 */
+.vs-card .card-grid {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 8px;
+  min-height: 220px;
+}
+.vs-card .card-photo {
+  position: relative; border-radius: 8px; overflow: hidden;
+  background: linear-gradient(180deg,#4a3800,#806000 50%,#382800);
+  border: 2px solid #4488ff66;
+  /* 球種ボタンが増えてカード行が縦に伸びても写真は固定縦横比を維持する */
+  align-self: start;
+  width: 120px;
+  height: 210px;
+}
+.vs-card .card-photo img {
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center top;
+  display: block;
+}
+.vs-card .card-photo .photo-fade {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 50px;
+  background: linear-gradient(to top, rgba(0,0,8,0.9), transparent);
+  pointer-events: none;
+}
+.vs-card .card-photo .name-overlay {
+  position: absolute; bottom: 6px; left: 0; right: 0;
+  text-align: center; z-index: 2;
+  font-size: 13px; font-weight: 900;
+  color: #fff; letter-spacing: 1px;
+  text-shadow: 2px 2px 0 #000, 0 0 8px #aaccff;
+}
+.vs-card .card-photo .team-badge-mini {
+  position: absolute; top: 4px; left: 4px; z-index: 2;
+  background: rgba(0,0,0,0.6); border: 1px solid #8899ff;
+  border-radius: 4px; padding: 1px 5px;
+  color: #fff; font-size: 10px; font-weight: 900;
+  text-shadow: 1px 1px 0 #000;
+}
+.vs-card .card-info {
+  display: flex; flex-direction: column; gap: 4px;
+  overflow: hidden;
+}
+/* 投手カード内: 球種ボタン群 - 均一サイズで読みやすく */
+.vs-card .pitch-buttons-inline {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
+  margin-top: 6px;
+}
+.vs-card .pitch-buttons-inline .pitch-btn {
+  background: linear-gradient(135deg, #1a4a8a, #0a2a5a);
+  border: 1.5px solid #6699ff;
+  color: #fff; border-radius: 4px;
+  padding: 4px 6px; font-family: inherit; font-weight: 900;
+  font-size: 10px; cursor: pointer;
+  text-align: left;
+  display: flex; flex-direction: column;
+  line-height: 1.2;
+  min-height: 42px;
+  width: 100%;
+  /* テキストはみ出し防止: ボタン自体は overflow hidden しないでセル内で収める */
+  overflow: visible;
+  min-width: 0;
+}
+.vs-card .pitch-buttons-inline .pitch-btn:hover {
+  background: linear-gradient(135deg, #2a5a9a, #1a3a6a);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.vs-card .pitch-buttons-inline .pitch-btn .pn {
+  font-size: 11px; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: block;
+}
+.vs-card .pitch-buttons-inline .pitch-btn .pmeta {
+  font-size: 9px; color: #aaccff; margin-top: 1px;
+  /* 折り返しを許可して情報が切れないようにする */
+  white-space: normal;
+  word-break: keep-all;
+  line-height: 1.15;
+}
+
+/* 投手カード内: スタミナバー */
+.vs-card .card-stamina {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid #6699ff55;
+  border-radius: 5px;
+  padding: 3px 8px;
+  margin-bottom: 4px;
+}
+.vs-card .card-stamina .cs-lbl {
+  font-size: 10px; color: #c8d4ff;
+  background: rgba(0,0,0,0.5);
+  padding: 1px 5px; border-radius: 3px;
+  flex-shrink: 0;
+}
+.vs-card .card-stamina .cs-bar {
+  flex: 1; height: 12px;
+  background: #333; border: 1px solid #666;
+  border-radius: 6px; overflow: hidden;
+}
+.vs-card .card-stamina .cs-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #44dd66, #88ff88);
+  transition: width 0.3s ease, background 0.3s ease;
+}
+.vs-card .card-stamina .cs-fill.low  { background: linear-gradient(90deg, #ffaa44, #ffcc66); }
+.vs-card .card-stamina .cs-fill.crit { background: linear-gradient(90deg, #ff4444, #ff8866); animation: pulseRed 1s infinite; }
+.vs-card .card-stamina .cs-num {
+  font-size: 11px; color: #ffcc66; font-weight: 900;
+  white-space: nowrap; flex-shrink: 0;
+}
+
+/* 打者カード: 今日の成績エリア */
+.vs-card .today-stats {
+  margin-top: 4px;
+  background: rgba(0,30,80,0.45);
+  border: 1px solid #66aaff66;
+  border-radius: 5px;
+  padding: 4px 6px;
+}
+.vs-card .today-stats .ts-title {
+  font-size: 10px; color: #aaccff;
+  border-left: 3px solid #ffcc66;
+  padding-left: 4px;
+  margin-bottom: 2px;
+}
+.vs-card .today-stats .ts-row {
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  font-size: 11px;
+}
+.vs-card .today-stats .ts-row > div {
+  display: flex; flex-direction: column; align-items: center;
+}
+.vs-card .today-stats .ts-row .ts-lbl {
+  color: #a0b0e0; font-size: 9px;
+}
+.vs-card .today-stats .ts-row .ts-val {
+  color: #fff; font-weight: 900; font-size: 14px;
+  text-shadow: 1px 1px 0 #000;
+}
+.vs-card .today-stats .ts-row .ts-val.pp { color: #ff88cc; }
+.vs-card .today-stats .ts-row .ts-val.hl { color: #ffcc66; }
+/* 投手カードのステ縦並び */
+.vs-card .pitcher-stats-list {
+  display: flex; flex-direction: column; gap: 2px;
+  background: rgba(0,0,0,0.4); border-radius: 5px;
+  padding: 4px;
+}
+.vs-card .pitcher-stats-list .psr { display: grid; gap: 2px; }
+.vs-card .pitcher-stats-list .psr4 { grid-template-columns: repeat(4, 1fr); }
+.vs-card .pitcher-stats-list .psr-r2 { grid-template-columns: 1fr 1fr 2fr; }  /* 奪三振 球重 [対左/対盗塁/回復量] */
+.vs-card .pitcher-stats-list .psub3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+.vs-card .pitcher-stats-list .pst {
+  display: flex; flex-direction: column; align-items: center;
+  font-size: 10px;
+}
+.vs-card .pitcher-stats-list .pst.pst-sm .lbl { font-size: 8px; }
+.vs-card .pitcher-stats-list .pst .lbl { color: #a0b0e0; font-size: 9px; }
+.vs-card .pitcher-stats-list .pst .val { color: #fff; font-size: 15px; font-weight: 900; line-height: 1; }
+.vs-card .pitcher-stats-list .pst .val.s-rank { color: #ffe8aa; text-shadow: 0 0 6px #ffcc44; }
+.vs-card .pitcher-stats-list .pst .val.a-rank { color: #ffe8aa; }
+.vs-card .pitcher-stats-list .pst .val.neg    { color: #ff8888; }
+
+.vs-card .mini-banner {
+  background: linear-gradient(90deg,#04040e,#0c0c28,#04040e);
+  padding: 4px 8px; border-radius: 4px; margin-bottom: 4px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px;
+}
+.vs-card .mini-banner .name {
+  font-weight: 900; font-size: 16px; letter-spacing: 2px;
+  text-shadow: 1px 1px 0 #000, 0 0 8px #aaccff;
+}
+.vs-card .mini-banner .season { color: #ffcc66; font-size: 11px; }
+.vs-card .mini-meta {
+  display: flex; gap: 8px; font-size: 11px; margin-bottom: 6px;
+  background: rgba(0,0,0,0.4); padding: 4px 6px; border-radius: 4px;
+}
+.vs-card .mini-meta span { color: #c8d4ff; }
+.vs-card .mini-meta .pos {
+  background: rgba(0,0,0,0.6); padding: 2px 6px; border-radius: 3px;
+  color: #fff; font-weight: 900;
+}
+.vs-card .mini-stats {
+  display: flex; flex-direction: column; gap: 4px;
+  background: rgba(0,0,0,0.35); padding: 6px; border-radius: 6px;
+  margin-bottom: 0;
+}
+.vs-card .mini-stats .msr { display: grid; gap: 4px; }
+.vs-card .mini-stats .msr4 { grid-template-columns: repeat(4, 1fr); }   /* ミート/パワー/スピード/チャンス */
+.vs-card .mini-stats .msr-r2 { grid-template-columns: 1fr 1fr 2fr; align-items: center; }  /* 選球眼 三振耐性 [盗塁能/対左/HR能] */
+.vs-card .mini-stats .mssub3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.vs-card .mini-stats .stbox {
+  display: flex; flex-direction: column; align-items: center;
+}
+.vs-card .mini-stats .sname { font-size: 10px; color: #a0b0e0; white-space: nowrap; }
+.vs-card .mini-stats .sval {
+  font-size: 18px; font-weight: 900; color: #fff;
+  text-shadow: 1px 1px 0 #000;
+}
+.vs-card .mini-stats .sval.a-rank { color: #ffe8aa; text-shadow: 1px 1px 0 #000, 0 0 8px #ffcc44; }
+.vs-card .mini-stats .sval.s-rank { color: #ffffff; text-shadow: 1px 1px 0 #000, 0 0 10px #aaccff; }
+.vs-card .mini-stats .sval.neg    { color: #ff8888; }
+.vs-card .mini-rec {
+  display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px;
+  background: rgba(0,0,0,0.35); padding: 4px 8px; border-radius: 5px;
+}
+.vs-card .mini-rec span { color: #c8d4ff; }
+.vs-card .mini-rec b { color: #fff; }
+.vs-card .mini-pitches {
+  margin-top: 6px; background: rgba(0,0,0,0.35);
+  padding: 4px 6px; border-radius: 5px; font-size: 11px;
+}
+.vs-card .mini-pitches table { width: 100%; }
+.vs-card .mini-pitches td { padding: 1px 4px; color: #fff; font-size: 11px; }
+.vs-card .mini-pitches td.pname { color: #c8d4ff; text-align: left; }
+.vs-card .mini-pitches td.pval  { text-align: right; }
+
+/* === 操作パネル === */
+.action-panel {
+  background: rgba(0,0,0,0.4);
+  border: 2px solid #6677cc; border-radius: 8px;
+  padding: 10px; margin-bottom: 12px;
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+}
+.pitch-buttons {
+  display: flex; gap: 6px; flex-wrap: wrap; flex: 1;
+}
+.pitch-btn {
+  background: linear-gradient(135deg,#1a4a8a,#0a2a5a);
+  border: 2px solid #6699ff; color: #fff; border-radius: 6px;
+  padding: 8px 12px; font-family: inherit; font-weight: 900;
+  font-size: 13px; cursor: pointer; min-width: 120px;
+}
+.pitch-btn:hover { background: linear-gradient(135deg,#2a5a9a,#1a3a6a); }
+.pitch-btn .pn { font-size: 13px; }
+.pitch-btn .pmeta { font-size: 10px; color: #aaccff; display: block; margin-top: 2px; }
+
+
+/* === 結果画面 === */
+#result {
+  padding-bottom: 16px;
+}
+#result .result-header {
+  /* 3カラム: タイトル(左) | スコア(中央) | ボタン(右) — スコアはセンターに固定 */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px; margin-bottom: 10px;
+  background: rgba(0,0,0,0.4);
+  border: 2px solid #6677cc;
+  border-radius: 8px;
+  padding: 8px 14px;
+}
+#result h2 {
+  font-size: 22px; margin: 0; color: #ffcc00;
+  text-align: left;
+  justify-self: start;
+}
+#result #result-score-line {
+  justify-self: center;
+  display: inline-flex; align-items: baseline; gap: 10px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+#result #result-score-line .rsl-team {
+  font-size: 18px; color: #c8d4ff;
+  letter-spacing: 1px;
+}
+#result #result-score-line .rsl-score {
+  font-size: 32px;
+  color: #ffcc66; text-shadow: 2px 2px 0 #000, 0 0 14px #ffaa00;
+  line-height: 1;
+}
+#result .result-header .result-actions {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  justify-self: end; justify-content: flex-end; align-items: center;
+}
+#result .result-header .btn {
+  flex-shrink: 0;
+}
+/* .btn は display:inline-block を持つため、hidden属性が効くよう明示的に打ち消す */
+.btn[hidden] { display: none !important; }
+#result-summary {
+  background: rgba(0,0,0,0.5); border: 2px solid #6677cc;
+  border-radius: 10px; padding: 10px 14px; margin: 0 auto 10px;
+  /* 画面幅いっぱいまで広げて、テーブルがスクロール不要に */
+  max-width: 100%; width: 100%;
+  font-size: 13px; line-height: 1.4;
+}
+#result-summary .big-score {
+  font-size: 32px; font-weight: 900; text-align: center;
+  color: #ffcc66; text-shadow: 2px 2px 0 #000, 0 0 14px #ffaa00;
+  margin: 4px 0 6px;
+  line-height: 1;
+}
+#result button { display: block; margin: 0 auto; }
+#result-summary .result-teams { font-size: 13px; line-height: 1.5; text-align: center; margin-bottom: 6px; }
+#result-summary .result-section { margin-top: 8px; }
+#result-summary .result-section h3 {
+  font-size: 13px; color: #ffcc66;
+  border-left: 4px solid #ffcc66;
+  padding-left: 6px; margin-bottom: 4px;
+  text-shadow: 1px 1px 0 #000;
+}
+#result-summary .result-pitcher-list,
+#result-summary .result-hr-list {
+  list-style: none; padding: 0; margin: 0;
+}
+#result-summary .result-pitcher-list li,
+#result-summary .result-hr-list li {
+  background: rgba(0,0,0,0.4);
+  border-left: 3px solid #6677cc;
+  padding: 4px 8px; margin-bottom: 3px;
+  border-radius: 4px;
+  font-size: 12px;
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+}
+#result-summary .tag {
+  display: inline-block; padding: 2px 8px;
+  border-radius: 3px; font-size: 11px; font-weight: 900;
+  letter-spacing: 1px; color: #fff;
+  margin-right: 6px;
+}
+#result-summary .tag-win  { background: #228822; }
+#result-summary .tag-loss { background: #882222; }
+#result-summary .tag-save { background: #226688; }
+
+/* 結果画面のイニング別スコアボード */
+#result-summary .result-scoreboard {
+  background: rgba(0,0,0,0.5);
+  border: 1px solid #6677cc;
+  border-radius: 6px;
+  padding: 4px;
+  margin-bottom: 10px;
+}
+#result-summary .result-scoreboard table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: center;
+  font-weight: 900;
+  color: #fff;
+}
+#result-summary .result-scoreboard th,
+#result-summary .result-scoreboard td {
+  border: 1px solid #6677cc55;
+  padding: 4px 4px;
+  font-size: 14px;
+}
+#result-summary .result-scoreboard thead th {
+  background: rgba(0,30,80,0.6);
+  color: #c8d4ff;
+  font-size: 13px;
+}
+#result-summary .result-scoreboard th.rsb-team {
+  text-align: left;
+  padding-left: 10px; padding-right: 10px;
+  background: rgba(0,80,30,0.6);
+  font-size: 16px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  min-width: 150px;
+}
+#result-summary .result-scoreboard td.rsb-total,
+#result-summary .result-scoreboard th.rsb-total-th {
+  background: rgba(80,30,0,0.5);
+  color: #ffcc66;
+  font-size: 16px;
+}
+
+/* 戦評 (スポーツ新聞風の試合振り返り) */
+#result-summary .game-review {
+  background: linear-gradient(180deg, rgba(50,40,15,0.55), rgba(30,20,5,0.55));
+  border: 1px solid #aa8844;
+  border-left: 5px solid #ffcc66;
+  border-radius: 6px;
+  padding: 10px 16px;
+  margin: 12px 0;
+}
+#result-summary .game-review h3 {
+  margin: 0 0 6px;
+  color: #ffcc66;
+  font-size: 15px;
+  letter-spacing: 2px;
+  font-weight: 900;
+}
+#result-summary .game-review p {
+  margin: 0;
+  line-height: 1.8;
+  font-size: 14px;
+  color: #e8e8d0;
+}
+
+/* 投手成績表: 役割バッジ専用列 (打撃成績の位置列と同じ x 位置) */
+#result-summary .result-table .rt-badge {
+  text-align: center;
+  padding: 2px 4px;
+}
+/* 投手成績表の名前バッジ (W/L/H/S) */
+#result-summary .role-badge {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 900;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  text-align: center;
+  vertical-align: middle;
+}
+#result-summary .role-W { background: #ffcc00; color: #000; }  /* 勝利 */
+#result-summary .role-L { background: #cc4444; color: #fff; }  /* 敗戦 */
+#result-summary .role-H { background: #4488ff; color: #fff; }  /* ホールド */
+#result-summary .role-S { background: #44cc88; color: #000; }  /* セーブ */
+/* 試合画面の投手ボードでも W/L/H/S バッジを表示 (終了後)。
+   役割(先発/SU等)の文字には重ねず、枠セルの左外側へ食い込ませる(文字位置は動かさない)。 */
+.board-pitchers .role-badge {
+  position: absolute;
+  right: 100%;            /* 枠セルの左外側に配置 → 役割文字を右に押さない */
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 1px;
+  min-width: 14px; padding: 0 2px;
+  border-radius: 3px; font-weight: 900; font-size: 9px; line-height: 1.4;
+  text-align: center; white-space: nowrap;
+  z-index: 3;
+}
+.board-pitchers .role-W { background: #ffcc00; color: #000; }
+.board-pitchers .role-L { background: #cc4444; color: #fff; }
+.board-pitchers .role-H { background: #4488ff; color: #fff; }
+.board-pitchers .role-S { background: #44cc88; color: #000; }
+/* 勝敗投手 1行コンパクト表示 */
+#result-summary .result-pitcher-row {
+  display: flex; gap: 18px; flex-wrap: wrap;
+  align-items: center;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid #6677cc66;
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+#result-summary .rp-item {
+  display: inline-flex; align-items: center;
+  color: #fff; font-weight: 900;
+  white-space: nowrap;
+}
+/* シーズン: 勝敗/セーブ投手の通算成績 (10勝4敗 / 22セーブ) */
+#result-summary .rp-rec {
+  margin-left: 6px; color: #ffd86b; font-weight: 900; font-size: 12px;
+}
+/* シーズン: 本塁打一覧 (大谷翔平33号(2回裏②)) */
+#result-summary .result-hr-row {
+  display: flex; gap: 12px 16px; flex-wrap: wrap; align-items: center;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid #cc884466;
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+#result-summary .rp-hrlabel { color: #ffcc66; font-weight: 900; }
+#result-summary .rp-hr { color: #fff; font-weight: 900; white-space: nowrap; }
+#result-summary .hr-inning { color: #ffcc66; font-weight: 900; min-width: 50px; }
+#result-summary .hr-batter { font-weight: 900; }
+#result-summary .hr-pitcher { color: #aaccff; font-size: 11px; }
+#result-summary .hr-runs { color: #ff88cc; font-weight: 900; margin-left: auto; }
+
+/* === 詳細成績テーブル === */
+#result-summary .rt-wrap {
+  overflow-x: auto;
+  background: rgba(0,0,0,0.3);
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+#result-summary .result-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  color: #fff;
+  white-space: nowrap;
+  /* colgroup の width 指定を有効にして上下チームで列幅を揃える */
+  table-layout: fixed;
+}
+#result-summary .result-table th,
+#result-summary .result-table td {
+  border: 1px solid #6677cc44;
+  padding: 3px 6px;
+  text-align: center;
+}
+#result-summary .result-table thead th {
+  background: rgba(0,30,80,0.7);
+  color: #c8d4ff;
+  font-weight: 900;
+  position: sticky; top: 0;
+  z-index: 2;
+}
+#result-summary .result-table tbody tr:nth-child(odd)  { background: rgba(255,255,255,0.03); }
+#result-summary .result-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.07); }
+#result-summary .result-table .rt-name-th,
+#result-summary .result-table .rt-name {
+  text-align: left;
+  padding-left: 8px;
+  min-width: 100px;
+  color: #66ddff;
+}
+/* ===== 長い選手名 (9文字超) を枠内に収めるための文字サイズ縮小 ===== */
+/* name-long: 10〜13文字 / name-xlong: 14文字以上。各表示箇所の基準サイズに合わせて少し小さく。 */
+#teambuild .tb-name.name-long   { font-size: 13.5px; }
+#teambuild .tb-name.name-xlong  { font-size: 11px; }
+#teambuild .tbl-name.name-long  { font-size: 9px; }
+#teambuild .tbl-name.name-xlong { font-size: 7.5px; }
+#teambuild .tbp-name.name-long  { font-size: 9px; }
+#teambuild .tbp-name.name-xlong { font-size: 7.5px; }
+.vs-card .card-photo .name-overlay.name-long  { font-size: 11px; letter-spacing: 0; }
+.vs-card .card-photo .name-overlay.name-xlong { font-size: 9.5px; letter-spacing: 0; }
+.board-lineup .ln-name.name-long,
+.board-pitchers .pt-name.name-long  { font-size: 10px; }
+.board-lineup .ln-name.name-xlong,
+.board-pitchers .pt-name.name-xlong { font-size: 8.5px; }
+#result-summary .result-table .rt-name.name-long  { font-size: 9.5px; }
+#result-summary .result-table .rt-name.name-xlong { font-size: 8.5px; }
+#result-summary .result-table .rt-pos {
+  color: #ffcc66;
+  min-width: 38px;
+}
+#result-summary .result-table .rt-inning {
+  min-width: 50px; font-size: 10px;
+}
+#result-summary .result-table .rt-hr {
+  color: #ff88cc; font-weight: 900;
+}
+#result-summary .result-table .rt-total {
+  background: rgba(80,0,80,0.4) !important;
+  font-weight: 900;
+}
+/* 交代選手の行 (Yahoo方式で元選手の下に挿入) — 控えめなスタイル */
+#result-summary .result-table tr.rt-sub td { color: #c9d4e8; }
+#result-summary .result-table tr.rt-sub .rt-name { color: #9fd8ff; font-size: 11px; }
+#result-summary .result-table tr.rt-sub .rt-pos { color: #ff9bb0; }
+#result-summary .result-table .cell-hr  { color: #ff88cc; font-weight: 900; background: rgba(255,100,200,0.15); }
+#result-summary .result-table .cell-hit { color: #ff6666; font-weight: 900; }
+#result-summary .result-table .cell-bb  { color: #ffe8aa; }
+#result-summary .result-table .cell-k   { color: #888; }
+#result-summary .result-table .player-link {
+  text-decoration-color: rgba(102,221,255,0.4);
+}
+
+/* 結果画面全体: 横スクロール許可 + 縦スクロール (テーブルが多いので) */
+#result {
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+/* === 選手詳細カード モーダル === */
+.modal-mask {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.78);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 1000;
+  padding: 8px 16px 16px;      /* 上余白を最小に */
+  overflow-y: auto;
+  animation: fadeIn 0.18s ease-out;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.modal-mask.hidden { display: none; }
+.modal-close {
+  position: fixed; top: 10px; right: 16px;
+  background: #aa2222; color: #fff; border: none;
+  font-size: 16px; font-weight: 900; line-height: 1;
+  padding: 8px 14px; border-radius: 6px; cursor: pointer;
+  font-family: inherit; z-index: 1100;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+}
+.modal-close:hover { background: #cc3333; }
+
+/* === 原本カードをそのまま表示する iframe === */
+.card-iframe {
+  /* カード本体は840x530。フリップヒントを含めても 620px で収まる。
+     最大高は viewport にしない (大画面で中身が中央寄せされて下がる現象を防ぐ) */
+  width: 900px;
+  height: 620px;
+  max-width: 95vw;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: 0 10px 60px rgba(0,0,0,0.8);
+  animation: cardZoom 0.25s ease-out;
+  flex-shrink: 0;
+}
+
+/* === フルカード(本物のカードに寄せた表示) === */
+.full-card {
+  width: 840px; max-width: 95vw; min-height: 530px;
+  border-radius: 16px; border: 4px solid #aabbff;
+  background: linear-gradient(160deg,#9898b8 0%,#d8d8f0 12%,#a8a8c8 28%,#e8e8ff 46%,#9898b8 62%,#d0d0ec 78%,#b0b0cc 100%);
+  box-shadow: 0 0 0 2px #8899ff66, 0 8px 50px #000000cc, 0 0 80px #6688ff44, 0 0 40px #ffffff22, inset 0 2px 0 #ffffff77, inset 0 -2px 0 #6677cc66;
+  display: flex; position: relative; overflow: hidden;
+  animation: cardZoom 0.25s ease-out;
+}
+@keyframes cardZoom {
+  from { transform: scale(0.85); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+.full-card::after {
+  content:''; position:absolute; top:0; left:0; right:0; height:50%;
+  background:linear-gradient(to bottom,rgba(255,255,255,0.38) 0%,transparent 100%);
+  pointer-events:none; z-index:50; border-radius:14px 14px 0 0;
+}
+.full-card .top-banner {
+  position: absolute; top: 0; left: 0; right: 0; height: 42px;
+  background: linear-gradient(90deg,#04040e,#0c0c28,#04040e,#080820,#04040e);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 14px; z-index: 20;
+  border-bottom: 3px solid #8899ff88;
+}
+.full-card .top-banner .name-ja {
+  font-size: 18px; font-weight: 900; letter-spacing: 3px;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000, 0 0 14px #aaccff;
+}
+.full-card .top-banner .year {
+  font-size: 12px; color: #ffcc66; letter-spacing: 2px;
+  text-shadow: 1px 1px 0 #000;
+}
+.full-card .top-banner .hand {
+  font-size: 12px; color: #c8d4ff; letter-spacing: 2px;
+}
+
+.full-card .left-panel {
+  width: 285px; min-width: 285px;
+  position: relative;
+  border-right: 3px solid #6677cc55;
+  overflow: hidden;
+  background: linear-gradient(180deg, #2a1a4a, #0a0a2a);
+}
+/* 写真フレーム */
+.full-card .left-panel .photo-frame {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(180deg,#4a3800 0%,#806000 50%,#382800 100%);
+}
+.full-card .left-panel .photo-frame img {
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center top;
+  display: block;
+}
+.full-card .left-panel .photo-top-fade {
+  position: absolute; top: 0; left: 0; right: 0; height: 55px;
+  background: linear-gradient(to bottom, #04040ecc 0%, transparent 100%);
+  z-index: 2;
+}
+.full-card .left-panel .photo-bot-fade {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 200px;
+  background: linear-gradient(to top, #08081af5 0%, #0e0e2888 60%, transparent 100%);
+  z-index: 2;
+}
+.full-card .left-panel .photo-side-fade {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 40px;
+  background: linear-gradient(to left, #04040ecc 0%, transparent 100%);
+  z-index: 2;
+}
+/* 写真の上に重ねるオーバーレイ */
+.full-card .left-panel .left-overlay {
+  position: absolute; top: 50px; left: 0; right: 0;
+  z-index: 5; padding: 0 12px;
+}
+.full-card .left-panel .team-badge {
+  display: inline-block; padding: 4px 14px;
+  background: rgba(0,0,0,0.5); border: 2px solid #8899ff;
+  border-radius: 6px; color: #fff;
+  font-size: 16px; font-weight: 900; letter-spacing: 3px;
+  text-shadow: 1px 1px 0 #000;
+}
+.full-card .left-panel .position {
+  display: inline-block; margin-left: 6px;
+  padding: 3px 8px;
+  background: linear-gradient(135deg,#04040e,#0c0c28);
+  border: 2px solid #8899ff88; border-radius: 6px;
+  color: #fff; font-size: 11px; font-weight: 900;
+  letter-spacing: 2px; text-shadow: 1px 1px 0 #000;
+  vertical-align: top;
+}
+.full-card .left-panel .player-name-block {
+  position: absolute; bottom: 12px; left: 0; right: 0;
+  text-align: center; padding: 0 8px;
+  z-index: 5;
+}
+.full-card .left-panel .player-name {
+  display: block;
+  color: #fff;
+  font-size: 28px; font-weight: 900; letter-spacing: 4px;
+  text-shadow: 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 0 0 20px #aaccff;
+  white-space: nowrap;
+}
+.full-card .left-panel .name-en {
+  display: block; margin-top: 4px;
+  color: #c8d4ff;
+  font-size: 11px; font-weight: 900; letter-spacing: 2px;
+  text-shadow: 1px 1px 0 #000, -1px -1px 0 #000;
+}
+/* 列伝は右パネル末尾に */
+.full-card .right-panel .retsuden-box {
+  margin-top: 8px;
+  background: rgba(0,0,0,0.5);
+  border: 1px solid #6677cc88; border-radius: 6px;
+  padding: 8px 10px;
+}
+.full-card .right-panel .retsuden-box .lbl {
+  color: #c8d4ff; font-weight: 900;
+  font-size: 11px; letter-spacing: 2px;
+  border-left: 4px solid #8899ff; padding-left: 6px;
+  display: block; margin-bottom: 4px;
+}
+.full-card .right-panel .retsuden-text {
+  font-size: 11px; line-height: 1.5;
+  color: #c8d4ff;
+  text-shadow: 1px 1px 0 #000;
+}
+
+.full-card .right-panel {
+  flex: 1; padding: 46px 14px 8px;
+  background: rgba(6,6,18,0.56);
+  display: flex; flex-direction: column; gap: 6px;
+  position: relative; z-index: 2;
+  overflow-y: auto; max-height: 580px;
+}
+.full-card .sec-title {
+  color: #c8d4ff; font-size: 11px; font-weight: 900;
+  letter-spacing: 2px; border-left: 4px solid #8899ff;
+  padding-left: 6px; text-shadow: 1px 1px 0 #000;
+  margin-top: 4px;
+}
+.full-card .record-bar {
+  background: rgba(0,0,0,0.45); border: 2px solid #6677cc;
+  border-radius: 8px; padding: 6px 4px;
+  display: flex; justify-content: space-between;
+}
+.full-card .record-bar .rec-item {
+  display: flex; flex-direction: column; align-items: center;
+  flex: 1; padding: 0 4px;
+  border-right: 1px solid #6677cc88;
+}
+.full-card .record-bar .rec-item:last-child { border-right: none; }
+.full-card .record-bar .lbl { color: #a0b0e0; font-size: 10px; }
+.full-card .record-bar .val { color: #fff; font-size: 20px; font-weight: 900; text-shadow: 1px 1px 0 #000; }
+.full-card .record-bar .val.hl { color: #aaddff; text-shadow: 1px 1px 0 #000, 0 0 8px #aaccff; }
+.full-card .record-bar .val.pp { color: #ffaaff; text-shadow: 1px 1px 0 #000, 0 0 8px #ff44cc; }
+
+.full-card .stats-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+}
+.full-card .stat-box {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid #6677cc55; border-radius: 6px;
+  padding: 6px 4px; display: flex; flex-direction: column; align-items: center;
+}
+.full-card .stat-box .name { color: #a0b0e0; font-size: 10px; }
+.full-card .stat-box .val { color: #fff; font-size: 22px; font-weight: 900; line-height: 1.1; text-shadow: 2px 2px 0 #000; }
+.full-card .stat-box .val.a-rank { color: #ffe8aa; text-shadow: 2px 2px 0 #000, 0 0 10px #ffcc44; }
+.full-card .stat-box .val.s-rank { color: #fff;    text-shadow: 2px 2px 0 #000, 0 0 14px #aaccff; }
+.full-card .stat-box .val.neg    { color: #ff8888; }
+
+.full-card .stats-mini-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+}
+.full-card .stat-box-mini {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid #6677cc55; border-radius: 5px;
+  padding: 4px; display: flex; flex-direction: column; align-items: center;
+}
+.full-card .stat-box-mini .name { color: #a0b0e0; font-size: 10px; }
+.full-card .stat-box-mini .val { color: #fff; font-size: 18px; font-weight: 900; }
+.full-card .stat-box-mini .val.neg { color: #ff8888; }
+
+.full-card .pitch-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+}
+.full-card .pitch-box {
+  background: rgba(0,0,0,0.4); border: 1px solid #88888866;
+  border-radius: 5px; padding: 4px; text-align: center;
+}
+.full-card .pitch-box.pos-b { border-color: #ff664488; }
+.full-card .pitch-box.neg-b { border-color: #4488ff88; }
+.full-card .pitch-box .lbl { color: #a0b0e0; font-size: 10px; }
+.full-card .pitch-box .val { font-size: 16px; font-weight: 900; }
+.full-card .pitch-box .val.pos { color: #ff8866; }
+.full-card .pitch-box .val.neg { color: #88ccff; }
+.full-card .pitch-box .val.neu { color: #ccccaa; }
+
+.full-card .pitch-table {
+  width: 100%; border-collapse: collapse; table-layout: fixed;
+  background: rgba(0,0,0,0.3); border-radius: 6px; overflow: hidden;
+}
+.full-card .pitch-table th {
+  color: #c8d4ff; font-size: 11px; padding: 4px;
+  background: rgba(0,30,80,0.6); border-bottom: 2px solid #6677cc;
+}
+.full-card .pitch-table td {
+  color: #fff; padding: 4px; text-align: center;
+  border-bottom: 1px solid #6677cc33;
+  font-size: 13px; font-weight: 900;
+}
+.full-card .pitch-table td.pn { text-align: left; color: #c8d4ff; padding-left: 8px; }
+
+.full-card .drs-bar {
+  background: rgba(0,0,0,0.45);
+  border: 2px solid #6677cc55; border-radius: 7px;
+  padding: 6px 10px; display: flex; flex-wrap: wrap; gap: 12px;
+}
+.full-card .drs-item { display: flex; align-items: center; gap: 6px; }
+.full-card .drs-pos {
+  color: #aaddff; font-size: 11px; font-weight: 900;
+  background: rgba(0,60,120,0.5);
+  border: 1px solid #4488ff88; border-radius: 4px;
+  padding: 2px 6px;
+}
+.full-card .drs-num { font-size: 20px; font-weight: 900; }
+.full-card .drs-num.pos { color: #66ff88; }
+.full-card .drs-num.neg { color: #ff6666; }
+.full-card .drs-num.neu { color: #ccccaa; }
+.full-card .drs-inn { color: #a0b8a0; font-size: 10px; }
+
+.full-card .catcher-bar {
+  background: rgba(0,0,0,0.45); border: 2px solid #66aaff88;
+  border-radius: 7px; padding: 6px 12px;
+  display: flex; gap: 24px; justify-content: center;
+}
+.full-card .catcher-bar .ca-item { display: flex; align-items: center; gap: 8px; }
+.full-card .catcher-bar .ca-label {
+  color: #aaddff; font-size: 11px; font-weight: 900;
+  background: rgba(0,50,120,0.45); border: 1px solid #4488ff66;
+  border-radius: 4px; padding: 2px 8px;
+}
+.full-card .catcher-bar .ca-val { font-size: 20px; font-weight: 900; }
+.full-card .catcher-bar .ca-val.lead { color: #ffdd66; }
+.full-card .catcher-bar .ca-val.cs   { color: #66ffaa; }
+
+/* === クリック可能な選手名 === */
+.player-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(255,204,0,0.4);
+  text-underline-offset: 3px;
+  transition: color 0.15s, text-shadow 0.15s;
+}
+.player-link:hover {
+  color: #ffcc66 !important;
+  text-shadow: 0 0 10px #ffcc00 !important;
+}
+.info-btn {
+  display: inline-block;
+  background: linear-gradient(135deg, #4488ff, #1144aa);
+  color: #fff; border: none;
+  width: 22px; height: 22px;
+  font-size: 14px; font-weight: 900;
+  border-radius: 50%; cursor: pointer;
+  margin-left: 4px;
+  font-family: inherit;
+}
+.info-btn:hover { background: linear-gradient(135deg, #66aaff, #2266cc); }
+
+/* ===== レギュラーシーズン ===== */
+#season { padding: 12px 16px; }
+.season-topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.season-topbar h2 { margin: 0; }
+.season-controls { display: flex; gap: 8px; }
+.season-progress { font-size: 16px; }
+.season-modebtns { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
+.season-modebtns .mode-btn { width: 240px; }
+.season-gamehdr { font-size: 18px; margin: 6px 0 14px; }
+.season-gamehdr .vs { color: #c33; font-weight: 700; margin: 0 6px; }
+.season-setrow { display: flex; gap: 24px; flex-wrap: wrap; }
+.season-setcol { background: #f4f7fb; color: #1a2433; border: 1px solid #d6e0ec; border-radius: 8px; padding: 12px 14px; min-width: 320px; }
+.season-setcol h4 { margin: 0 0 8px; }
+.season-sel { display: block; margin: 8px 0; font-size: 14px; }
+.season-sel select { margin-left: 6px; font-size: 14px; padding: 2px 4px; }
+.season-lock { color: #c60; margin-left: 6px; font-size: 12px; }
+.season-actions { margin-top: 16px; display: flex; gap: 12px; align-items: center; }
+.season-note { color: #777; font-size: 12px; margin-top: 8px; }
+.season-livehdr { margin: 18px 0 6px; font-size: 15px; color: #15233a; border-top: 1px solid #d6e0ec; padding-top: 12px; }
+.season-lineup { margin-top: 12px; border-top: 1px dashed #c4d2e2; padding-top: 8px; max-width: 460px; }
+.season-linehdr { font-size: 12px; color: #46607f; margin-bottom: 6px; font-weight: 700; }
+/* 行・ヘッダ共通のグリッド: [⠿][順][守][選手+成績][📋] */
+.season-linerow, .season-linehead { display: grid; grid-template-columns: 20px 18px 28px 1fr 22px; align-items: center; gap: 4px; }
+.season-linehead { font-size: 11px; color: #46607f; font-weight: 700; margin-bottom: 2px; }
+.season-linehead .slh-spot { text-align: right; } .season-linehead .slh-pos { text-align: center; }
+.season-linerow { border: 1px solid transparent; border-radius: 4px; padding: 1px 0; margin: 2px 0; }
+.season-linerow.dragging { opacity: 0.45; }
+.season-linerow.drag-over { border-color: #2266cc; background: #eaf2ff; }
+.season-linedrag { cursor: grab; color: #7e93ab; font-size: 14px; user-select: none; text-align: center; }
+.season-linedrag:active { cursor: grabbing; }
+.season-linespot { text-align: right; color: #888; font-size: 12px; }
+.season-linepos { text-align: center; font-size: 12px; color: #15233a; background: #e7eef6; border: 1px solid #d6e0ec; border-radius: 4px; padding: 1px 0; }
+.season-linecard { cursor: pointer; font-size: 15px; text-align: center; user-select: none; }
+.season-linecard .player-link { text-decoration: none; }
+.season-linenote { font-size: 11px; color: #999; margin-top: 5px; }
+/* 自作ドロップダウン (選択ボタン + 候補パネル)。列を揃えて表示・比較しやすく */
+.season-pickwrap { position: relative; min-width: 0; }
+.season-pickbtn, .season-pickopt { display: grid; grid-template-columns: 1fr 46px 28px 34px 26px 14px; align-items: center; gap: 2px; font-size: 12.5px; }
+.season-pickbtn { border: 1px solid #b9c8db; border-radius: 5px; background: #fff; padding: 3px 6px; cursor: pointer; }
+.season-pickbtn:hover { border-color: #7e93ab; }
+.season-pickbtn.open { border-color: #2266cc; box-shadow: 0 0 0 2px rgba(34,102,204,0.2); }
+.season-pickhead { border-color: transparent; background: transparent; cursor: default; padding: 0 6px; font-weight: 700; color: #46607f; }
+.slc-name { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #15233a; }
+.slc { text-align: right; font-variant-numeric: tabular-nums; color: #1a2433; }
+.slc-avg { color: #b00; font-weight: 700; }
+.slc-arrow { text-align: center; color: #7e93ab; font-size: 10px; }
+.season-pickpanel { position: absolute; top: 100%; left: 0; right: 0; z-index: 60; background: #fff; border: 1px solid #2266cc; border-radius: 5px; max-height: 260px; overflow-y: auto; box-shadow: 0 6px 18px rgba(0,0,0,0.28); margin-top: 2px; }
+.season-pickopt { padding: 4px 6px; cursor: pointer; border-bottom: 1px solid #eef2f7; }
+.season-pickopt:hover { background: #eaf2ff; }
+.season-pickopt.selected { background: #fff3d6; }
+.season-pickopt.resting { color: #aaa; background: #f0f0f0; cursor: not-allowed; }
+.season-pickopt.resting .slc, .season-pickopt.resting .slc-avg, .season-pickopt.resting .slc-name { color: #aaa; }
+/* 先発投手の自作ドロップダウン (防/勝/敗/H/S/スタ% 整列) */
+.season-pstblock { display: flex; align-items: center; gap: 6px; margin: 8px 0; }
+.season-pstlabel { width: 78px; font-size: 13px; flex: 0 0 auto; }
+.season-pstwrap { position: relative; flex: 1; min-width: 0; max-width: 380px; }
+.season-pstbtn, .season-pstopt { display: grid; grid-template-columns: 1fr 42px 24px 24px 22px 22px 42px 14px; align-items: center; gap: 2px; font-size: 12.5px; }
+.season-pstbtn { border: 1px solid #b9c8db; border-radius: 5px; background: #fff; padding: 3px 6px; cursor: pointer; }
+.season-pstbtn:hover { border-color: #7e93ab; }
+.season-pstbtn.open { border-color: #2266cc; box-shadow: 0 0 0 2px rgba(34,102,204,0.2); }
+.season-psthead { border-color: transparent; background: transparent; cursor: default; padding: 0 6px; font-weight: 700; color: #46607f; font-size: 11px; }
+.season-pstpanel { position: absolute; top: 100%; left: 0; right: 0; z-index: 60; background: #fff; border: 1px solid #2266cc; border-radius: 5px; max-height: 300px; overflow-y: auto; box-shadow: 0 6px 18px rgba(0,0,0,0.28); margin-top: 2px; }
+.season-pstopt { padding: 4px 6px; cursor: pointer; border-bottom: 1px solid #eef2f7; }
+.season-pstopt:hover { background: #eaf2ff; }
+.season-pstopt.selected { background: #fff3d6; }
+.slc-sta { color: #2a7; }
+/* 各種アワード */
+.awards { padding: 4px 2px 16px; }
+.award-h { margin: 16px 0 8px; font-size: 15px; color: #15233a; border-left: 4px solid #c9a227; padding-left: 8px; }
+/* リーグ別の大見出し (獲得リーグを明示するバナー) */
+.award-league-block { margin-bottom: 18px; }
+.award-league { display: flex; align-items: center; gap: 8px; margin: 18px 0 6px; padding: 7px 12px; font-size: 17px; font-weight: 900; color: #fff; border-radius: 8px; letter-spacing: 1px; }
+.award-league.lg-AL { background: linear-gradient(180deg, #c8324a, #9c1f33); }
+.award-league.lg-NL { background: linear-gradient(180deg, #2a64b6, #1b4584); }
+.award-league .award-lg-chip { position: static; background: rgba(255,255,255,0.92); color: #15233a; }
+/* アワードカード右上の獲得リーグチップ */
+.award-lg-chip { position: absolute; top: 4px; right: 4px; z-index: 2; font-size: 10px; font-weight: 900; line-height: 1; padding: 2px 5px; border-radius: 4px; color: #fff; letter-spacing: 0.5px; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+.award-lg-chip.lg-AL { background: #c8324a; }
+.award-lg-chip.lg-NL { background: #2a64b6; }
+.award-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.award-card { width: 120px; background: #fff; border: 1px solid #d6e0ec; border-radius: 8px; padding: 8px 6px 6px; text-align: center; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.12); position: relative; }
+.award-card.player-link:hover { border-color: #2266cc; box-shadow: 0 2px 8px rgba(34,102,204,0.25); }
+.award-label { font-size: 11px; color: #8a6d1a; font-weight: 700; min-height: 14px; margin-bottom: 3px; }
+.award-pos { display: inline-block; background: #c9a227; color: #fff; border-radius: 4px; padding: 0 5px; margin-right: 3px; font-size: 11px; }
+/* シルバースラッガー: マークは銀色のバット (絵文字をグレースケール化して銀色に)、チップも銀色 */
+.silver-bat { filter: grayscale(1) brightness(1.5) contrast(0.85); margin-right: 1px; }
+.award-ss .award-label { color: #5a6270; }
+.award-ss .award-pos { background: linear-gradient(180deg, #eef0f3, #b6bcc6); color: #2a2f3a; border: 1px solid #9aa1ad; }
+/* 写真は縦長四角(角丸)で切り抜き、顔(上部)が隠れないよう上寄せ表示 */
+.award-photo { width: 84px; height: 104px; margin: 0 auto 5px; border-radius: 10px; overflow: hidden; background: #e7eef6; display: flex; align-items: center; justify-content: center; border: 2px solid #c9a227; }
+.award-photo img { width: 100%; height: 100%; object-fit: cover; object-position: center 12%; }
+.award-noimg { font-size: 40px; opacity: 0.5; }
+.award-name { font-size: 12.5px; font-weight: 700; color: #15233a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.award-name.name-xlong { font-size: 10.5px; } .award-name.name-long { font-size: 11.5px; }
+.award-team { font-size: 10px; color: #777; }
+.award-stat { font-size: 12px; color: #b00; font-weight: 700; margin-top: 2px; }
+.season-end { text-align: center; padding: 40px; }
+.season-tabs { display: flex; gap: 6px; margin: 6px 0 12px; flex-wrap: wrap; }
+.season-tab, .season-subtab { padding: 6px 14px; border: 1px solid #bcd; background: #eef3f9; color: #15233a; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 14px; }
+.season-tab.on { background: #2266cc; color: #fff; border-color: #2266cc; }
+.season-subtabs { display: flex; gap: 5px; margin: 4px 0 10px; flex-wrap: wrap; }
+.season-subtab.on { background: #11405a; color: #fff; border-color: #11405a; }
+.season-tablewrap { overflow-x: auto; }
+.season-table { border-collapse: collapse; font-size: 13px; width: 100%; background: #fff; color: #1a2433; }
+.season-table th, .season-table td { border: 1px solid #c8d2de; padding: 3px 7px; text-align: center; white-space: nowrap; color: #1a2433; }
+.season-table thead th { background: #dce6f3; color: #15233a; }
+.season-table td.lname, .season-table th.lname { text-align: left; }
+/* 勝敗表: AL/NL の列幅を揃える (固定レイアウト)。チーム名列を一定幅にして両リーグの試合/勝などの枠を一致させる */
+.season-standings { table-layout: fixed; min-width: 900px; }                            /* 最小幅で数値列のヘッダ(本塁打/防御率等)が潰れないようにする */
+.season-standings th:first-child, .season-standings td:first-child { width: 46px; }     /* 順位 */
+.season-standings th:nth-child(2), .season-standings td:nth-child(2) { width: 156px; overflow: hidden; text-overflow: ellipsis; }  /* チーム名 (最長「ダイヤモンドバックス」が収まる幅。固定レイアウトはヘッダ行で列幅が決まるため th 側にも指定) */
+/* ===== ポストシーズン ブラケット ===== */
+.ps-wrap { color: #eaf2ff; }
+.ps-champion { text-align: center; font-size: 22px; font-weight: 900; margin: 12px auto; padding: 10px 16px; border-radius: 10px; max-width: 520px;
+  background: linear-gradient(135deg, #ffe08a, #ffb347); color: #4a2a00; box-shadow: 0 0 18px rgba(255,190,80,0.6); }
+.ps-champion b { font-size: 26px; }
+.ps-seedwrap { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0 16px; }
+.ps-seeds { flex: 1 1 280px; background: rgba(20,32,58,0.5); border: 1px solid #2c4470; border-radius: 8px; padding: 8px 10px; }
+.ps-seeds h5 { margin: 0 0 6px; color: #ffd479; font-size: 14px; }
+.ps-seed { display: flex; align-items: center; gap: 8px; padding: 3px 4px; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.ps-seednum { display: inline-block; width: 20px; text-align: center; font-weight: 900; color: #9fc2ff; }
+.ps-seedlbl { display: inline-block; width: 46px; font-size: 11px; color: #9aa7bd; }
+.ps-seed.ps-champteam { background: rgba(255,210,90,0.18); border-radius: 4px; font-weight: 800; }
+.ps-brackets { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; justify-content: center; }
+.ps-lgcol, .ps-wscol { flex: 1 1 220px; min-width: 200px; }
+.ps-lgcol h5, .ps-wscol h5 { margin: 0 0 8px; color: #ffd479; font-size: 14px; text-align: center; }
+.ps-series { background: rgba(20,32,58,0.55); border: 1px solid #2c4470; border-radius: 8px; padding: 6px 8px; margin-bottom: 8px; }
+.ps-series.ps-tbd { opacity: 0.5; }
+.ps-stitle { font-size: 11.5px; color: #9aa7bd; margin-bottom: 4px; }
+.ps-srow { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; font-size: 14px; color: #dfe8f5; }
+.ps-srow b { font-size: 16px; color: #9fc2ff; }
+.ps-srow.ps-swin { color: #fff; font-weight: 800; }
+.ps-srow.ps-swin b { color: #6fe27a; }
+.ps-wscol .ps-series { border-color: #b9912f; box-shadow: 0 0 12px rgba(255,190,80,0.35); }
+.mode-btn.mode-btn-ps .mode-icon { filter: drop-shadow(0 0 6px rgba(255,190,80,0.8)); }
+.ps-games { margin-top: 5px; padding-top: 5px; border-top: 1px dashed rgba(255,255,255,0.12); }
+.ps-game { font-size: 11px; color: #aab6cc; padding: 1px 2px; }
+.ps-mvp { font-size: 14px; font-weight: 700; color: #5a3500; margin-top: 4px; }
+.ps-mvp b { font-size: 16px; } .ps-mvp span { font-weight: 600; font-size: 12px; margin-left: 6px; }
+.ps-next { color: #dfe8f5; font-weight: 700; margin-right: 8px; }
+/* ワールドシリーズ 試合記録 */
+.ws-game { background: rgba(20,32,58,0.5); border: 1px solid #2c4470; border-radius: 8px; margin-bottom: 8px; }
+.ws-game > summary { cursor: pointer; padding: 8px 12px; font-size: 15px; font-weight: 800; color: #ffe0a0; list-style: revert; }
+.ws-body { padding: 8px 12px 12px; }
+.ws-line { border-collapse: collapse; font-size: 13px; background: #fff; color: #1a2433; margin-bottom: 6px; }
+.ws-line th, .ws-line td { border: 1px solid #c8d2de; padding: 2px 7px; text-align: center; }
+.ws-line thead th { background: #dce6f3; } .ws-line .rsb-team { text-align: left; font-weight: 700; }
+.ws-line .rsb-total { font-weight: 800; background: #eef3fa; }
+.ws-dec { font-size: 12px; color: #cfe0a0; margin: 4px 0; }
+.ws-hr { font-size: 12px; color: #ffcc88; margin: 2px 0 6px; }
+.ws-boxes { display: flex; gap: 14px; flex-wrap: wrap; }
+.ws-boxes > div { flex: 1 1 320px; }
+.ws-boxes h6 { margin: 6px 0 3px; color: #9fc2ff; font-size: 12px; }
+.ws-box { border-collapse: collapse; font-size: 12px; width: 100%; background: #fff; color: #1a2433; }
+.ws-box th, .ws-box td { border: 1px solid #d2dae6; padding: 1px 6px; text-align: center; }
+.ws-box thead th { background: #e6edf6; } .ws-box .lname { text-align: left; }
+.ws-box .ps-cum { color: #b00; font-weight: 800; }
+/* トーナメント表 (SVG)。縦に収まるよう最大高さで制限し、アスペクト比維持で縮小 */
+.ps-bracket-wrap { width: 100%; overflow-x: auto; margin-top: 4px; text-align: center; }
+.ps-svg { display: block; margin: 0 auto; max-width: 100%; max-height: 58vh; }
+.ps-svg text { font-family: inherit; }
+/* 成績表(チーム別/ベスト20): 選手名・チーム名の列幅を揃える。
+   チーム名は最長「ダイヤモンドバックス」が収まる幅に固定し、AL/NLのベスト20で列を一致させる。
+   (太字の上位3行でも文字が切れないよう overflow による省略はしない) */
+.season-table .srow-name, .season-table .srow-team {
+  display: inline-block; white-space: nowrap; vertical-align: middle; text-align: left;
+}
+.season-table .srow-name { min-width: 140px; }
+.season-table .srow-team { min-width: 150px; }
+.season-table tbody tr { background: #fff; }
+.season-table tbody tr:nth-child(even) { background: #eef3fa; }
+.season-stats h4 { margin: 14px 0 4px; color: #fff; }
+.season-nav { margin-bottom: 10px; }
+/* 並び替え可能なヘッダ */
+.season-table th.sortable { cursor: pointer; user-select: none; }
+.season-table th.sortable:hover { background: #c4d6f1; }
+.season-table th.sorted { background: #aac6ee; color: #0b2d6b; }
+.season-table td.lname { font-weight: 600; }
+.season-table td.sortcol { font-weight: 800; color: #0b2d6b; }      /* ソート中の列を強調 */
+.season-table .rankcell { font-weight: 700; }
+.season-table tbody tr.srow:hover td { background: #dceafc; }
+/* 上位3名: 金・銀・銅 (td 背景で even/odd を上書き) */
+.season-table tr.rank-1 td { background: #fff2bf; font-weight: 700; }
+.season-table tr.rank-2 td { background: #e7ebef; font-weight: 700; }
+.season-table tr.rank-3 td { background: #f4e0c8; font-weight: 700; }
+.season-table tr.rank-1 td.sortcol { color: #8a6d00; }
+.season-table tr.rank-2 td.sortcol { color: #555f69; }
+.season-table tr.rank-3 td.sortcol { color: #8a5a1e; }
+/* 成績表の選手名リンク (明るい行向けに青リンク色) */
+.season-table .player-link { color: #0b3aa0; text-decoration-color: rgba(11,58,160,0.45); }
+.season-table .player-link:hover { color: #1763e0 !important; text-shadow: none !important; }
+/* チーム別成績(規定モード): ソート列の青色・メダルの文字色を無効化し、未到達者は黒字に統一 */
+.qual-table td.sortcol,
+.qual-table tr.rank-1 td.sortcol,
+.qual-table tr.rank-2 td.sortcol,
+.qual-table tr.rank-3 td.sortcol { color: #1a2433; }
+/* 規定到達者は選手名・成績を赤字 (最後に置いて確実に優先) */
+.season-table tr.qualified td,
+.season-table tr.qualified td.sortcol,
+.qual-table tr.qualified td,
+.qual-table tr.qualified td.sortcol { color: #cc0000; }
+.season-table tr.qualified .player-link { color: #cc0000; }
+.season-table tr.qualified .player-link:hover { color: #e2392b !important; }
+.qmark { color: #cc0000; }
+/* 対戦成績マトリクス */
+.h2h-table { width: auto; }
+.h2h-table th { background: #dce6f3; color: #15233a; }
+.h2h-table td { font-weight: 700; min-width: 56px; }
+.h2h-table td.h2h-self { background: #d7dde5; color: #889; font-weight: 400; }
+.h2h-table td.h2h-win { color: #1565c0; }
+.h2h-table td.h2h-lose { color: #c0392b; }
+

@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>MLBカード野球ゲーム</title>
+<link rel="stylesheet" href="style.css?v=141">
+</head>
+<body>
+  <div class="app">
+
+    <header class="app-header">
+      <h1>⚾ MLB CARD BASEBALL</h1>
+    </header>
+
+    <!-- スタート画面 (モード選択) -->
+    <section id="start" class="screen">
+      <div class="start-menu">
+        <h2 class="start-title">モード選択</h2>
+        <button id="mode-exhibition" class="mode-btn">
+          <span class="mode-icon">⚾</span>
+          <span class="mode-name">エキシビジョン</span>
+          <span class="mode-desc">単戦の試合を設定して対戦</span>
+        </button>
+        <button id="mode-season" class="mode-btn">
+          <span class="mode-icon">🏆</span>
+          <span class="mode-name">レギュラーシーズン</span>
+          <span class="mode-desc">2リーグ30球団・6地区・162試合＋ポストシーズン</span>
+        </button>
+        <button id="mode-team" class="mode-btn">
+          <span class="mode-icon">📋</span>
+          <span class="mode-name">チーム編成</span>
+          <span class="mode-desc">守備位置とローテーションを編成</span>
+        </button>
+        <a id="mode-cardadd" class="mode-btn" href="import.html">
+          <span class="mode-icon">🃏</span>
+          <span class="mode-name">カード追加</span>
+          <span class="mode-desc">選手カードHTMLを取り込み</span>
+        </a>
+      </div>
+    </section>
+
+    <!-- チーム編成画面 -->
+    <section id="teambuild" class="screen hidden">
+      <div class="tb-topbar">
+        <h2>📋 チーム編成</h2>
+        <div class="tb-controls">
+          <label>チーム:
+            <select id="tb-team-select">
+              <option value="LAD">ドジャース (LAD)</option>
+              <option value="NYY">ヤンキース (NYY)</option>
+              <option value="BOS">レッドソックス (BOS)</option>
+              <option value="original">オリジナル(全選手)</option>
+            </select>
+          </label>
+          <button id="tb-auto-order" class="btn btn-sub">🎲 オーダー自動編成</button>
+          <button id="tb-auto" class="btn btn-sub">🎲 自動編成</button>
+          <button id="tb-save" class="btn btn-primary">💾 チームセット</button>
+          <button id="tb-reset" class="btn btn-danger">⟲ リセット</button>
+          <button id="tb-back" class="btn btn-sub">← スタートへ戻る</button>
+        </div>
+      </div>
+      <div class="tb-body">
+        <!-- 左: 打順1〜9 + DH リスト -->
+        <aside class="tb-lineup-panel">
+          <h3>打順</h3>
+          <ol id="tb-lineup-list"></ol>
+          <h3 class="tb-ph-title">控え <span class="tb-ph-sub">(PH、代走、守備固め)</span></h3>
+          <ol id="tb-ph-list"></ol>
+        </aside>
+        <!-- 左寄せ: ダイヤモンド配置 (凡例は 3B スロット内に表示) -->
+        <div class="tb-center">
+          <div class="tb-diamond" id="tb-diamond"></div>
+        </div>
+        <!-- 右: 投手陣 (2列、先発が右上) -->
+        <div class="tb-pitcher-area">
+          <h3>投手陣</h3>
+          <div class="tb-pitcher-row" id="tb-pitcher-row"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- セットアップ画面 -->
+    <section id="setup" class="screen hidden">
+      <div class="setup-top-bar">
+        <h2>試合セットアップ</h2>
+        <div class="setup-top-actions">
+          <button id="backToStartFromSetup" class="btn btn-sub">⤴ スタートへ</button>
+          <a href="import.html" class="btn btn-sub">＋ カードを追加</a>
+          <button id="autoFill" class="btn btn-sub">🎲 ランダム自動編成</button>
+          <button id="startGame" class="btn btn-primary">▶ 試合開始</button>
+        </div>
+      </div>
+
+      <div class="setup-grid">
+        <div class="setup-col">
+          <h3>
+            <span class="side-tag">先攻 AWAY</span>
+            <select class="team-filter" data-side="away">
+              <option value="original">オリジナル（全選手）</option>
+              <option value="LAD">ドジャース（LAD のみ）</option>
+              <option value="NYY">ヤンキース（NYY のみ）</option>
+              <option value="BOS">レッドソックス（BOS のみ）</option>
+            </select>
+            <select class="order-filter" data-side="away" title="チーム編成で登録した打順オーダー">
+              <option value="0">オーダー1</option>
+              <option value="1">オーダー2</option>
+              <option value="2">オーダー3</option>
+            </select>
+          </h3>
+          <div class="lineup-area" data-side="away">
+            <div class="lineup-pitcher">
+              <label>先発</label>
+              <ol class="pitcher-slots" data-side="away"></ol>
+            </div>
+            <div class="lineup-batters">
+              <label>打順（1〜9番）</label>
+              <ol class="batter-slots" data-side="away"></ol>
+            </div>
+            <div class="lineup-relief">
+              <label>中継・SU・抑え・MU（空欄可）</label>
+              <ol class="relief-slots" data-side="away"></ol>
+            </div>
+            <div class="lineup-bench">
+              <label>控え（PH・代走・守備）（空欄可）</label>
+              <ol class="bench-slots" data-side="away"></ol>
+            </div>
+          </div>
+        </div>
+
+        <div class="setup-col">
+          <h3>
+            <span class="side-tag">後攻 HOME</span>
+            <select class="team-filter" data-side="home">
+              <option value="original">オリジナル（全選手）</option>
+              <option value="LAD">ドジャース（LAD のみ）</option>
+              <option value="NYY">ヤンキース（NYY のみ）</option>
+              <option value="BOS">レッドソックス（BOS のみ）</option>
+            </select>
+            <select class="order-filter" data-side="home" title="チーム編成で登録した打順オーダー">
+              <option value="0">オーダー1</option>
+              <option value="1">オーダー2</option>
+              <option value="2">オーダー3</option>
+            </select>
+          </h3>
+          <div class="lineup-area" data-side="home">
+            <div class="lineup-pitcher">
+              <label>先発</label>
+              <ol class="pitcher-slots" data-side="home"></ol>
+            </div>
+            <div class="lineup-batters">
+              <label>打順（1〜9番）</label>
+              <ol class="batter-slots" data-side="home"></ol>
+            </div>
+            <div class="lineup-relief">
+              <label>中継・SU・抑え・MU（空欄可）</label>
+              <ol class="relief-slots" data-side="home"></ol>
+            </div>
+            <div class="lineup-bench">
+              <label>控え（PH・代走・守備）（空欄可）</label>
+              <ol class="bench-slots" data-side="home"></ol>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- 試合画面 -->
+    <section id="game" class="screen hidden">
+      <!-- 最上段: タイトル + 操作バー -->
+      <div class="game-topbar">
+        <h1 class="game-title">⚾ MLB CARD BASEBALL</h1>
+        <div class="game-controls">
+          <button id="reliefBtn"  class="btn btn-sub">🔁 投手交代</button>
+          <button id="pinchBtn"   class="btn btn-sub">🦇 代打/代走/盗塁</button>
+          <button id="autoPlay"   class="btn btn-sub">▶▶ 自動 1イニング</button>
+          <button id="autoFinish" class="btn btn-sub">⏩ 試合終了まで</button>
+          <button id="resetGame"  class="btn btn-danger">⟲ リセット</button>
+          <button id="backToSetupGame" class="btn btn-sub">⤴ セットアップ</button>
+          <button id="backToSeasonGame" class="btn btn-sub" hidden>🏆 シーズンに戻る</button>
+          <button id="backToStartGame" class="btn btn-sub" hidden>🏠 スタートへ</button>
+          <a href="import.html" class="btn btn-sub gc-add">＋ カードを追加</a>
+        </div>
+      </div>
+
+      <!-- 本体: 左(VSカード + 選手成績) / 右(スコアボード + ダイヤモンド) -->
+      <div class="game-main">
+        <!-- 左: VSカード2枚 + AWAY/HOME成績 -->
+        <div class="game-left">
+          <div class="vs-area">
+            <div class="vs-card vs-pitcher" id="card-pitcher"></div>
+            <div class="vs-card vs-batter"  id="card-batter"></div>
+          </div>
+          <div class="stats-area">
+            <aside class="side-board" id="board-away">
+              <h4 class="board-title">AWAY <span class="bt-name" id="bt-away"></span></h4>
+              <div class="board-lineup" id="lineup-away"></div>
+              <div class="board-pitchers" id="pitchers-away"></div>
+            </aside>
+            <aside class="side-board" id="board-home">
+              <h4 class="board-title">HOME <span class="bt-name" id="bt-home"></span></h4>
+              <div class="board-lineup" id="lineup-home"></div>
+              <div class="board-pitchers" id="pitchers-home"></div>
+            </aside>
+          </div>
+        </div>
+
+        <!-- 右: スコアボード(縮小) + ダイヤモンド -->
+        <div class="game-right">
+          <div class="scoreboard">
+            <table>
+              <thead>
+                <tr>
+                  <th class="team-name">チーム</th>
+                  <th class="ib" data-ib="1">1</th>
+                  <th class="ib" data-ib="2">2</th>
+                  <th class="ib" data-ib="3">3</th>
+                  <th class="ib" data-ib="4">4</th>
+                  <th class="ib" data-ib="5">5</th>
+                  <th class="ib" data-ib="6">6</th>
+                  <th class="ib" data-ib="7">7</th>
+                  <th class="ib" data-ib="8">8</th>
+                  <th class="ib" data-ib="9">9</th>
+                  <th>計</th><th>H</th><th>K</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr id="row-away"><th class="team-name">AWAY</th></tr>
+                <tr id="row-home"><th class="team-name">HOME</th></tr>
+              </tbody>
+            </table>
+          </div>
+          <!-- 野球場ビュー (走者をその塁上に表示。実況を補完) -->
+          <div class="field-area">
+          <!-- 打球結果ラベル (グラウンド上面の余白に表示) -->
+          <div class="bb-label" id="bbLabel"></div>
+          <!-- グラウンド本体 (芝・軌道・走者) を少し下げて配置し、上面に文字の余白を確保 -->
+          <div class="field-inner">
+          <svg class="field-svg" viewBox="0 0 200 180" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+            <defs>
+              <pattern id="grassStripe" x="0" y="0" width="14" height="14" patternUnits="userSpaceOnUse">
+                <rect width="14" height="14" fill="#4ea84a"/>
+                <rect x="0" width="7" height="14" fill="#3f9a3b"/>
+              </pattern>
+            </defs>
+            <!-- 外野 (アーチ形に緑芝) — 左右の黒余白を最小化するため横に広めに描画 -->
+            <path d="M 100 170 L 10 95 Q 10 12 100 6 Q 190 12 190 95 Z" fill="url(#grassStripe)" stroke="#2b6f29" stroke-width="1"/>
+            <!-- 内野 (土) -->
+            <path d="M 100 148 L 60 100 L 100 56 L 140 100 Z" fill="#caa177" stroke="#8a6a45" stroke-width="0.6"/>
+            <!-- 内野芝 -->
+            <circle cx="100" cy="100" r="22" fill="#5cb85c"/>
+            <!-- マウンド -->
+            <circle cx="100" cy="100" r="7" fill="#caa177" stroke="#8a6a45" stroke-width="0.5"/>
+            <!-- 塁 (白い四角) -->
+            <rect class="bs bs-1st" x="135" y="94" width="12" height="12" fill="#fff" stroke="#333" stroke-width="1" transform="rotate(45 141 100)"/>
+            <rect class="bs bs-2nd" x="94"  y="54" width="12" height="12" fill="#fff" stroke="#333" stroke-width="1" transform="rotate(45 100 60)"/>
+            <rect class="bs bs-3rd" x="53"  y="94" width="12" height="12" fill="#fff" stroke="#333" stroke-width="1" transform="rotate(45 59 100)"/>
+            <!-- ホーム (五角形) -->
+            <polygon points="92,142 108,142 108,148 100,154 92,148" fill="#fff" stroke="#333" stroke-width="1"/>
+            <!-- ファウルライン -->
+            <line x1="100" y1="148" x2="40" y2="84" stroke="#fff" stroke-width="1" opacity="0.7"/>
+            <line x1="100" y1="148" x2="160" y2="84" stroke="#fff" stroke-width="1" opacity="0.7"/>
+          </svg>
+          <!-- 打球の軌道オーバーレイ (JSで innerHTML を更新) -->
+          <div class="bb-overlay" id="bbOverlay"></div>
+          <!-- 走者バッジ (JSで visible 切替) -->
+          <div class="runner-badge runner-1st" id="runner-1">
+            <span class="rn-circle"><span class="rn-speed">-</span></span>
+            <span class="rn-name">-</span>
+          </div>
+          <div class="runner-badge runner-2nd" id="runner-2">
+            <span class="rn-circle"><span class="rn-speed">-</span></span>
+            <span class="rn-name">-</span>
+          </div>
+          <div class="runner-badge runner-3rd" id="runner-3">
+            <span class="rn-circle"><span class="rn-speed">-</span></span>
+            <span class="rn-name">-</span>
+          </div>
+          <!-- インフォメーション (イニング/交代/盗塁/試合終了 等) を外野付近にオレンジ太字で表示 -->
+          <div class="bb-info" id="bbInfo" hidden></div>
+          </div><!-- /.field-inner -->
+          <!-- 回 + アウトカウント(赤丸) をダイヤモンド枠内・右下に表示 -->
+          <div class="bb-state" id="bbState">
+            <span class="bs-inning" id="bbStateInning">1回表</span>
+            <span class="bs-outs" id="bbStateOuts" aria-label="アウトカウント"></span>
+          </div>
+          <!-- 試合終了後の振り返り (戻る/進む)。ダイヤモンド枠内・下部にオーバーレイ表示 -->
+          <div class="bb-history" id="bbHistory" hidden>
+            <select class="bb-hist-sel" id="bbHistInning" title="イニングへジャンプ"></select>
+            <button type="button" class="bb-hist-btn" id="bbHistPrev">◀ 戻る</button>
+            <span class="bb-hist-count" id="bbHistCount"></span>
+            <button type="button" class="bb-hist-btn" id="bbHistNext">進む ▶</button>
+          </div>
+        </div>
+        </div><!-- /.game-right -->
+      </div><!-- /.game-main -->
+
+      <!-- 実況パネルは撤廃 (ダイヤモンドで補完)。logLine 用に非表示の #log を残す -->
+      <ul id="log" hidden></ul>
+
+    </section>
+
+    <!-- 結果画面 -->
+    <section id="result" class="screen hidden">
+      <div class="result-header">
+        <h2 id="result-title">試合終了</h2>
+        <div id="result-score-line"></div>
+        <div class="result-actions">
+          <button id="backToSetup" class="btn btn-primary">⤴ セットアップに戻る</button>
+          <button id="result-to-start" class="btn btn-sub" hidden>🏠 モード選択へ戻る</button>
+          <button id="season-next" class="btn btn-primary" hidden>セーブして次の試合 ▶</button>
+          <button id="season-tohub" class="btn btn-sub" hidden>⤴ セーブしてレギュラーシーズンへ</button>
+        </div>
+      </div>
+      <div id="result-summary"></div>
+    </section>
+
+    <!-- レギュラーシーズン画面 -->
+    <section id="season" class="screen hidden">
+      <div class="season-topbar">
+        <h2>🏆 レギュラーシーズン</h2>
+        <div class="season-controls">
+          <button id="season-back" class="btn btn-sub">← スタートへ</button>
+          <button id="season-reset" class="btn btn-danger">⟲ シーズン初期化</button>
+        </div>
+      </div>
+      <div id="season-body"></div>
+    </section>
+
+  </div>
+
+  <script src="players.js?v=26"></script>
+  <script src="card_store.js?v=2"></script>
+  <script src="card_view.js?v=26"></script>
+  <script src="game.js?v=309"></script>
+</body>
+</html>

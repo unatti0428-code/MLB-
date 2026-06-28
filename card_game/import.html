@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>カードを追加 — MLBカード野球ゲーム</title>
+<link rel="stylesheet" href="style.css?v=57">
+<style>
+  .drop-zone {
+    border: 3px dashed #6699ff;
+    background: rgba(0,0,0,0.3);
+    border-radius: 12px;
+    padding: 18px 20px;
+    text-align: center;
+    margin-bottom: 12px;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .drop-zone.dragover {
+    background: rgba(100,150,255,0.2);
+    border-color: #ffcc00;
+  }
+  .drop-zone p { font-size: 16px; margin: 4px 0; }
+  .drop-zone .small { font-size: 12px; color: #c8d4ff; }
+  .file-input { display: none; }
+  .imported-list {
+    background: rgba(0,0,0,0.4);
+    border: 2px solid #6677cc;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .imported-list h3 {
+    font-size: 14px; color: #c8d4ff;
+    border-left: 4px solid #8899ff; padding-left: 8px; margin-bottom: 10px;
+  }
+  .imported-list ul { list-style: none; }
+  .imported-list li {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 8px; border-bottom: 1px dashed #6677cc44;
+    font-size: 13px;
+  }
+  .imported-list .pl-info { flex: 1; }
+  .imported-list .pl-name { font-weight: 900; font-size: 15px; color: #ffffff; }
+  .imported-list .pl-meta { font-size: 11px; color: #c8d4ff; }
+  .imported-list .pl-type {
+    padding: 2px 6px; border-radius: 4px; font-size: 10px;
+    margin-right: 6px;
+  }
+  .imported-list .pl-type.batter { background: #228822; color:#fff; }
+  .imported-list .pl-type.pitcher { background: #882222; color:#fff; }
+  .imported-list .pl-source { font-size: 10px; color: #aaa; }
+  .imported-list .pl-del {
+    background: #aa2222; border: none; color: #fff;
+    padding: 4px 10px; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 11px;
+  }
+  .empty-msg { color: #888; font-style: italic; padding: 10px; text-align: center; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  /* 表示切替トグル (チーム別 / 総合力別 / 年代別) */
+  .view-switch {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin: 0 0 10px;
+  }
+  .view-switch .vs-label { font-size: 12px; color: #c8d4ff; margin-right: 2px; }
+  .view-switch .vs-btn {
+    padding: 5px 12px; border-radius: 6px; cursor: pointer;
+    font-family: inherit; font-size: 12px; font-weight: 700;
+    background: rgba(100,130,255,0.15); color: #c8d4ff;
+    border: 1px solid #6677cc66;
+  }
+  .view-switch .vs-btn:hover { background: rgba(100,130,255,0.3); }
+  .view-switch .vs-btn.active {
+    background: linear-gradient(135deg,#4f9dff,#2a5fd0);
+    color: #fff; border-color: #8fb6ff;
+  }
+  /* チーム別グルーピング (クリックで開閉) */
+  .imported-list .team-group-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; cursor: pointer;
+    background: rgba(100,130,255,0.12);
+    border-bottom: 1px solid #6677cc44;
+    user-select: none;
+  }
+  .imported-list .team-group-head:hover { background: rgba(100,130,255,0.22); }
+  .imported-list .tg-arrow { width: 14px; color: #9fb4ff; }
+  .imported-list .tg-name { font-size: 15px; font-weight: 900; color: #fff; }
+  .imported-list .tg-count { font-size: 11px; color: #aab8e8; margin-left: auto; }
+  /* チーム選手を 2〜3列のグリッドで表示 */
+  .imported-list .team-players-wrap {
+    display: block; border-bottom: none;
+    padding: 8px 6px 12px 12px; background: rgba(0,0,0,0.15);
+  }
+  .imported-list .team-players-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 8px;
+  }
+  .imported-list .pl-card {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 6px; padding: 6px 8px;
+    background: rgba(0,0,0,0.30); border: 1px solid #6677cc33; border-radius: 6px;
+  }
+  .imported-list .pl-card .pl-info { min-width: 0; }
+  .imported-list .pl-card .pl-source { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 総合力バッジ (ワンポイント表示) */
+  .ovr-badge {
+    display: inline-block; min-width: 22px; padding: 1px 5px;
+    border-radius: 9px; font-size: 12px; font-weight: 900; line-height: 1.4;
+    text-align: center; vertical-align: middle;
+    background: #cfd8e6; color: #1a2230; box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  }
+  .ovr-badge.ovr-s { background: linear-gradient(135deg,#ffe08a,#ff9d2f); color: #3a2400; box-shadow: 0 0 6px rgba(255,177,71,0.55); }
+  .ovr-badge.ovr-a { background: linear-gradient(135deg,#ff9aa2,#ff5e7e); color: #fff; }
+  .ovr-badge.ovr-b { background: linear-gradient(135deg,#9ad8ff,#4f9dff); color: #06224a; }
+  .ovr-badge.ovr-c { background: #cfe0c8; color: #22351c; }
+  .ovr-badge.ovr-d { background: #d8d8d8; color: #333; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="app-header">
+    <h1>⚾ カードを追加</h1>
+    <div class="header-actions">
+      <a href="index.html" class="btn btn-sub">← ゲームに戻る</a>
+    </div>
+  </header>
+
+  <p style="margin-bottom: 14px; line-height: 1.6;">
+    選手カードHTML（例: <code style="background:#000;padding:2px 6px;border-radius:3px;">Aaジャッジ_2022_card.html</code>）をここにドラッグ&ドロップするか、選択してください。
+    複数同時に追加できます。追加した選手はこのブラウザに保存され、ゲーム画面の選手リストに自動で並びます。
+  </p>
+
+  <div id="dropZone" class="drop-zone">
+    <p>📁 ここにカードHTML（またはフォルダ）をドラッグ&ドロップ</p>
+    <p class="small">または</p>
+    <button id="pickBtn" class="btn btn-primary">ファイルを選ぶ</button>
+    <button id="pickDirBtn" class="btn btn-primary">📂 フォルダを選ぶ</button>
+    <input id="fileInput" type="file" class="file-input" accept=".html,.htm" multiple>
+    <input id="dirInput" type="file" class="file-input" webkitdirectory directory multiple>
+    <p class="small" style="margin-top: 6px;">対応形式: 添付されたサンプルカードと同じレイアウトのHTMLファイル。フォルダ選択時はその中のHTMLをまとめて追加します（サブフォルダ内も対象）。</p>
+  </div>
+
+  <div class="imported-list">
+    <h3>追加済みのカード（あなたのブラウザに保存）</h3>
+    <p id="capacityInfo" style="font-size:12px; color:#c8d4ff; margin:0 0 10px;">読み込み中…</p>
+    <div class="view-switch" id="viewSwitch">
+      <span class="vs-label">表示:</span>
+      <button class="vs-btn active" data-view="team">🏟️ チーム別</button>
+      <button class="vs-btn" data-view="ovr">⭐ 総合力別（投手→野手）</button>
+      <button class="vs-btn" data-view="era">📅 年代別（古い→新しい）</button>
+      <button class="vs-btn" data-view="pos">🧤 ポジション別</button>
+      <button class="vs-btn" data-view="title">🏅 タイトルホルダー</button>
+    </div>
+    <ul id="extraList"></ul>
+  </div>
+
+  <div class="imported-list">
+    <h3>初期搭載カード（サンプル6名・削除不可）</h3>
+    <ul id="builtinList"></ul>
+  </div>
+
+  <div class="actions">
+    <button id="exportBtn"  class="btn btn-sub">📥 追加カードをJSONでダウンロード</button>
+    <button id="clearBtn"   class="btn btn-danger">🗑️ 追加カードを全削除</button>
+  </div>
+
+  <p style="margin-top: 14px; color: #c8d4ff; font-size: 12px;">
+    ※ ブラウザのキャッシュをクリアすると追加分は消えます。長期保存したい場合は「JSONでダウンロード」してください。
+  </p>
+
+</div>
+
+<script src="players.js?v=3"></script>
+<script src="card_parser.js?v=5"></script>
+<script src="card_store.js?v=2"></script>
+<script src="card_view.js?v=3"></script>
+<script>
+(function(){
+  // カードは CardStore(IndexedDB) に保存。旧 localStorage は初回に自動移行される。
+  let extrasCache = [];   // 現在の追加カード一覧 (描画/操作用)
+  let currentView = 'team';   // 追加済みカードの表示方法: team / ovr / era
+  let ovrFirst = 'pitcher';   // 総合力別: 'pitcher'=投手から / 'batter'=野手から (再クリックでトグル)
+  let eraOrder = 'asc';       // 年代別(1年ごと): 'asc'=古い→新しい / 'desc'=新しい→古い (再クリックでトグル)
+  let teamYearMode = 'none';  // チーム別の年度: 'none'=年度まとめ(撤廃) / 'year'=年度別 (再クリックでトグル)
+  let posYearMode = 'none';   // ポジション別の年度: 'none'=年度まとめ / 'year'=年度別 (再クリックでトグル)
+
+  function fmtMB(bytes) { return (bytes / (1024 * 1024)).toFixed(1); }
+  // チーム名の正規化: 末尾の所属チーム数(例 "LAD2"→"LAD")を除く
+  function normalizeTeam(t) { return String(t || '').toUpperCase().replace(/[0-9]+$/, '') || 'その他'; }
+  // チーム表示順 (ア・リーグ東→中→西 → ナ・リーグ東→中→西)。一覧外のチームは末尾(アルファベット順)。
+  const TEAM_ORDER = ['NYY','BOS','TB','TOR','BAL','MIN','CLE','CWS','KC','DET','HOU','LAA','ATH','SEA','TEX','ATL','MIA','NYM','PHI','WSH','CHC','CIN','MIL','PIT','STL','ARI','COL','LAD','SD','SF'];
+  function teamRank(code) { const i = TEAM_ORDER.indexOf(code); return i < 0 ? 999 : i; }
+
+  // 選手の「総合力」(カード表面の power-value)。無ければ rawHtml から再抽出、
+  // それも無ければ 6 ステータスの平均で代用 (game.js の overallOf と同ロジック)。
+  function overallOf(p) {
+    if (!p || typeof p !== 'object') return null;
+    let v = null;
+    if (Number.isFinite(p.powerValue)) v = p.powerValue;
+    if (v === null && p.rawHtml) {
+      const m = p.rawHtml.match(/class="power-value"[^>]*>\s*([0-9]+)/);
+      if (m) v = parseInt(m[1], 10);
+    }
+    if (v === null && p.stats) {
+      const keys = (p.type === 'pitcher')
+        ? ['スタミナ','制球','緩急','精神','奪三振','球重']
+        : ['ミート','パワー','スピード','チャンス','選球眼','三振耐性'];
+      let sum = 0, n = 0;
+      for (const k of keys) { const x = parseFloat(p.stats[k]); if (Number.isFinite(x)) { sum += x; n++; } }
+      if (n > 0) v = Math.round(sum / n);
+    }
+    return Number.isFinite(v) ? v : null;
+  }
+  function ovrRank(v) {
+    if (!Number.isFinite(v)) return '';
+    if (v >= 95) return 's';
+    if (v >= 85) return 'a';
+    if (v >= 75) return 'b';
+    if (v >= 65) return 'c';
+    return 'd';
+  }
+  function ovrBadge(p) {
+    const v = overallOf(p);
+    if (!Number.isFinite(v)) return '';
+    return `<span class="ovr-badge ovr-${ovrRank(v)}" title="総合力">${v}</span>`;
+  }
+
+  // 並び順キー: 投手(先発→中継→抑え) → 野手(C→1B→2B→3B→SS→LF→CF→RF→外野→DH/守備無し)
+  const BAT_POS_ORDER = { 'C':0, '1B':1, '2B':2, '3B':3, 'SS':4, 'LF':5, 'CF':6, 'RF':7, 'OF':8 };
+  function sortKey(p) {
+    if (p.type === 'pitcher') {
+      const pos = p.position || '';
+      if (/先発/.test(pos)) return [0, 0, 0];           // 先発
+      const sv = parseFloat((p.record && p.record['セーブ']) || '0') || 0;
+      return [0, 1, sv];                                 // リリーフ: セーブ昇順=中継→抑え
+    }
+    // 野手: 主守備位置(出場イニング最大)で判定。DRS無しは DH(守備無し)で最後
+    let bestPos = null, bestInn = -1;
+    (p.drs || []).forEach(d => {
+      const inn = Number(d.innings) || 0;
+      if (BAT_POS_ORDER[d.pos] !== undefined && inn > bestInn) { bestInn = inn; bestPos = d.pos; }
+    });
+    if (bestPos === null) return [1, 99, 0];             // 守備無し → DH 扱いで最後
+    return [1, BAT_POS_ORDER[bestPos], 0];
+  }
+  function cmpCard(a, b) {
+    const ka = sortKey(a), kb = sortKey(b);
+    for (let i = 0; i < ka.length; i++) { if (ka[i] !== kb[i]) return ka[i] - kb[i]; }
+    return (a.fullNameTop || '').localeCompare(b.fullNameTop || '');
+  }
+  // 総合力の降順比較 (未取得は最後)
+  function cmpOvrDesc(a, b) {
+    const va = overallOf(a.p), vb = overallOf(b.p);
+    const na = Number.isFinite(va) ? va : -1;
+    const nb = Number.isFinite(vb) ? vb : -1;
+    if (na !== nb) return nb - na;
+    return (a.p.fullNameTop || '').localeCompare(b.p.fullNameTop || '');
+  }
+
+  // ポジション別表示用: 主守備位置の日本語ラベルと表示順
+  const POS_LABEL = { 'C':'捕手','1B':'一塁手','2B':'二塁手','3B':'三塁手','SS':'遊撃手','LF':'左翼手','CF':'中堅手','RF':'右翼手','OF':'外野手' };
+  const POS_GROUP_ORDER = ['投手','捕手','一塁手','二塁手','三塁手','遊撃手','左翼手','中堅手','右翼手','外野手','DH / 守備なし'];
+  function posRank(label) { const i = POS_GROUP_ORDER.indexOf(label); return i < 0 ? 99 : i; }
+  // 選手の主ポジション(日本語)。投手は「投手」、野手は出場イニング最大のDRS位置。守備記録なしは「DH / 守備なし」。
+  function primaryPosLabel(p) {
+    if (p.type === 'pitcher') return '投手';
+    let bestPos = null, bestInn = -1;
+    (p.drs || []).forEach(d => {
+      const inn = Number(d.innings) || 0;
+      if (POS_LABEL[d.pos] !== undefined && inn > bestInn) { bestInn = inn; bestPos = d.pos; }
+    });
+    return bestPos ? POS_LABEL[bestPos] : 'DH / 守備なし';
+  }
+
+  // タイトルホルダー表示用: アワード略称→日本語名 と 表示順
+  const AWARD_NAME = {
+    MVP:'MVP', WSMVP:'ワールドシリーズMVP', LCSMVP:'リーグ優勝シリーズMVP',
+    CY:'サイ・ヤング賞', ROY:'新人王',
+    AVG:'首位打者', ERA:'最優秀防御率', HR:'本塁打王', RBI:'打点王', SB:'盗塁王',
+    K:'最多奪三振', W:'最多勝', SV:'最多セーブ', HLD:'最多ホールド', OPS:'最高OPS',
+    HAA:'ハンク・アーロン賞', RC:'ロベルト・クレメンテ賞', CB:'カムバック賞',
+    GG:'ゴールドグラブ賞', SS:'シルバースラッガー賞', CSR:'盗塁阻止率1位',
+  };
+  const AWARD_ORDER = ['MVP','WSMVP','LCSMVP','CY','ROY','AVG','ERA','HR','RBI','SB','K','W','SV','HLD','OPS','HAA','RC','CB','GG','SS','CSR'];
+  // カード裏/表バナーの「タイトル: …」表記からアワード略称の配列を抽出 (重複除外)
+  function extractAwards(p) {
+    if (!p || !p.rawHtml) return [];
+    const m = p.rawHtml.match(/<span class="banner-awards"[^>]*>([\s\S]*?)<\/span>/);
+    if (!m) return [];
+    let txt = m[1].replace(/<[^>]*>/g, '').trim().replace(/^タイトル\s*[:：]\s*/, '');
+    if (!txt) return [];
+    const set = new Set();
+    txt.split(/\s+/).forEach(tok => {
+      const abbr = tok.replace(/\d+$/, '').trim();   // 末尾の回数(例 MVP2→MVP)を除去
+      if (abbr) set.add(abbr);
+    });
+    return [...set];
+  }
+
+  // 現在の表示方法(currentView)に応じて追加カードをグループ分けする。
+  // 戻り値: { keys: [表示順のグループキー], map: Map<key, [{p, idx}]>, defaultOpen }
+  function groupCards() {
+    const map = new Map();
+    const add = (key, p, idx) => {
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push({ p, idx });
+    };
+
+    if (currentView === 'ovr') {
+      // 投手 / 野手 ごとに分け、各グループ内は総合力の高い順。
+      // ovrFirst により「投手→野手」か「野手→投手」かをトグル
+      extrasCache.forEach((p, idx) => add(p.type === 'pitcher' ? '🥎 投手' : '🏏 野手', p, idx));
+      const order = (ovrFirst === 'pitcher') ? ['🥎 投手', '🏏 野手'] : ['🏏 野手', '🥎 投手'];
+      const keys = order.filter(k => map.has(k));
+      keys.forEach(k => map.get(k).sort(cmpOvrDesc));
+      return { keys, map, defaultOpen: true };
+    }
+
+    if (currentView === 'era') {
+      // 1年ごとに分け、各グループ内は総合力の高い順。
+      // eraOrder により「古い→新しい(asc)」か「新しい→古い(desc)」かをトグル
+      extrasCache.forEach((p, idx) => {
+        const y = parseInt(p.year, 10);
+        const key = Number.isFinite(y) ? `${y}年` : '年代不明';
+        add(key, p, idx);
+      });
+      const keys = Array.from(map.keys()).sort((a, b) => {
+        if (a === '年代不明') return 1;
+        if (b === '年代不明') return -1;
+        const ya = parseInt(a, 10), yb = parseInt(b, 10);
+        return (eraOrder === 'asc') ? (ya - yb) : (yb - ya);
+      });
+      keys.forEach(k => map.get(k).sort(cmpOvrDesc));
+      return { keys, map, defaultOpen: true };
+    }
+
+    if (currentView === 'title') {
+      // タイトルホルダー: アワードごとに分け、各グループ内は総合力の高い順。
+      //   1人が複数アワードを持つ場合は各グループに重複表示。無冠の選手は表示しない。
+      extrasCache.forEach((p, idx) => {
+        extractAwards(p).forEach(abbr => add(AWARD_NAME[abbr] || abbr, p, idx));
+      });
+      const nameRank = {};
+      AWARD_ORDER.forEach((abbr, i) => { nameRank[AWARD_NAME[abbr]] = i; });
+      const keys = Array.from(map.keys()).sort((a, b) => {
+        const ra = nameRank[a] ?? 99, rb = nameRank[b] ?? 99;
+        if (ra !== rb) return ra - rb;
+        return a.localeCompare(b);
+      });
+      keys.forEach(k => map.get(k).sort(cmpOvrDesc));   // 各グループ内は総合力の高い順
+      return { keys, map, defaultOpen: false };
+    }
+
+    if (currentView === 'pos') {
+      // ポジション別 (投手→捕手→内野→外野→DH順)。各グループ内は総合力の高い順。
+      //   posYearMode='year' なら ポジション内をさらに年度別に分割 (年度の新しい順)。
+      const byYear = (posYearMode === 'year');
+      const meta = new Map();   // key -> { posLabel, year }
+      extrasCache.forEach((p, idx) => {
+        const label = primaryPosLabel(p);
+        let key = label, year = null;
+        if (byYear) {
+          const y = parseInt(p.year, 10);
+          year = Number.isFinite(y) ? y : -1;
+          key = label + (Number.isFinite(y) ? ` ${y}年` : ' 年不明');
+        }
+        add(key, p, idx);
+        if (!meta.has(key)) meta.set(key, { posLabel: label, year });
+      });
+      const keys = Array.from(map.keys()).sort((a, b) => {
+        const ma = meta.get(a), mb = meta.get(b);
+        const ra = posRank(ma.posLabel), rb = posRank(mb.posLabel);
+        if (ra !== rb) return ra - rb;
+        return (mb.year ?? -1) - (ma.year ?? -1);   // 同ポジション内は年度の新しい順
+      });
+      keys.forEach(k => map.get(k).sort(cmpOvrDesc));   // 各グループ内は総合力の高い順
+      return { keys, map, defaultOpen: false };
+    }
+
+    // 既定: チーム別 (地区順: ア・リーグ→ナ・リーグ, 東→中→西)。
+    //   teamYearMode='year' なら チーム内をさらに年度別に分割、'none' なら年度をまとめる。
+    const byYear = (teamYearMode === 'year');
+    extrasCache.forEach((p, idx) => {
+      const team = normalizeTeam(p.team);
+      if (byYear) {
+        const y = parseInt(p.year, 10);
+        add(team + ' ' + (Number.isFinite(y) ? (y + '年') : '年不明'), p, idx);
+      } else {
+        add(team, p, idx);
+      }
+    });
+    const keyTeam = (k) => k.split(' ')[0];
+    const keyYear = (k) => { const m = k.split(' ')[1]; if (!m || m === '年不明') return -1; return parseInt(m, 10) || -1; };
+    const keys = Array.from(map.keys()).sort((a, b) => {
+      const ra = teamRank(keyTeam(a)), rb = teamRank(keyTeam(b));
+      if (ra !== rb) return ra - rb;
+      if (keyTeam(a) !== keyTeam(b)) return keyTeam(a).localeCompare(keyTeam(b));  // 一覧外チームはアルファベット順
+      return keyYear(b) - keyYear(a);   // 同チーム内は年度の新しい順
+    });
+    keys.forEach(k => map.get(k).sort((a, b) => cmpCard(a.p, b.p)));
+    return { keys, map, defaultOpen: false };
+  }
+
+  async function refreshCapacity() {
+    const el = document.getElementById('capacityInfo');
+    if (!el) return;
+    const count = extrasCache.length;
+    const modeLabel = (window.CardStore && window.CardStore.mode && window.CardStore.mode() === 'idb')
+      ? 'IndexedDB (大容量保存)'
+      : 'localStorage (約45枚まで)';
+    let usageTxt = '';
+    if (window.CardStore && window.CardStore.estimate) {
+      const est = await window.CardStore.estimate();
+      if (est && est.usage != null && est.quota != null) {
+        usageTxt = ` ／ 使用量 ${fmtMB(est.usage)}MB ・ 上限の目安 ${fmtMB(est.quota)}MB`;
+      }
+    }
+    el.textContent = `現在 ${count} 枚を保存中（保存先: ${modeLabel}）${usageTxt}`;
+  }
+
+  async function render() {
+    extrasCache = (window.CardStore) ? await window.CardStore.getAll() : [];
+    const ul = document.getElementById('extraList');
+    ul.innerHTML = '';
+    if (extrasCache.length === 0) {
+      ul.innerHTML = '<li class="empty-msg">まだ追加されていません</li>';
+    } else {
+      // 現在の表示方法でグループ分け。見出しをクリックで開閉
+      const { keys, map, defaultOpen } = groupCards();
+      if (keys.length === 0) {
+        ul.innerHTML = (currentView === 'title')
+          ? '<li class="empty-msg">タイトル(アワード)を獲得した選手がいません</li>'
+          : '<li class="empty-msg">該当する選手がいません</li>';
+      }
+      for (const key of keys) {
+        const items = map.get(key);
+        const batters = items.filter(x => x.p.type === 'batter').length;
+        const pitchers = items.length - batters;
+        const detail = (pitchers > 0 && batters > 0) ? `（投手${pitchers}・野手${batters}）` : '';
+        const head = document.createElement('li');
+        head.className = 'team-group-head';
+        head.dataset.group = key;
+        if (defaultOpen) head.classList.add('open');
+        head.innerHTML = `<span class="tg-arrow">${defaultOpen ? '▼' : '▶'}</span>
+          <span class="tg-name">${key}</span>
+          <span class="tg-count">${items.length}名${detail}</span>`;
+        ul.appendChild(head);
+        // 選手を 2〜3列グリッドで格納するラッパー (見出しクリックで開閉)
+        const wrap = document.createElement('li');
+        wrap.className = 'team-players-wrap';
+        wrap.dataset.group = key;
+        wrap.style.display = defaultOpen ? '' : 'none';
+        const grid = document.createElement('div');
+        grid.className = 'team-players-grid';
+        items.forEach(({ p, idx }) => {
+          const card = document.createElement('div');
+          card.className = 'pl-card';
+          card.innerHTML = `
+            <div class="pl-info">
+              <span class="pl-type ${p.type}">${p.type === 'batter' ? '打者' : '投手'}</span>
+              ${ovrBadge(p)}
+              <span class="pl-name player-link" data-src="extra" data-idx="${idx}" title="クリックで詳細カードを表示">${p.fullNameTop}</span>
+              <span class="pl-meta">(${p.year || '-'} ${p.team || '-'} / ${p.position || '-'})</span>
+              <div class="pl-source">📄 ${p.sourceFile || ''}</div>
+            </div>
+            <button class="pl-del" data-idx="${idx}">削除</button>
+          `;
+          grid.appendChild(card);
+        });
+        wrap.appendChild(grid);
+        ul.appendChild(wrap);
+      }
+    }
+    // ビルトイン
+    const ulb = document.getElementById('builtinList');
+    ulb.innerHTML = '';
+    (window.PLAYERS || []).forEach((p, idx) => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <div class="pl-info">
+          <span class="pl-type ${p.type}">${p.type === 'batter' ? '打者' : '投手'}</span>
+          ${ovrBadge(p)}
+          <span class="pl-name player-link" data-src="builtin" data-idx="${idx}" title="クリックで詳細カードを表示">${p.fullNameTop}</span>
+          <span class="pl-meta">(${p.year || '-'} ${p.team || '-'} / ${p.position || '-'})</span>
+        </div>
+      `;
+      ulb.appendChild(li);
+    });
+    refreshCapacity();
+  }
+
+  // 選手名クリック → 詳細カード表示
+  document.body.addEventListener('click', e => {
+    const link = e.target.closest('.player-link');
+    if (!link) return;
+    const src = link.dataset.src;
+    const idx = +link.dataset.idx;
+    const p = (src === 'extra') ? extrasCache[idx] : (window.PLAYERS || [])[idx];
+    if (p) window.CARD_VIEW.show(p);
+  });
+
+  document.getElementById('extraList').addEventListener('click', async e => {
+    if (e.target.classList.contains('pl-del')) {
+      const idx = +e.target.dataset.idx;
+      const p = extrasCache[idx];
+      if (!p) return;
+      await window.CardStore.removeByKey(window.CardStore.cardKey(p));
+      render();
+      return;
+    }
+    // グループ見出しクリック → そのグループの選手グリッドを開閉
+    const head = e.target.closest('.team-group-head');
+    if (head) {
+      const group = head.dataset.group;
+      const open = head.classList.toggle('open');
+      const arrow = head.querySelector('.tg-arrow');
+      if (arrow) arrow.textContent = open ? '▼' : '▶';
+      document.querySelectorAll('#extraList .team-players-wrap').forEach(w => {
+        if (w.dataset.group === group) w.style.display = open ? '' : 'none';
+      });
+    }
+  });
+
+  // ビュー切替ボタンのラベルを現在のサブ並び順に合わせて更新
+  function updateViewButtonLabels() {
+    const ovrBtn = document.querySelector('#viewSwitch .vs-btn[data-view="ovr"]');
+    const eraBtn = document.querySelector('#viewSwitch .vs-btn[data-view="era"]');
+    if (ovrBtn) {
+      ovrBtn.textContent = `⭐ 総合力別（${ovrFirst === 'pitcher' ? '投手→野手' : '野手→投手'}）`;
+      ovrBtn.title = 'クリックで投手/野手の表示順を切り替え（各グループ内は総合力の高い順）';
+    }
+    if (eraBtn) {
+      eraBtn.textContent = `📅 年代別（${eraOrder === 'asc' ? '古い→新しい' : '新しい→古い'}）`;
+      eraBtn.title = 'クリックで年の並び順を切り替え（各年内は総合力の高い順）';
+    }
+    const teamBtn = document.querySelector('#viewSwitch .vs-btn[data-view="team"]');
+    if (teamBtn) {
+      teamBtn.textContent = `🏟️ チーム別（${teamYearMode === 'year' ? '年度別' : '年度まとめ'}）`;
+      teamBtn.title = 'クリックで「年度別 / 年度まとめ」を切替（地区順: ア・リーグ→ナ・リーグ, 東→中→西）';
+    }
+    const posBtn = document.querySelector('#viewSwitch .vs-btn[data-view="pos"]');
+    if (posBtn) {
+      posBtn.textContent = `🧤 ポジション別（${posYearMode === 'year' ? '年度別' : '年度まとめ'}）`;
+      posBtn.title = 'クリックで「年度別 / 年度まとめ」を切替（各グループ内は総合力の高い順）';
+    }
+  }
+
+  // 表示切替 (チーム別 / 総合力別 / 年代別)。同じビューを再クリックでサブ並び順をトグル
+  document.getElementById('viewSwitch').addEventListener('click', e => {
+    const btn = e.target.closest('.vs-btn');
+    if (!btn) return;
+    const view = btn.dataset.view;
+    if (view === currentView) {
+      // 同じビューを再クリック → 並び順をトグル
+      if (view === 'ovr')       ovrFirst = (ovrFirst === 'pitcher') ? 'batter' : 'pitcher';
+      else if (view === 'era')  eraOrder = (eraOrder === 'asc') ? 'desc' : 'asc';
+      else if (view === 'team') teamYearMode = (teamYearMode === 'none') ? 'year' : 'none';  // 年度別 ⇔ 年度まとめ
+      else if (view === 'pos')  posYearMode = (posYearMode === 'none') ? 'year' : 'none';    // ポジション＋年度別 ⇔ 年度まとめ
+      else return;
+    } else {
+      currentView = view;
+    }
+    document.querySelectorAll('#viewSwitch .vs-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.view === currentView);
+    });
+    updateViewButtonLabels();
+    render();
+  });
+
+  // ファイル選択 / フォルダ選択
+  const drop = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const dirInput  = document.getElementById('dirInput');
+  document.getElementById('pickBtn').addEventListener('click', () => fileInput.click());
+  document.getElementById('pickDirBtn').addEventListener('click', () => dirInput.click());
+  fileInput.addEventListener('change', e => handleFiles(Array.from(e.target.files)));
+  // フォルダ選択 (webkitdirectory): 配下の全ファイルが files に入る → HTMLのみ handleFiles で抽出
+  dirInput.addEventListener('change', e => handleFiles(Array.from(e.target.files)));
+
+  // ドラッグ&ドロップ (フォルダもドロップ可)
+  ['dragenter','dragover'].forEach(ev => {
+    drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('dragover'); });
+  });
+  ['dragleave','drop'].forEach(ev => {
+    drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('dragover'); });
+  });
+  drop.addEventListener('drop', async e => {
+    const files = await gatherDroppedFiles(e.dataTransfer);
+    handleFiles(files);
+  });
+
+  // ドロップされたフォルダ/ファイルを再帰的に File[] へ展開 (1階層以上も対応)
+  async function gatherDroppedFiles(dataTransfer) {
+    const items = dataTransfer.items;
+    // webkitGetAsEntry 非対応なら従来通りファイルのみ
+    if (!items || !items.length || typeof items[0].webkitGetAsEntry !== 'function') {
+      return Array.from(dataTransfer.files || []);
+    }
+    // entry は同期的に取得しておく (await 後は dataTransfer が無効化されるため)
+    const entries = [];
+    for (const it of items) {
+      const entry = it.webkitGetAsEntry();
+      if (entry) entries.push(entry);
+    }
+    const files = [];
+    async function walk(entry) {
+      if (entry.isFile) {
+        const f = await new Promise((res, rej) => entry.file(res, rej));
+        files.push(f);
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        let batch;
+        do {
+          batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+          for (const e of batch) await walk(e);
+        } while (batch.length > 0);
+      }
+    }
+    for (const e of entries) await walk(e);
+    return files;
+  }
+
+  async function handleFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    // HTML のみ対象 (フォルダ内の画像等は静かにスキップ)
+    const htmlFiles = files.filter(f => /\.html?$/i.test(f.name));
+    const nonHtml = files.length - htmlFiles.length;
+    if (htmlFiles.length === 0) {
+      alert('追加対象のHTMLカードが見つかりませんでした。');
+      return;
+    }
+    let existing = (window.CardStore) ? await window.CardStore.getAll() : [];
+    // 同一性キーは CardStore.cardKey に統一 (名前+年+チーム+種別)。
+    // → 大谷翔平の投手版/打者版を別カードとして両方登録できる。
+    const keyOf = (x) => (window.CardStore ? window.CardStore.cardKey(x) : ((x.fullNameTop||'')+'_'+(x.year||'')));
+    const existingKeys = new Set(existing.map(keyOf));
+    let addedCount = 0, updatedCount = 0, parseFail = 0, quotaHit = false;
+    for (const f of htmlFiles) {
+      try {
+        const text = await f.text();
+        const p = CARD_PARSER.parse(text, f.name);
+        if (!p || !p.fullNameTop) { parseFail++; continue; }
+        const key = keyOf(p);
+        const isDup = existingKeys.has(key);
+        try {
+          await window.CardStore.addOrUpdate(p);   // 重複は同名カードを上書き(更新)
+          existingKeys.add(key);
+          if (isDup) updatedCount++; else addedCount++;
+        } catch (saveErr) {
+          console.error(saveErr);   // localStorage モードでの容量超過など
+          quotaHit = true;
+          break;
+        }
+      } catch (err) {
+        console.error(err);
+        parseFail++;
+      }
+    }
+    render();
+    if (quotaHit) {
+      alert('⚠️ 保存容量の上限に達したため、これ以上追加できませんでした。\nお使いのブラウザが IndexedDB に対応していない可能性があります。');
+    }
+    const parts = [];
+    if (addedCount)   parts.push(`新規 ${addedCount}件`);
+    if (updatedCount) parts.push(`更新 ${updatedCount}件`);
+    if (parseFail)    parts.push(`解析失敗 ${parseFail}件`);
+    if (nonHtml)      parts.push(`対象外 ${nonHtml}件`);
+    if (parts.length) alert('✅ 取り込み結果: ' + parts.join(' / '));
+  }
+
+  document.getElementById('clearBtn').addEventListener('click', async () => {
+    if (confirm('追加した全カードを削除します。よろしいですか？')) {
+      await window.CardStore.clearAll();
+      render();
+    }
+  });
+
+  document.getElementById('exportBtn').addEventListener('click', async () => {
+    const extras = (window.CardStore) ? await window.CardStore.getAll() : [];
+    if (extras.length === 0) { alert('追加カードがありません'); return; }
+    const blob = new Blob([JSON.stringify(extras, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'mlb_extra_cards.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+
+  // 起動: CardStore を初期化 (旧localStorageからの移行を含む) してから描画
+  (async () => {
+    if (window.CardStore && window.CardStore.init) {
+      try { await window.CardStore.init(); } catch (e) { console.error('CardStore init', e); }
+    }
+    updateViewButtonLabels();
+    render();
+  })();
+})();
+</script>
+</body>
+</html>
