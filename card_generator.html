@@ -4723,7 +4723,7 @@ function buildCardType(row, awardsJa) {
     //   ※走者釘付（対盗塁）は優先度が低いため別途、弱い肩書に留まる場合のみ採用
     const _specialtyTitle =
       _changeAbl >= 95 ? '変幻自在' :
-      _heavyAbl  >= 95 ? '球威が唸る' :
+      _heavyAbl  >= 95 ? `球威が唸る${hand}` :
       _leftAbl   >= 12 ? '左キラー' : null;
 
     // ① 奪三振数が極めて多い
@@ -4783,7 +4783,7 @@ function buildCardType(row, awardsJa) {
         if (era < 2.50 && _hldN >= 20) return 'チームの中継エース';
         if (era < 2.00)       return '強心臓';
         if (_specialtyTitle)  return _specialtyTitle;
-        if (!awardsJa.length) return (_baseAbl >= 20) ? '走者釘付' : `中継ぎ${_hand2}`; // 対盗塁20以上は走者釘付／受賞があれば⑥でタイトル化
+        if (!awardsJa.length) return (_baseAbl >= 20) ? `走者釘付${_hand2}` : `中継ぎ${_hand2}`; // 対盗塁20以上は走者釘付／受賞があれば⑥でタイトル化
       } else {
         // 中継ぎ（セーブ・ホールドとも少ない）
         if (_veloMax >= 162)          return '剛腕リリーバー';
@@ -4792,7 +4792,7 @@ function buildCardType(row, awardsJa) {
         if (era < 2.00)               return '強心臓';
         if (_specialtyTitle)          return _specialtyTitle;
         if (era < 2.50 && _ipN >= 30) return 'ブルペンの安定感';
-        if (!awardsJa.length) return (_baseAbl >= 20) ? '走者釘付' : `中継ぎ${_hand2}`; // 対盗塁20以上は走者釘付／受賞があれば⑥でタイトル化
+        if (!awardsJa.length) return (_baseAbl >= 20) ? `走者釘付${_hand2}` : `中継ぎ${_hand2}`; // 対盗塁20以上は走者釘付／受賞があれば⑥でタイトル化
       }
     }
     // ⑥ その他のタイトルがあれば手腕を付けて整形
@@ -4821,7 +4821,7 @@ function buildCardType(row, awardsJa) {
 
     // ⑧ タイトルなし → マイナー/ウィンターの年間タイトル級称号があれば優先
     //   それも無く弱い「N勝右腕」級（10勝以下）に留まる場合、対盗塁20以上なら「走者釘付」を採用
-    if (!g_milbTitleJa && _baseAbl >= 20 && wins <= 10) return '走者釘付';
+    if (!g_milbTitleJa && _baseAbl >= 20 && wins <= 10) return `走者釘付${hand}`;
     return g_milbTitleJa || `${wins}勝${hand}投手`;
   }
 }
