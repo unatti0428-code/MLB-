@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>MLBカード野球ゲーム</title>
-<link rel="stylesheet" href="style.css?v=141">
+<link rel="stylesheet" href="style.css?v=146">
 </head>
 <body>
   <div class="app">
@@ -85,7 +85,7 @@
         <h2>試合セットアップ</h2>
         <div class="setup-top-actions">
           <button id="backToStartFromSetup" class="btn btn-sub">⤴ スタートへ</button>
-          <a href="import.html" class="btn btn-sub">＋ カードを追加</a>
+          <button id="videoToggle" type="button" class="btn video-on">動画ON</button>
           <button id="autoFill" class="btn btn-sub">🎲 ランダム自動編成</button>
           <button id="startGame" class="btn btn-primary">▶ 試合開始</button>
         </div>
@@ -292,6 +292,11 @@
             <button type="button" class="bb-hist-btn" id="bbHistNext">進む ▶</button>
           </div>
         </div>
+        <!-- ダイヤモンド下の余白: 自動再生トグル + カウントダウン (動画ON時のみ表示) -->
+        <div class="auto-video-bar" id="autoVideoBar" hidden>
+          <button type="button" class="btn av-toggle" id="autoVideoBtn">動画停止中 ■</button>
+          <span class="av-countdown" id="autoVideoCountdown"></span>
+        </div>
         </div><!-- /.game-right -->
       </div><!-- /.game-main -->
 
@@ -332,6 +337,6 @@
   <script src="players.js?v=26"></script>
   <script src="card_store.js?v=2"></script>
   <script src="card_view.js?v=26"></script>
-  <script src="game.js?v=309"></script>
+  <script src="game.js?v=323"></script>
 </body>
 </html>

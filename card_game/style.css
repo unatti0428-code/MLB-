@@ -48,6 +48,9 @@ html, body {
 .btn-primary { background: linear-gradient(135deg,#ff4444,#cc0000); }
 .btn-sub     { background: linear-gradient(135deg,#4488ff,#1144aa); }
 .btn-danger  { background: linear-gradient(135deg,#666,#333); }
+/* 動画ON/OFFトグル: ON=赤 / OFF=青 */
+.btn.video-on  { background: linear-gradient(135deg,#ff4444,#cc0000); }
+.btn.video-off { background: linear-gradient(135deg,#4488ff,#1144aa); }
 
 .hidden { display: none !important; }
 
@@ -235,6 +238,15 @@ html, body {
 }
 .game-left  { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .game-right { display: flex; flex-direction: column; gap: 8px; }
+
+/* 球種選択時の投球動画オーバーレイ (game-left の範囲に重ねて再生 → 終了で撤去) */
+#pitchVideoOverlay {
+  position: fixed; z-index: 2000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.55); border-radius: 10px; overflow: hidden;
+  pointer-events: none;   /* 裏のクリックを妨げない */
+}
+#pitchVideoOverlay video { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 0 26px rgba(0,0,0,0.7); }
 
 /* VSカード 2枚 (左上) */
 .game-left .vs-area {
@@ -1113,6 +1125,20 @@ body.in-game .header-game-state { display: inline-flex; }
 .field-area .bb-hist-btn:hover { background: #4a5fa0; }
 .field-area .bb-hist-btn:disabled { opacity: 0.4; cursor: default; }
 .field-area .bb-hist-count { color: #ffe08a; font-size: 12px; font-weight: 700; white-space: nowrap; }
+
+/* === ダイヤモンド下の自動再生バー (動画ON時) === */
+.auto-video-bar {
+  display: flex; align-items: center; justify-content: center; gap: 16px;
+  margin-top: 6px; padding: 8px; min-height: 52px;
+}
+.auto-video-bar[hidden] { display: none; }
+.av-toggle { background: linear-gradient(135deg,#4488ff,#1144aa); }   /* 停止中 = 青 */
+.av-toggle.is-playing { background: linear-gradient(135deg,#22aa55,#0c7a38); }   /* 再生中 = 緑 */
+.av-countdown {
+  font-size: 34px; font-weight: 900; line-height: 1; min-width: 44px; text-align: center;
+  color: #ffcc33; text-shadow: 0 0 8px rgba(255,180,0,0.7);
+}
+.av-countdown:empty { display: none; }
 
 /* === 試合中の3カラムレイアウト === */
 .game-body {
@@ -2480,12 +2506,16 @@ body.in-game .header-game-state { display: inline-flex; }
 .ws-dec { font-size: 12px; color: #cfe0a0; margin: 4px 0; }
 .ws-hr { font-size: 12px; color: #ffcc88; margin: 2px 0 6px; }
 .ws-boxes { display: flex; gap: 14px; flex-wrap: wrap; }
-.ws-boxes > div { flex: 1 1 320px; }
+.ws-boxes > div { flex: 1 1 400px; min-width: 0; overflow-x: auto; }
 .ws-boxes h6 { margin: 6px 0 3px; color: #9fc2ff; font-size: 12px; }
-.ws-box { border-collapse: collapse; font-size: 12px; width: 100%; background: #fff; color: #1a2433; }
-.ws-box th, .ws-box td { border: 1px solid #d2dae6; padding: 1px 6px; text-align: center; }
+.ws-box { border-collapse: collapse; font-size: 11.5px; width: 100%; background: #fff; color: #1a2433; }
+.ws-box th, .ws-box td { border: 1px solid #d2dae6; padding: 1px 7px; text-align: center; }
+.ws-box th { white-space: nowrap; }
 .ws-box thead th { background: #e6edf6; } .ws-box .lname { text-align: left; }
-.ws-box .ps-cum { color: #b00; font-weight: 800; }
+.ws-box .ps-cum { color: #b00; font-weight: 800; background: #fff3f3; }
+.ws-box .ps-n { padding-left: 2px; padding-right: 2px; letter-spacing: -0.5px; }   /* ポ勝/ポ敗/ポH/ポS/ポ奪三/ポ本/ポ点 を狭く */
+.ws-box .player-link { color: #0b3aa0; text-decoration-color: rgba(11,58,160,0.4); }
+.ws-box .player-link:hover { color: #1763e0 !important; text-shadow: none !important; }
 /* トーナメント表 (SVG)。縦に収まるよう最大高さで制限し、アスペクト比維持で縮小 */
 .ps-bracket-wrap { width: 100%; overflow-x: auto; margin-top: 4px; text-align: center; }
 .ps-svg { display: block; margin: 0 auto; max-width: 100%; max-height: 58vh; }

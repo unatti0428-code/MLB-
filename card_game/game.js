@@ -215,6 +215,17 @@ function init() {
 
   $('#autoFill').addEventListener('click', autoFill);
   $('#startGame').addEventListener('click', startGame);
+  // セットアップの 動画ON/OFF トグル (赤=ON / 青=OFF)
+  const vToggle = $('#videoToggle');
+  if (vToggle) vToggle.addEventListener('click', () => {
+    VIDEO_ON = !VIDEO_ON;
+    updateVideoToggleBtn();
+    updateAutoVideoBar();   // OFFにしたら自動再生バーを隠す/ONなら出す
+  });
+  // 試合画面・ダイヤモンド下の 自動再生トグル (動画再生中 ▶ / 動画停止中 ■)
+  const avBtn = $('#autoVideoBtn');
+  if (avBtn) avBtn.addEventListener('click', toggleAutoVideo);
+  updateVideoToggleBtn();   // 初期表示 (動画ON=赤)
   // ダイヤモンド枠内の振り返りボタン (試合終了後)
   const hPrev = $('#bbHistPrev'); if (hPrev) hPrev.addEventListener('click', () => historyStep(-1));
   const hNext = $('#bbHistNext'); if (hNext) hNext.addEventListener('click', () => historyStep(+1));
@@ -259,10 +270,16 @@ function init() {
   document.body.addEventListener('click', e => {
     const pb = e.target.closest('.pitch-btn');
     if (pb) {
+      if (G.autoVideoPlaying) return;   // 自動再生中はAIが投球 (手動投球は無効)
       const name = pb.dataset.pitch;
       if (!G.currentPitcher || !G.currentPitcher.pitches) return;
       const pi = G.currentPitcher.pitches.find(x => x.name === name);
-      if (pi) pitchOne(pi);
+      if (pi) {
+        // 投球前の状況を控え、解決後に攻守交替/継投を判定して動画(結果→交替→投手登場→打者登場)を重ねる
+        const before = { top: G.top, inning: G.inning, pitcher: G.currentPitcher };
+        pitchOne(pi);
+        playPitchVideo(before);
+      }
       return;
     }
     // 選手名(ミニカード)クリックで詳細表示
@@ -2853,6 +2870,13 @@ function beginGame() {
   const logEl = $('#log');
   if (logEl) logEl.innerHTML = '';
 
+  // 投手登場の演出管理: 守備側の投手が前回登板から替わった時だけ defopit_sta を流す。
+  //   1回表は先発HOMEが初登板済みとして記録(開始演出で流す)。AWAYはまだ未登板(null)。
+  G._lastIntroPitcher = { home: G.currentPitcher, away: null };
+  G.autoVideoPlaying = false;   // 自動再生は停止状態で開始 (ユーザーがボタンで開始)
+  G._videoActive = false;
+  clearAutoVideoCountdown();
+
   // サイレント(シーズン自動高速進行)時は画面切替・描画をスキップ
   if (!G.silent) {
     showScreen('game');
@@ -2860,6 +2884,8 @@ function beginGame() {
     buildScoreboard();
     renderAll();
     logLine(`🏟️ プレイボール！ ${G.innings}回戦\n(AWAY ${labelTeam('away')} vs HOME ${labelTeam('home')})`, 'event-inning');
+    // 試合開始演出: 投手登場(1回表の先発) → 打者登場
+    playVideoOverlay([pickVideo(PITCHER_INTRO_VIDEOS), pickVideo(BATTER_INTRO_VIDEOS)]);
   }
 }
 
@@ -2942,8 +2968,8 @@ function buildScoreboard() {
   }
   const rowA = $('#row-away');
   const rowH = $('#row-home');
-  rowA.innerHTML = `<th class="team-name">${labelTeam('away')} (AWAY)</th>`;
-  rowH.innerHTML = `<th class="team-name">${labelTeam('home')} (HOME)</th>`;
+  rowA.innerHTML = `<th class="team-name">${labelTeam('away')}</th>`;
+  rowH.innerHTML = `<th class="team-name">${labelTeam('home')}</th>`;
   for (let i = 0; i < cols; i++) {
     const tdA = document.createElement('td'); tdA.id = `sc-away-${i}`;
     const tdH = document.createElement('td'); tdH.id = `sc-home-${i}`;
@@ -2965,23 +2991,28 @@ function updateScoreboard() {
   for (let i = 0; i < cols; i++) {
     const a = $('#sc-away-'+i), h = $('#sc-home-'+i);
     if (!a || !h) continue;
+    const awayCur = !G.ended && i === G.inning - 1 && G.top;    // AWAYが今この回の表を攻撃中
+    const homeCur = !G.ended && i === G.inning - 1 && !G.top;   // HOMEが今この回の裏を攻撃中
     // AWAY(先攻): その回の表が終了済みなら表示
     // - 後の回に進んだ (i < G.inning - 1)
     // - 現在この回の裏 (i === G.inning - 1 && !G.top)
     // - 試合終了済み
     const awayDone = G.ended || (i < G.inning - 1) || (i === G.inning - 1 && !G.top);
-    a.textContent = awayDone ? (G.score.away[i] ?? 0) : '';
+    // 攻撃中でも得点が入っていればリアルタイム表示。無得点なら従来通り回終了まで空欄。
+    const awayShow = awayDone || (awayCur && (G.score.away[i] || 0) > 0);
+    a.textContent = awayShow ? (G.score.away[i] ?? 0) : '';
     // HOME(後攻): その回の裏が終了済みなら表示
     // - 次の回に進んだ (i < G.inning - 1)
     // - 試合終了済み
     // 後攻が攻撃せず勝った回は「X」/ サヨナラ勝ちの回は「得点+x」(野球サイト方式)
     const homeDone = G.ended || (i < G.inning - 1);
+    const homeShow = homeDone || (homeCur && (G.score.home[i] || 0) > 0);
     h.textContent = (G.homeSkipBottomIdx === i) ? 'X'
       : (G.homeWalkoffIdx === i) ? ((G.score.home[i] ?? 0) + 'x')
-      : (homeDone ? (G.score.home[i] ?? 0) : '');
+      : (homeShow ? (G.score.home[i] ?? 0) : '');
     // 現在攻撃中のセルをハイライト
-    a.classList.toggle('current', !G.ended && i === G.inning - 1 && G.top);
-    h.classList.toggle('current', !G.ended && i === G.inning - 1 && !G.top);
+    a.classList.toggle('current', awayCur);
+    h.classList.toggle('current', homeCur);
   }
   $('#sc-away-total').textContent = G.score.away.reduce((a,b)=>a+b,0);
   $('#sc-home-total').textContent = G.score.home.reduce((a,b)=>a+b,0);
@@ -3268,6 +3299,7 @@ function renderAll() {
   applyRarityClass(bcEl, G.currentBatter);
   renderHistoryBar();
   renderBbInfo();
+  updateAutoVideoBar();   // 自動再生バー(動画ON時)の表示・状態を同期
 }
 // 総合力からレアリティ相当の背景色クラスを付与 (RR=銀 / SR=金 / SSR=UR特殊 / N=赤 / N相当=黒)
 function applyRarityClass(el, p) {
@@ -3710,6 +3742,258 @@ function maybeFieldingError(res) {
     res.staminaDelta = -1;
   }
   // それ以外は通常アウトのまま
+}
+
+// 手動で球種を選んだ際、打席結果に応じた動画(MLB/douga 配下)をゲーム左側に重ねて再生する。
+//   ・ヒット/三振/四球/エラー/ファインプレー(前回指定分) → 単独動画(イントロ無し)
+//   ・各種アウト(ゴロ/フライ/DP/ライナー/ポップ/ファール/深い飛球 等) → defopit_tou(イントロ)→結果動画
+//   動画が無い/読めない環境(プレビューサーバ等)でもゲームは継続する(error/タイムアウトで撤去)。
+const PITCH_VIDEOS = ['defopit_tou', 'defopit_tou1', 'defopit_tou2'];
+// 投手登場(ピッチャー交代/回頭の継投時)・打者登場(打席ごと)・攻守交替 の演出動画。すべて MLB/douga 配下。
+const PITCHER_INTRO_VIDEOS = ['defopit_sta', 'defopit_sta1'];                 // 投手がマウンドに上がる
+const BATTER_INTRO_VIDEOS  = ['defobat_box', 'defobat_box1', 'defobat_box2']; // 打者が打席に入る
+const SIDE_CHANGE_VIDEO    = 'mlb_change';                                    // 3アウト攻守交替
+const pickVideo = list => list[(Math.random() * list.length) | 0];
+// 動画ON/OFF (セットアップのトグルで切替。OFFなら動画を一切再生せず、自動再生バーも出さない)。
+let VIDEO_ON = true;
+// 動画ファイルの参照先: laa_* は MLB/team_out/laa_out、それ以外(defopit_/defobat_) は MLB/douga。
+function videoSrc(file) {
+  return (file.indexOf('laa_') === 0 ? '../team_out/laa_out/' : '../douga/') + file + '.mp4';
+}
+// 打球の実効守備位置。renderBattedBall と同じ depth 補正(res._dispRand 共有)で表示と一致させる。
+function effectiveFielderPos(res) {
+  const outcome = res.finalOutcome || res.outcome;
+  let pos = res.fielderPos || 'P';
+  if (res._dispRand == null) res._dispRand = Math.random();
+  const rnd = res._dispRand;
+  const isIF = p => ['C', 'P', '1B', '2B', '3B', 'SS'].includes(p);
+  const isOF = p => ['LF', 'CF', 'RF'].includes(p);
+  const fl = res.flavor || '';
+  let depth;
+  if (res.fineplay || res.clumsy || outcome === 'E') depth = 'KEEP';
+  else if (/外野/.test(fl)) depth = 'OF';
+  else if (/内野|ファール/.test(fl)) depth = 'IF';
+  else if (outcome === 'GO' || outcome === 'GO_SLOW' || outcome === 'GO_DP') depth = 'IF';
+  else if (outcome === 'LO') depth = 'LINER';
+  else if (outcome === 'FO' && res.infieldFly) depth = 'IF';
+  else if (outcome === 'FO') depth = 'KEEP';
+  else depth = 'OF';
+  if (depth === 'IF' && isOF(pos)) { const m = ({ LF: ['SS', '3B'], CF: ['SS', '2B'], RF: ['2B', '1B'] })[pos] || ['SS']; pos = m[rnd < 0.5 ? 0 : 1]; }
+  else if (depth === 'OF' && isIF(pos)) { const m = ({ '3B': ['LF'], 'SS': ['LF', 'CF'], '2B': ['CF', 'RF'], '1B': ['RF'], 'C': ['CF'], 'P': ['CF'] })[pos] || ['CF']; pos = (m.length > 1) ? m[rnd < 0.5 ? 0 : 1] : m[0]; }
+  if (outcome === 'LO' && pos === 'C') { const opts = ['SS', '2B', '3B', '1B']; pos = opts[Math.min(opts.length - 1, Math.floor(rnd * opts.length))]; }
+  return pos;
+}
+// 打席結果 → { intro: defopit_touを先に流すか, videos: 候補(ランダム1本) }。対象外は null。
+function batResultClip(res, runs) {
+  if (!res) return null;
+  const oc = res.finalOutcome || res.outcome, fl = res.flavor || '', r2 = b => [b, b + '1'];
+  // === 単独動画(イントロ無し) ===
+  switch (oc) {
+    case 'HR': return { intro: false, videos: ['defobat_hr', 'defobat_hr1'] };               // ホームラン
+    case '2B': case '3B': return { intro: false, videos: ['defobat_2b', 'defobat_2b1'] };    // 2/3ベース
+    case '1B':
+      if (/内野/.test(fl)) return { intro: false, videos: ['defobat_if1b', 'defobat_if1b1'] };  // 内野安打
+      if ((runs || 0) > 0) return { intro: false, videos: ['defobat_rbi', 'defobat_rbi1'] };    // タイムリー
+      return { intro: false, videos: ['defobat_1b', 'defobat_1b1'] };                            // 通常ヒット
+    case 'BB': return { intro: false, videos: ['defobat_fb', 'defobat_fb1'] };               // 四球
+    case 'E': return { intro: false, videos: ['defobat_miss', 'defobat_miss1'] };            // エラー
+    case 'K': return { intro: false, videos: ['defopit_str', 'defopit_str1', 'defopit_str2'] }; // 三振
+  }
+  if (res.fineplay) return { intro: false, videos: ['defopit_nice', 'defopit_nice1'] };      // ファインプレーアウト
+  // === defopit_tou(イントロ) → 結果動画 (各種アウト) ===
+  if (res.forceOut) {   // 走者フォースアウト (2=二塁/3=三塁/4=本塁)
+    const fm = { 2: ['laa_forth2_1', 'laa_forth2_2', 'laa_forth2_3'], 3: ['laa_forth3_1', 'laa_forth3_2', 'laa_forth3_3'], 4: ['laa_forth4_1', 'laa_forth4_2', 'laa_forth4_3'] };
+    if (fm[res.forceOut]) return { intro: true, videos: fm[res.forceOut] };
+  }
+  if (oc === 'GO_DP') return { intro: true, videos: ['laa_double', 'laa_double1'] };                       // ダブルプレー
+  if (oc === 'SAC_FLY' || /大きな|大飛球/.test(fl)) return { intro: true, videos: ['laa_flybig', 'laa_flybig1', 'laa_flybig2'] }; // 深い飛球
+  const pos = effectiveFielderPos(res);
+  if (oc === 'FO' && (res.infieldFly || /内野|ファール/.test(fl))) {
+    if (/ファール/.test(fl)) return { intro: true, videos: ['laa_foul', 'laa_foul1', 'laa_foul2'] };       // ファールフライ
+    return { intro: true, videos: ({ '1B': ['laa_pop'], '2B': ['laa_pop1'], '3B': ['laa_pop2'] })[pos] || ['laa_pop1'] }; // 内野ポップ
+  }
+  if (oc === 'FO') {   // 外野フライ → 守備位置別 (左7/中8/右9)
+    return { intro: true, videos: r2(({ 'LF': 'laa_7out', 'CF': 'laa_8out', 'RF': 'laa_9out' })[pos] || 'laa_8out') };
+  }
+  if (oc === 'LO') return { intro: true, videos: ['laa_line', 'laa_line1', 'laa_line2', 'laa_line3'] };    // 内野ライナー
+  if (oc === 'GO_SLOW' || /ボテボテ|力ない/.test(fl)) {   // 緩いゴロ
+    return { intro: true, videos: [({ '1B': 'laa_soft', '3B': 'laa_soft1', 'SS': 'laa_soft2', '2B': 'laa_soft3' })[pos] || 'laa_soft'] };
+  }
+  if (/詰まった/.test(fl)) {   // 強い(詰まった)ゴロ
+    return { intro: true, videos: [({ '1B': 'laa_strong', '2B': 'laa_strong1', '3B': 'laa_strong2', 'SS': 'laa_strong3' })[pos] || 'laa_strong'] };
+  }
+  if (oc === 'GO') {   // 通常の内野ゴロ → 守備位置別 (一3/二4/三5/遊6)
+    return { intro: true, videos: r2(({ '1B': 'laa_3out', '2B': 'laa_4out', '3B': 'laa_5out', 'SS': 'laa_6out' })[pos] || 'laa_6out') };
+  }
+  return null;
+}
+// 任意の動画ファイル列(seq)をゲーム左側に重ねて順番に再生する汎用関数。
+//   1本目はユーザー操作直後なら音あり、2本目以降は自動再生制限でミュートにフォールバックする。
+function playVideoOverlay(seq) {
+  try {
+    if (!VIDEO_ON) return;     // 動画OFF時は一切再生しない
+    if (!seq || !seq.length) return;
+    const game = document.querySelector('#game');
+    if (!game || game.classList.contains('hidden')) return;   // ゲーム画面表示中のみ
+    const anchor = document.querySelector('.game-left') || document.querySelector('.game-main') || game;
+    const prev = document.getElementById('pitchVideoOverlay');
+    if (prev) prev.remove();
+    const ov = document.createElement('div');
+    ov.id = 'pitchVideoOverlay';
+    const v = document.createElement('video');
+    v.autoplay = true; v.playsInline = true; v.setAttribute('playsinline', '');
+    ov.appendChild(v);
+    document.body.appendChild(ov);
+    G._videoActive = true;     // 自動再生モードの「再生中か」判定に使用
+    const place = () => { const r = anchor.getBoundingClientRect(); ov.style.left = r.left + 'px'; ov.style.top = r.top + 'px'; ov.style.width = r.width + 'px'; ov.style.height = r.height + 'px'; };
+    place();
+    const onResize = () => place();
+    window.addEventListener('resize', onResize);
+    let removed = false, safety = null;
+    const cleanup = () => { if (removed) return; removed = true; window.removeEventListener('resize', onResize); if (safety) clearTimeout(safety); ov.remove(); G._videoActive = false; onVideoSequenceComplete(); };
+    // 1本のクリップを再生し、終了/失敗/保険タイマーのいずれかで onClipEnd を一度だけ呼ぶ
+    const playClip = (file, onClipEnd) => {
+      if (safety) clearTimeout(safety);
+      let fired = false;
+      const fire = () => { if (fired) return; fired = true; if (safety) clearTimeout(safety); onClipEnd(); };
+      v.onended = fire; v.onerror = fire;
+      v.src = videoSrc(file);   // laa_* は team_out/laa_out、それ以外は douga
+      v.load(); place();
+      safety = setTimeout(fire, 20000);
+      // 連続再生(2本目)はユーザー操作外のため、音ありだと自動再生がブロックされ固まる。
+      //   ブロックされたらミュートで再生継続し、それでも不可なら次へ進める(固まらせない)。
+      const tryPlay = () => { const pr = v.play(); if (pr && pr.catch) pr.catch(() => { if (!v.muted) { v.muted = true; tryPlay(); } else fire(); }); };
+      tryPlay();
+    };
+    let i = 0;
+    const next = () => { if (removed) return; if (i >= seq.length) { cleanup(); return; } playClip(seq[i++], next); };
+    next();
+  } catch (e) { /* 動画再生は補助機能。失敗してもゲームは継続 */ }
+}
+// 打席結果後、次打者までに挟む繋ぎ動画の種別列を順番に返す純粋関数。
+//   before = 投球前 { top, inning, pitcher } / cur = 投球後 { top, inning, pitcher, ended } / lastIntro = {home,away}
+//   返り値: 'change'(攻守交替) → 'pitcher'(投手登場) → 'batter'(打者登場) の順序付き配列。
+//   ・3アウトで半回が替わった時のみ 'change'。
+//   ・守備側の投手が前回登板から替わった(初登板含む)時のみ 'pitcher'(攻守交替時に限る)。
+//   ・打者は毎打席替わるので常に 'batter'。
+function batTransitionKinds(before, cur, lastIntro) {
+  const kinds = [];
+  if (!before || !cur || cur.ended) return kinds;
+  const sideChanged = (before.top !== cur.top) || (before.inning !== cur.inning);
+  if (sideChanged) kinds.push('change');
+  const defSide = cur.top ? 'home' : 'away';
+  if (sideChanged && cur.pitcher && lastIntro && lastIntro[defSide] !== cur.pitcher) kinds.push('pitcher');
+  kinds.push('batter');
+  return kinds;
+}
+// 手動の球種選択後に呼ぶ。打席結果動画 → (攻守交替) → (投手登場) → 打者登場 をまとめて再生する。
+//   before = 投球前の { top, inning, pitcher } 。投球後の状態と比較して攻守交替/継投を検知する。
+function playPitchVideo(before) {
+  try {
+    const game = document.querySelector('#game');
+    if (!game || game.classList.contains('hidden')) return;   // ゲーム画面表示中のみ
+    const seq = [];
+    // 1) 打席結果の動画 (対象外なら無し)
+    const clip = batResultClip(G.lastPitchResult, G.lastPitchRuns);
+    if (clip && clip.videos && clip.videos.length) {
+      if (clip.intro) seq.push(pickVideo(PITCH_VIDEOS));   // アウトは投球イントロ→結果
+      seq.push(pickVideo(clip.videos));
+    }
+    // 2) 次打者への繋ぎ (試合継続中のみ)
+    if (before && !G.ended) {
+      if (!G._lastIntroPitcher) G._lastIntroPitcher = { home: null, away: null };
+      const cur = { top: G.top, inning: G.inning, pitcher: G.currentPitcher, ended: G.ended };
+      const defSide = G.top ? 'home' : 'away';
+      for (const kind of batTransitionKinds(before, cur, G._lastIntroPitcher)) {
+        if (kind === 'change') seq.push(SIDE_CHANGE_VIDEO);                       // 3アウト攻守交替
+        else if (kind === 'pitcher') { seq.push(pickVideo(PITCHER_INTRO_VIDEOS)); G._lastIntroPitcher[defSide] = G.currentPitcher; } // 投手登場
+        else seq.push(pickVideo(BATTER_INTRO_VIDEOS));                            // 次打者が打席へ
+      }
+    }
+    playVideoOverlay(seq);
+  } catch (e) { /* 動画再生は補助機能。失敗してもゲームは継続 */ }
+}
+
+// ============== 自動再生モード (動画ON時のみ) ==============
+//   「動画再生中 ▶」= AIが自動進行。動画が終わる → 5秒カウントダウン → 0でAIが投球(投球確率で球種選択) → 動画。
+//   「動画停止中 ■」= AI停止。手動で球種ボタンを押して進められる。
+let autoVideoCountdownTimer = null;
+// 自動再生バーを出す条件: 試合画面・動画ON・試合継続中
+function autoVideoBarVisible() {
+  if (G.silent || !VIDEO_ON || G.ended) return false;
+  const game = document.querySelector('#game');
+  return !!(game && !game.classList.contains('hidden'));
+}
+function clearAutoVideoCountdown() {
+  if (autoVideoCountdownTimer) { clearInterval(autoVideoCountdownTimer); autoVideoCountdownTimer = null; }
+  const el = document.querySelector('#autoVideoCountdown');
+  if (el) el.textContent = '';
+}
+// 自動再生を止める (動画OFF/試合終了/停止ボタン/画面離脱)。
+function stopAutoVideo() {
+  G.autoVideoPlaying = false;
+  clearAutoVideoCountdown();
+}
+// バーの表示/ラベル/色を現在状態に同期。表示条件を満たさなければ隠して自動再生も止める。
+function updateAutoVideoBar() {
+  const bar = document.querySelector('#autoVideoBar');
+  if (!bar) return;
+  if (!autoVideoBarVisible()) { stopAutoVideo(); bar.hidden = true; clearAutoVideoCountdown(); return; }
+  bar.hidden = false;
+  const btn = document.querySelector('#autoVideoBtn');
+  if (btn) {
+    btn.textContent = G.autoVideoPlaying ? '動画再生中 ▶' : '動画停止中 ■';
+    btn.classList.toggle('is-playing', !!G.autoVideoPlaying);
+  }
+}
+// 5秒カウントダウン → 0でAI投球。
+function startAutoVideoCountdown() {
+  clearAutoVideoCountdown();
+  if (!G.autoVideoPlaying || G.ended) return;
+  let n = 5;
+  const el = document.querySelector('#autoVideoCountdown');
+  if (el) el.textContent = String(n);
+  autoVideoCountdownTimer = setInterval(() => {
+    if (!G.autoVideoPlaying || G.ended) { clearAutoVideoCountdown(); return; }
+    n--;
+    if (el) el.textContent = (n > 0) ? String(n) : '';
+    if (n <= 0) { clearAutoVideoCountdown(); autoVideoThrowNext(); }
+  }, 1000);
+}
+// AIが投球確率で球種を選び投球 → 結果動画を再生 (終了時 onVideoSequenceComplete が次のカウントダウンを開始)。
+function autoVideoThrowNext() {
+  if (!G.autoVideoPlaying || G.ended) return;
+  const p = autoPick();
+  if (!p) return;
+  const before = { top: G.top, inning: G.inning, pitcher: G.currentPitcher };
+  pitchOne(p, true);
+  playPitchVideo(before);
+  // 動画が再生されなかった場合(結果動画なし等)でも、終了コールバックが来ないのでループを継続させる
+  if (!G._videoActive && G.autoVideoPlaying && !G.ended) startAutoVideoCountdown();
+}
+// 動画(連続再生)が1区切り終わった時に呼ばれる。自動再生中なら次の投球までのカウントダウンを開始。
+function onVideoSequenceComplete() {
+  if (G.autoVideoPlaying && !G.ended) startAutoVideoCountdown();
+}
+// セットアップの動画ON/OFFボタンのラベル・色を同期 (ON=赤 / OFF=青)。
+function updateVideoToggleBtn() {
+  const btn = document.querySelector('#videoToggle');
+  if (!btn) return;
+  btn.textContent = VIDEO_ON ? '動画ON' : '動画OFF';
+  btn.classList.toggle('video-on', VIDEO_ON);
+  btn.classList.toggle('video-off', !VIDEO_ON);
+}
+// 「動画再生中/停止中」トグル。
+function toggleAutoVideo() {
+  if (!autoVideoBarVisible()) return;
+  G.autoVideoPlaying = !G.autoVideoPlaying;
+  updateAutoVideoBar();
+  if (G.autoVideoPlaying) {
+    // 再生開始。動画再生中ならその終了時に自動でカウントダウンへ。何も流れていなければ即カウントダウン。
+    if (!G._videoActive) startAutoVideoCountdown();
+  } else {
+    clearAutoVideoCountdown();   // 停止 → AI投球を止め、手動操作に戻す
+  }
 }
 
 function pitchOne(pitch, isAuto) {
@@ -4210,7 +4494,10 @@ function applyOutcome(outcome, pitch) {
       break;
     }
     case '1B': {
-      scoredRunners = advanceRunnersOnHit(1);
+      // 内野安打は走者を1つだけ進塁させる (足の遅い内野打球なので2塁→本塁のような余分な進塁はしない)。
+      //   通常の外野へのヒットは従来通り走力に応じて追加進塁あり (advanceRunnersOnHit)。
+      const infieldHit = /内野/.test((lpr && lpr.flavor) || '');
+      scoredRunners = infieldHit ? pushRunners(1) : advanceRunnersOnHit(1);
       runs = scoredRunners.length;
       G.bases[0] = meRef;
       G.hits[side]++;
@@ -4300,6 +4587,42 @@ function applyOutcome(outcome, pitch) {
         G.bases[1] = null;                  // 2塁は封殺でアウト → 空く
         G.bases[0] = null;                  // 打者は1塁でアウト
         runs = scoredRunners.length;        // 併殺打のため打点(RBI)は加算しない (野球規則)
+      } else if (/内野ゴロ/.test((lpr && lpr.flavor) || '') && !/ボテボテ|力ない|詰まった/.test((lpr && lpr.flavor) || '') && G.bases[0] && G.outs < 3) {
+        // フォースアウト(野手選択): 強くも弱くもない内野ゴロ。1塁から連続する封殺チェーンを
+        //   リード(高い塁)から走力依存で封殺判定。封殺できればその走者がアウト・打者は1塁セーフ、
+        //   全員セーフなら打者が1塁アウト(通常)。
+        const chain = [0];
+        if (G.bases[1]) chain.push(1);
+        if (G.bases[1] && G.bases[2]) chain.push(2);
+        const outProb = spd => Math.max(0.15, Math.min(0.9, 0.7 - ((spd || 60) - 60) * 0.012));  // 遅いほど封殺されやすい
+        let outBase = null;
+        for (let k = chain.length - 1; k >= 0; k--) {
+          if (rand() < outProb(runnerSpeed(G.bases[chain[k]]))) { outBase = chain[k]; break; }
+        }
+        if (outBase != null) {
+          const snap = G.bases.slice(), nb = [null, null, null];
+          // チェーン外の3塁走者 (1・3塁時など): 走力で生還 or 残塁
+          if (snap[2] && chain.indexOf(2) < 0) {
+            if (rand() < Math.max(0.04, Math.min(0.92, 0.22 + ((runnerSpeed(snap[2]) || 60) - 60) * 0.011))) scoredRunners.push(snap[2]);
+            else nb[2] = snap[2];
+          }
+          // チェーン内の走者を1つ進塁 (封殺された走者は除外)
+          for (const b of chain) {
+            if (b === outBase) continue;
+            const r = snap[b]; if (!r) continue;
+            if (b + 1 >= 3) scoredRunners.push(r); else nb[b + 1] = r;
+          }
+          nb[0] = meRef;            // 打者は1塁セーフ (アウトは封殺された走者)
+          G.bases = nb;
+          runs = scoredRunners.length;
+          bStat.RBI += runs;
+          lpr.forceOut = outBase + 2;   // 2=二塁/3=三塁/4=本塁 封殺 → 動画 laa_forth{N}
+          lpr.flavor = `内野ゴロ、${({ 2: '二塁', 3: '三塁', 4: '本塁' })[lpr.forceOut]}フォースアウト！`;
+        } else {
+          scoredRunners = advanceRunnersOnGrounder(false);   // 全員セーフ → 打者1塁アウト
+          runs = scoredRunners.length;
+          bStat.RBI += runs;
+        }
       } else if (G.outs < 3) {
         // 非併殺の内野ゴロ — 走者は走力依存で進塁 (1塁走者なしでも 3塁→本塁/2塁→3塁 あり。通常ゴロは緩いゴロより進みにくい)
         scoredRunners = advanceRunnersOnGrounder(false);
@@ -4508,23 +4831,40 @@ function tagUpAdvance(depth) {
   return scored;
 }
 // ゴロ(非併殺)での走者進塁。weak=ボテボテ(緩)ゴロか。打者は1塁でアウト前提。
-//   3塁→本塁 / 2塁→3塁 を走力＋打球の緩急で確率判定。1塁→2塁は空きがあれば進塁。生還走者を返す。
+//   野球規則のフォース(封塁)を反映: 打者が一塁へ走ることで押し出される走者は必ず1つ進塁する。
+//     ・1塁走者 = 常にフォース(打者に押し出される) → 必ず2塁へ
+//     ・2塁走者 = 1塁に走者がいる時のみフォース → 必ず3塁へ
+//     ・3塁走者 = 満塁(1・2塁とも埋まる)の時のみフォース → 必ず生還
+//   フォースでない走者は走力＋打球の緩急で「もう1つ進めるか」を確率判定する。生還走者を返す。
 function advanceRunnersOnGrounder(weak) {
   const scored = [];
   if (G.outs >= 3) return scored;
+  const r0 = G.bases[0], r1 = G.bases[1], r2 = G.bases[2];
+  // フォース判定 (打者→1塁を起点に、直前の塁が埋まっていれば押し出される)
+  const f0 = !!r0;            // 1塁走者は常にフォース
+  const f1 = f0 && !!r1;      // 2塁走者は1塁に走者がいる時のみフォース
+  const f2 = f1 && !!r2;      // 3塁走者は1・2塁が埋まっている時のみフォース
   const adv = (spd, toHome) => {
     const base = toHome ? (weak ? 0.55 : 0.22) : (weak ? 0.60 : 0.40);
     return Math.max(0.04, Math.min(0.95, base + ((spd || 60) - 60) * 0.011));
   };
-  if (G.bases[2] && Math.random() < adv(runnerSpeed(G.bases[2]), true)) {
-    scored.push(G.bases[2]); G.bases[2] = null;          // 3塁走者 生還
+  const nb = [null, null, null];
+  // 3塁走者: フォースなら必ず生還、非フォースは走力で生還判定 (残れば3塁残留)
+  if (r2) {
+    if (f2 || Math.random() < adv(runnerSpeed(r2), true)) scored.push(r2);
+    else nb[2] = r2;
   }
-  if (G.bases[1] && !G.bases[2] && Math.random() < adv(runnerSpeed(G.bases[1]), false)) {
-    G.bases[2] = G.bases[1]; G.bases[1] = null;          // 2塁走者 → 3塁
+  // 2塁走者: フォースなら必ず3塁、非フォースは3塁が空いていれば走力で進塁判定
+  if (r1) {
+    if (f1 || (!nb[2] && Math.random() < adv(runnerSpeed(r1), false))) nb[2] = r1;
+    else nb[1] = r1;
   }
-  if (G.bases[0] && !G.bases[1]) {
-    G.bases[1] = G.bases[0]; G.bases[0] = null;          // 1塁走者 → 2塁 (空きがあれば)
+  // 1塁走者: 常にフォース → 2塁へ (フォースなので2塁は必ず空く)
+  if (r0) {
+    if (!nb[1]) nb[1] = r0;
+    else nb[0] = r0;   // 通常起こらない安全策 (前位の走者が残った場合は1塁残留)
   }
+  G.bases = nb;
   return scored;
 }
 
@@ -4937,6 +5277,10 @@ function showReliefDialog() {
   G.currentPitcher = opts[n].p;
   G.pitcherLog[info.side].push(newPitcherLog(opts[n].p, info.side, G.inning, G.top));
   logLine(`🔄 投手交代: ${G.currentPitcher.fullNameTop} (スタミナ${opts[n].sta}/${opts[n].max})`, 'event-inning');
+  // 投手交代の演出 (登場動画)。次の球は同じ打者なので打者登場は流さない。
+  if (!G._lastIntroPitcher) G._lastIntroPitcher = { home: null, away: null };
+  G._lastIntroPitcher[info.side] = G.currentPitcher;   // 回頭の重複再生を防ぐ
+  playVideoOverlay([pickVideo(PITCHER_INTRO_VIDEOS)]);
   renderAll();
 }
 
@@ -5756,6 +6100,7 @@ function finishGame() {
   if (G.awaitingResult) return;  // 二重呼び出しガード
   G.ended = true;
   G.autoToEnd = false;
+  stopAutoVideo();               // 自動再生モードを停止 (カウントダウンも消す)
   G.awaitingResult = true;
   logLine('🏁 試合終了！ 「🏁 試合結果へ」ボタンで結果・戦評を表示します', 'event-inning');
   updateAutoFinishButton();
@@ -6635,6 +6980,7 @@ let SEASON_VIEW = 'menu';   // 'menu' | 'manual' | 'auto' | 'stats' | 'postseaso
 let SEASON_STATS_TAB = 'standings';  // 'standings' | 'team' | 'bat' | 'pit'
 let SEASON_PS_TAB = 'bracket';  // ポストシーズン画面のサブタブ: 'bracket' | 'stats' | 'ws'
 const SEASON_PS_SORT = { bat: { key: 'ops', dir: -1 }, pit: { key: 'era', dir: 1 } };  // ポストシーズン成績の並び替え
+let SEASON_PS_TEAM = '';  // ポストシーズン成績のチーム絞り込み ('' = 全体)
 let SEASON_AUTORUN = null;  // 自動進行中の状態 { remaining, played, stop }
 let SEASON_MANUAL_SEL = null;  // 手動モードの当該試合の選択状態 { cursor, away:{team,order,starterIdx,rest,picks,lineOrder}, home:{...} }
 let SEASON_DRAG = null;        // 打順ドラッグ中の状態 { side, fromIdx }
@@ -7968,6 +8314,8 @@ function seasonHandleClick(e) {
   if (stab) { SEASON_STATS_TAB = stab.dataset.stab; renderSeason(); return; }
   const pstab = e.target.closest('[data-pstab]');
   if (pstab) { SEASON_PS_TAB = pstab.dataset.pstab; renderSeason(); return; }
+  const psteam = e.target.closest('[data-psteam]');
+  if (psteam) { SEASON_PS_TEAM = psteam.dataset.psteam; renderSeason(); return; }
   const pssort = e.target.closest('[data-pssort]');
   if (pssort) {
     const parts = pssort.dataset.pssort.split(':'), which = parts[0], key = parts[1], cur = SEASON_PS_SORT[which];
@@ -8405,11 +8753,19 @@ function seasonPsOps(s) {
 }
 function seasonPsStatsHtml() {
   const ps = SEASON.postseason;
-  const bats = Object.values(ps.bat || {}).filter(s => (s.PA || 0) > 0);
-  const pits = Object.values(ps.pit || {}).filter(s => (s.outs || 0) > 0);
+  let bats = Object.values(ps.bat || {}).filter(s => (s.PA || 0) > 0);
+  let pits = Object.values(ps.pit || {}).filter(s => (s.outs || 0) > 0);
   if (!bats.length && !pits.length) return `<p class="season-note">まだポストシーズンの成績がありません。試合を進めると記録されます。</p>`;
+  // 参加チーム (ポストシーズン出場球団) を SEASON_TEAMS 順に並べてタブ表示
+  const teamSet = new Set();
+  bats.forEach(s => teamSet.add(normalizeTeam(s.team)));
+  pits.forEach(s => teamSet.add(normalizeTeam(s.team)));
+  const teams = SEASON_TEAMS.filter(t => teamSet.has(t));
+  const sel = (SEASON_PS_TEAM && teamSet.has(SEASON_PS_TEAM)) ? SEASON_PS_TEAM : '';
+  const teamTabs = `<div class="season-subtabs"><button class="season-subtab${sel === '' ? ' on' : ''}" data-psteam="">全体</button>${teams.map(t => `<button class="season-subtab${sel === t ? ' on' : ''}" data-psteam="${t}">${seasonTeamName(t)}</button>`).join('')}</div>`;
+  if (sel) { bats = bats.filter(s => normalizeTeam(s.team) === sel); pits = pits.filter(s => normalizeTeam(s.team) === sel); }
   const batCols = [
-    { key: 'name', label: '選手', lname: true, nosort: true, get: r => r.name },
+    { key: 'name', label: '選手', lname: true, nosort: true, get: r => r.name, fmt: (v, r) => seasonNameCell(r, 'batter') },
     { key: 'team', label: 'チーム', nosort: true, get: r => seasonTeamName(r.team) },
     { key: 'avg', label: '打率', get: r => avgOf(r.H, r.AB), fmt: v => fmt3(v) },
     { key: 'G', label: '試合', get: r => r.G }, { key: 'AB', label: '打数', get: r => r.AB },
@@ -8419,7 +8775,7 @@ function seasonPsStatsHtml() {
     { key: 'SB', label: '盗塁', get: r => r.SB }, { key: 'ops', label: 'OPS', get: r => seasonPsOps(r), fmt: v => fmt3(v) },
   ];
   const pitCols = [
-    { key: 'name', label: '選手', lname: true, nosort: true, get: r => r.name },
+    { key: 'name', label: '選手', lname: true, nosort: true, get: r => r.name, fmt: (v, r) => seasonNameCell(r, 'pitcher') },
     { key: 'team', label: 'チーム', nosort: true, get: r => seasonTeamName(r.team) },
     { key: 'era', label: '防御率', get: r => eraOf(r.ER, r.outs), fmt: v => fmt2(v) },
     { key: 'G', label: '登板', get: r => r.G }, { key: 'outs', label: '投球回', get: r => r.outs, fmt: v => ipText(v) },
@@ -8436,7 +8792,8 @@ function seasonPsStatsHtml() {
     const body = rows.slice(0, 40).map(r => '<tr>' + cols.map(c => `<td class="${c.lname ? 'lname' : ''}${srt.key === c.key ? ' sortcol' : ''}">${c.fmt ? c.fmt(c.get(r), r) : c.get(r)}</td>`).join('') + '</tr>').join('');
     return `<h4>${title}</h4><div class="season-tablewrap"><table class="season-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
   };
-  return tbl('bat', batCols, bats, '打撃成績') + tbl('pit', pitCols, pits, '投手成績');
+  const title = sel ? '（' + seasonTeamName(sel) + '）' : '';
+  return teamTabs + tbl('bat', batCols, bats, '打撃成績' + title) + tbl('pit', pitCols, pits, '投手成績' + title);
 }
 // ワールドシリーズ 試合記録 (各戦のラインスコア + ボックス)
 function seasonPsWSHtml() {
@@ -8452,10 +8809,13 @@ function seasonPsWSHtml() {
   const hrList = g => g.hr && g.hr.length ? `<div class="ws-hr">🏟️ 本塁打: ${g.hr.map(h => `${h.name}${h.num ? h.num + '号' : ''}(${h.inning}回${h.top ? '表' : '裏'}${hrType(h.runs)})`).join('・')}</div>` : '';
   const decLine = g => `<div class="ws-dec">${g.win ? `勝: ${g.win}` : ''}${g.lose ? `　負: ${g.lose}` : ''}${g.save ? `　S: ${g.save}` : ''}</div>`;
   // ポストシーズン通算の打率/防御率 (key で参照)
-  const psAvg = key => { const s = ps.bat[key]; return (s && s.AB) ? fmt3(avgOf(s.H, s.AB)) : '.---'; };
-  const psEra = key => { const s = ps.pit[key]; return (s && s.outs) ? fmt2(eraOf(s.ER, s.outs)) : '-.--'; };
-  const batT = arr => `<table class="ws-box"><thead><tr><th class="lname">打者</th><th>ポ打率</th><th>打数</th><th>安</th><th>本</th><th>点</th><th>得</th><th>四</th><th>三</th></tr></thead><tbody>${arr.map(b => `<tr><td class="lname">${b.name}</td><td class="ps-cum">${psAvg(b.key)}</td><td>${b.AB}</td><td>${b.H}</td><td>${b.HR}</td><td>${b.RBI}</td><td>${b.R}</td><td>${b.BB}</td><td>${b.SO}</td></tr>`).join('')}</tbody></table>`;
-  const pitT = arr => `<table class="ws-box"><thead><tr><th class="lname">投手</th><th>ポ防</th><th>回</th><th>安</th><th>自</th><th>三</th><th>四</th></tr></thead><tbody>${arr.map(p => `<tr><td class="lname">${p.name}${p.dec ? '(' + p.dec + ')' : ''}</td><td class="ps-cum">${psEra(p.key)}</td><td>${ipText(p.outs)}</td><td>${p.H}</td><td>${p.ER}</td><td>${p.K}</td><td>${p.BB}</td></tr>`).join('')}</tbody></table>`;
+  // ポストシーズン通算 (赤字「ポ◯」列) を box の key で参照。打率/防御率＋HR/打点・勝敗S/奪三振。
+  const psB = key => ps.bat[key] || {};
+  const psP = key => ps.pit[key] || {};
+  const psAvg = s => s.AB ? fmt3(avgOf(s.H, s.AB)) : '.---';
+  const psEra = s => s.outs ? fmt2(eraOf(s.ER, s.outs)) : '-.--';
+  const batT = arr => `<table class="ws-box"><thead><tr><th class="lname">打者</th><th>ポ打率</th><th class="ps-n">ポ本</th><th class="ps-n">ポ点</th><th>打数</th><th>安</th><th>本</th><th>点</th><th>得</th><th>四</th><th>三</th></tr></thead><tbody>${arr.map(b => { const c = psB(b.key); return `<tr><td class="lname">${seasonNameCell({ name: b.name, year: c.year, team: c.team }, 'batter')}</td><td class="ps-cum">${psAvg(c)}</td><td class="ps-cum ps-n">${c.HR || 0}</td><td class="ps-cum ps-n">${c.RBI || 0}</td><td>${b.AB}</td><td>${b.H}</td><td>${b.HR}</td><td>${b.RBI}</td><td>${b.R}</td><td>${b.BB}</td><td>${b.SO}</td></tr>`; }).join('')}</tbody></table>`;
+  const pitT = arr => `<table class="ws-box"><thead><tr><th class="lname">投手</th><th>ポ防</th><th class="ps-n">ポ勝</th><th class="ps-n">ポ敗</th><th class="ps-n">ポH</th><th class="ps-n">ポS</th><th class="ps-n">ポ奪三</th><th>回</th><th>安</th><th>自</th><th>三</th><th>四</th></tr></thead><tbody>${arr.map(p => { const c = psP(p.key); return `<tr><td class="lname">${seasonNameCell({ name: p.name, year: c.year, team: c.team }, 'pitcher')}${p.dec ? '(' + p.dec + ')' : ''}</td><td class="ps-cum">${psEra(c)}</td><td class="ps-cum ps-n">${c.W || 0}</td><td class="ps-cum ps-n">${c.L || 0}</td><td class="ps-cum ps-n">${c.HLD || 0}</td><td class="ps-cum ps-n">${c.S || 0}</td><td class="ps-cum ps-n">${c.K || 0}</td><td>${ipText(p.outs)}</td><td>${p.H}</td><td>${p.ER}</td><td>${p.K}</td><td>${p.BB}</td></tr>`; }).join('')}</tbody></table>`;
   return ps.wsGames.map((g, i) => `<details class="ws-game"${i === ps.wsGames.length - 1 ? ' open' : ''}>
     <summary>第${i + 1}戦　${seasonTeamName(g.away)} ${g.sA} - ${g.sH} ${seasonTeamName(g.home)}</summary>
     <div class="ws-body">${lineTable(g)}${decLine(g)}${hrList(g)}
