@@ -33,14 +33,22 @@
   }
   function hasIDB() { try { return !!window.indexedDB; } catch (e) { return false; } }
 
+  // DB接続はキャッシュして使い回す (毎回 open すると取り込み時に大量の open が走り遅くなる)。
+  let _db = null;
   function openDB() {
+    if (_db) return Promise.resolve(_db);
     return new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VER);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'key' });
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        _db = req.result;
+        _db.onclose = () => { _db = null; };                                  // 接続が閉じたらキャッシュ破棄
+        _db.onversionchange = () => { try { _db.close(); } catch (e) {} _db = null; };
+        resolve(_db);
+      };
       req.onerror   = () => reject(req.error);
     });
   }
@@ -146,13 +154,24 @@
     return _cache;
   }
   async function addOrUpdate(card) {
+    return addOrUpdateMany([card]);
+  }
+  // 複数カードをまとめて保存する (取り込み用)。
+  //   IDB は 1トランザクションで一括put、全件読み込み(getAll)は最後に1回だけ。
+  //   → 1枚ずつ addOrUpdate → getAll を繰り返す O(N^2) の全件再読込を避ける。
+  async function addOrUpdateMany(cards) {
+    const list = Array.isArray(cards) ? cards : [cards];
+    if (!list.length) return getAll();
     if (_mode === 'idb') {
-      await idbPut(card);
+      await idbPut(list);   // 全カードを1トランザクションでput
     } else {
       const arr = lsLoad();
-      const k = cardKey(card);
-      const i = arr.findIndex(x => cardKey(x) === k);
-      if (i >= 0) arr[i] = card; else arr.push(card);
+      const idx = new Map(arr.map((x, i) => [cardKey(x), i]));   // O(1)重複判定 (findIndex の O(N^2) を回避)
+      for (const card of list) {
+        const k = cardKey(card);
+        if (idx.has(k)) arr[idx.get(k)] = card;
+        else { idx.set(k, arr.length); arr.push(card); }
+      }
       lsSave(arr);   // localStorage モードでは容量超過で例外が出る可能性あり (呼び出し側で捕捉)
     }
     return getAll();
@@ -181,7 +200,7 @@
   }
 
   window.CardStore = {
-    init, getAll, addOrUpdate, removeByKey, clearAll,
+    init, getAll, addOrUpdate, addOrUpdateMany, removeByKey, clearAll,
     getCachedSync, cardKey, mode, estimate,
   };
 })();

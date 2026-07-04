@@ -354,6 +354,34 @@ function normalizePlayer(p) {
       }
       p.drs = newDrs;
     }
+    // 捕手データ (リード/阻止率) の再抽出: 旧パーサーで取り込んだカードは p.catcher が無い。
+    //   カード表示は rawHtml を直描画するため「画面には見えるのに内部データに無い」状態になり、
+    //   リード査定・盗塁阻止・スタメン捕手選定がすべて効かなくなる → rawHtml から補完する。
+    //   実カードの構造 (card_generator 出力):
+    //     <div class="catcher-bar" style="…">          ← style属性あり
+    //       <div class="ca-item"> …リード… </div>       ← 内側にdivがネスト
+    //       <div class="ca-item"> …阻止率… </div>
+    //     </div>
+    //   属性付き開始タグを許容し、ネストで閉じタグ探索が壊れないよう
+    //   開始位置から一定範囲のセグメントを走査して ca-label / ca-val を対で拾う。
+    if (!p.catcher || (p.catcher['リード'] == null && p.catcher['阻止率'] == null)) {
+      const mOpen = p.rawHtml.match(/<div class="catcher-bar"[^>]*>/);
+      if (mOpen) {
+        const seg = p.rawHtml.slice(mOpen.index, mOpen.index + 1500);
+        const labels = [], vals = [];
+        const reL = /<span class="ca-label"[^>]*>([\s\S]*?)<\/span>/g;
+        while ((m = reL.exec(seg)) !== null) labels.push(m[1].replace(/<[^>]+>/g, '').trim().replace(/\s+/g, ''));
+        const reV = /<span class="ca-val[^"]*"[^>]*>([\s\S]*?)<\/span>/g;
+        while ((m = reV.exec(seg)) !== null) vals.push(m[1].replace(/<[^>]+>/g, '').trim());
+        if (labels.length) {
+          p.catcher = {};
+          for (let i = 0; i < labels.length; i++) {
+            const n = parseFloat(String(vals[i] ?? '').replace(/[^\-0-9.]/g, ''));
+            p.catcher[labels[i]] = Number.isFinite(n) ? n : 0;
+          }
+        }
+      }
+    }
   }
   return p;
 }
@@ -504,6 +532,10 @@ const DEFAULT_BATTER_POS = ['CF','SS','1B','3B','DH','LF','RF','2B','C'];
 function canPlay(b, pos) {
   if (!b) return false;
   if (pos === 'DH') return true;
+  // 捕手(C)は、捕手データ(リード/阻止率のcatcher-bar)を持つカードなら守備DRSにC記載が無くても可。
+  //   捕手データは「その年に捕手として出場した選手」にしか無い実データのため、
+  //   position-badge による救済(上のルールで禁止)とは異なり適性の根拠になる。
+  if (pos === 'C' && b.catcher && (b.catcher['リード'] != null || b.catcher['阻止率'] != null)) return true;
   if (!b.drs) return false;
   return b.drs.some(d => d.pos === pos && (Number(d.innings) || 0) > 0);
 }
@@ -1128,6 +1160,62 @@ function initTeamBuild() {
 }
 
 // チーム編成の自動設定。指定ロジックで各ポジション・控え・投手を自動選択する。
+// ===== AI打順決定 (現代MLBの監督采配・共通ロジック) =====
+//   entries=[{pos, p}](最大9人) の各要素へ打順(1〜9)を割り当てた Map(entry→打順) を返す。
+//   チーム編成の自動編成と、レギュラーシーズン手動試合の休養時AI打順の両方で使う。
+//   現代MLB(セイバーメトリクス以降)の定石:
+//     ・2番 = チーム最強の打者 (打席数と得点機会のバランスが最良の、現代MLBの主軸打順)
+//     ・4番 = 長打と勝負強さで走者を還すスラッガー
+//     ・1番 = 出塁力(選球眼・ミート)最優先＋足 (最多打席を無駄にしない)
+//     ・3番 = 「2アウト走者なし」で回りやすい打順のため、2・4番より一段軽い好打者
+//     ・5番 = 4番の後ろの保険となる長打力
+//     ・9番 = 足のある選手がいれば「第2の1番」として上位へ繋ぐ (DH制の定石)。いなければ最弱打者
+//     ・6〜8番 = 残りを打力の高い順
+function aiAssignBattingSpots(entries) {
+  const stat = (p, k) => (p && p.stats && Number.isFinite(p.stats[k])) ? p.stats[k] : 0;
+  const mini = (p, k) => (p && p.statsMini && Number.isFinite(p.statsMini[k])) ? p.statsMini[k] : 0;
+  const mSpeed = p => stat(p, 'スピード'), mSteal = p => mini(p, '盗塁能'), mEye = p => stat(p, '選球眼');
+  const mPow = p => stat(p, 'パワー'), mMeat = p => stat(p, 'ミート'), mChan = p => stat(p, 'チャンス'), mHR = p => mini(p, 'HR能');
+  const obp  = p => mEye(p) * 1.6 + mMeat(p);                          // 出塁力 (選球眼を重視)
+  const slug = p => mPow(p) + mHR(p) * 8;                              // 長打力
+  const bat  = p => mMeat(p) + mPow(p) + mEye(p) * 0.8 + mHR(p) * 5;   // 総合打力
+  const remain = entries.slice();
+  const spotOf = new Map();
+  const assignSpot = (spotNum, scoreFn, opts) => {
+    if (!remain.length) return;
+    let cands = remain;
+    if (opts && opts.filter) { const f = remain.filter(e => opts.filter(e.p)); if (f.length) cands = f; }
+    const better = (opts && opts.min) ? (a, b) => scoreFn(b.p) < scoreFn(a.p) : (a, b) => scoreFn(b.p) > scoreFn(a.p);
+    let pick = cands[0];
+    for (const e of cands) if (better(pick, e)) pick = e;
+    spotOf.set(pick, spotNum);
+    remain.splice(remain.indexOf(pick), 1);
+  };
+  // (1) 2番: 総合打力+勝負強さ最大 = チーム最強打者を最も価値の高い打順へ
+  assignSpot(2, p => bat(p) + mChan(p) * 0.5);
+  // (2) 4番: 残りで長打力+勝負強さ最大 (走者を還す)
+  assignSpot(4, p => slug(p) + mChan(p) * 2 + mMeat(p) * 0.5);
+  // (3) 1番: 残りで出塁力+足最大 (選球眼55以上 または 俊足(スピード+盗塁能80以上) を優先)
+  assignSpot(1, p => obp(p) + (mSpeed(p) + mSteal(p)) * 0.6, { filter: p => mEye(p) >= 55 || (mSpeed(p) + mSteal(p)) >= 80 });
+  // (4) 3番: 残りで総合打力+勝負強さ (2・4番より一段軽い好打者)
+  assignSpot(3, p => bat(p) + mChan(p));
+  // (5) 5番: 残りで長打力寄りの好打者 (4番の後ろの保険)
+  assignSpot(5, p => slug(p) + mMeat(p) * 0.7 + mChan(p));
+  // (6) 9番: 残り4人のうち「最も打てる1人」を除いて足のある選手がいれば「第2の1番」。
+  //     いなければ従来通り打力最小の選手を9番へ。
+  const bestBatP = remain.length ? remain.reduce((m, e) => (bat(e.p) > bat(m.p) ? e : m), remain[0]).p : null;
+  if (remain.some(e => e.p !== bestBatP && mSpeed(e.p) + mSteal(e.p) >= 70)) {
+    assignSpot(9, p => mSpeed(p) + mSteal(p) + mEye(p), { filter: p => p !== bestBatP && mSpeed(p) + mSteal(p) >= 70 });
+  } else {
+    assignSpot(9, p => bat(p), { min: true });
+  }
+  // (7) 6・7・8番: 残りを打力の高い順
+  remain.sort((a, b) => bat(b.p) - bat(a.p));
+  [6, 7, 8].forEach((n, i) => { if (remain[i]) spotOf.set(remain[i], n); });
+  remain.forEach((e, i) => { if (!spotOf.has(e)) spotOf.set(e, 6 + i); });   // 念のため未割当を埋める
+  return spotOf;
+}
+
 function autoFillTeamBuild(opts) {
   if (!TB_STATE) return;
   // opts.batters: 野手(現在オーダーのみ)を自動編成 / opts.pitchers: 投手も自動編成
@@ -1138,7 +1226,10 @@ function autoFillTeamBuild(opts) {
   const ov   = p => (overallOf(p) || 0) - (isMinorPlayer(p) ? MINOR_FILL_PENALTY : 0);
   const stat = (p, k) => (p && p.stats && Number.isFinite(p.stats[k])) ? p.stats[k] : 0;
   const meatPow = p => stat(p, 'ミート') + stat(p, 'パワー');
-  const phScore = p => stat(p, 'パワー') + stat(p, 'ミート') + stat(p, 'チャンス') * 2;  // PH評価
+  // PH評価 (MLB監督采配): 代打の仕事は一発と勝負どころの一打 → 長打力(HR能)と勝負強さを重視、選球眼も少し見る
+  const phScore = p => stat(p, 'パワー') + stat(p, 'ミート') + stat(p, 'チャンス') * 1.5
+    + ((p && p.statsMini && Number.isFinite(p.statsMini['HR能'])) ? p.statsMini['HR能'] : 0) * 8
+    + stat(p, '選球眼') * 0.3;
   const speedOf = p => stat(p, 'スピード');
   const drsCount = p => (p && p.drs) ? p.drs.filter(d => (Number(d.innings) || 0) > 0).length : 0;
   const drsSum   = p => (p && p.drs) ? p.drs.reduce((s, d) => s + ((Number(d.innings) || 0) > 0 ? (d.value || 0) : 0), 0) : 0;
@@ -1149,20 +1240,24 @@ function autoFillTeamBuild(opts) {
   const allPit = tbDedupePoolNewest(tbPitcherPool());
 
   // ===== 野手: 9守備位置 (現在のオーダーのみ) =====
-  // 各ポジションで総合力が高い選手を選ぶ。総合力差が10未満なら、
-  //   2B/SS/CF/C → 守備DRS優先 / 1B/3B/LF/RF/DH → ミート+パワー優先。
+  // MLB監督の采配: 総合力を主軸にしつつ、センターライン(SS/2B/CF)は守備力を「実加点」で査定する。
+  //   守備の要は失点を直接減らすため、多少打力が落ちても守れる選手を優先する (捕手はリード査定で別途考慮)。
+  //   コーナー(1B/3B/LF/RF)は打撃優先で、守備は小さめの加点に留める。
   if (doBatters) {
   const usedBat = new Set();
-  const DEF_TB = new Set(['2B', 'SS', 'CF', 'C']);   // 守備DRSを重視するポジション
+  const DEF_TB = new Set(['2B', 'SS', 'CF', 'C']);   // 守備DRSをタイブレークに使うポジション
   const curOrderIdx = (TB_STATE && TB_STATE.currentOrder) || 0;
   const DIAMOND = ['C','1B','2B','3B','SS','LF','CF','RF','DH'];
   // 現在のオーダーに出場可能な野手だけを候補にする (オーダー制約)
   const cand = allBat.filter(p => playerAllowedInOrder(p, curOrderIdx));
-  // 割当スコア: 「総合力」を主目的とし、守備適性(DRS/ミート+パワー)はごく僅かなタイブレークに留める。
-  //   → まず9ポジションを充足し、合計総合力が最大になる配置を最優先する。
+  // 守備の実加点: センターライン=守備DRS×0.6 (DRS+10の遊撃手は総合力6点ぶんの価値) /
+  //   コーナー=×0.25 (打力優先) / C=0 (リード×4+阻止率÷5 の捕手査定側で評価) / DH=0。
+  const DEF_POS_W = { 'SS': 0.6, '2B': 0.6, 'CF': 0.6, '1B': 0.25, '3B': 0.25, 'LF': 0.25, 'RF': 0.25 };
   const posBonus = (p, pos) => {
-    const tb = DEF_TB.has(pos) ? tbDrsValue(p, pos) : meatPow(p);
-    return (Number.isFinite(tb) ? tb : 0) / 100000;   // 整数の総合力差は決して覆さない微小値
+    const drs = tbDrsValue(p, pos);
+    const real = (DEF_POS_W[pos] || 0) * (Number.isFinite(drs) ? drs : 0);
+    const tb = DEF_TB.has(pos) ? drs : meatPow(p);
+    return real + (Number.isFinite(tb) ? tb : 0) / 100000;   // 微小タイブレークは従来通り
   };
   // 各ポジションで出場可能な選手の最高ミート+パワー (起用ボーナスの安全弁に使用)
   const maxMeatPowAt = {};
@@ -1172,19 +1267,29 @@ function autoFillTeamBuild(opts) {
     maxMeatPowAt[pos] = (mx === -Infinity) ? 0 : mx;
   });
   // 起用ボーナス: 年度試合数10につき1ポイント (実際の出場=打数を加味し、数ポイント差なら試合数が多い選手を起用)。
-  //   ただし、その位置で守備DRSが-10以下 / ミート+パワーがその位置の最高より15以上低い 場合は
-  //   チームの攻守への影響が大きいため、このボーナスは与えない (総合力のみで評価)。
+  //   ただし、その位置で守備への悪影響が大きい / ミート+パワーがその位置の最高より15以上低い 場合は
+  //   このボーナスを与えない (総合力のみで評価)。
+  //   捕手(C)の守備判定は生のDRSでなく捕手評価(リード×4+阻止率÷5+DRS÷10)で行う
+  //   — 打球処理(DRS)が悪くてもリードの良い正捕手を門前払いしないため。
   const usageBonus = (p, pos) => {
     const g = getCardGamesOf(p);
     if (!g) return 0;
-    const drs = tbDrsValue(p, pos);
-    if (Number.isFinite(drs) && drs <= -10) return 0;     // 守備への悪影響大 → 適用しない
+    if (pos === 'C') {
+      if (defenseRating(p, pos) <= 0) return 0;           // 捕手評価が0以下 → 適用しない
+    } else {
+      const drs = tbDrsValue(p, pos);
+      if (Number.isFinite(drs) && drs <= -10) return 0;   // 守備への悪影響大 → 適用しない
+    }
     if (meatPow(p) <= (maxMeatPowAt[pos] || 0) - 15) return 0;  // 攻撃力の低下大 → 適用しない
     return g / 10;
   };
-  // 捕手は「リード×5 + 阻止率/10」をレギュラー査定に加味 (打力で劣る守備型捕手をスタメンに残せるように)。
+  // 捕手は「リード×4 + 阻止率÷5」をレギュラー査定に加味 (リード重視のMLB監督采配)。
+  //   さらに、捕手適性のある選手を「C以外」(DH・一塁など) に置く場合は tbDhCatcherPenalty で減点する
+  //   — 「リードの良い捕手はマスクに回し、他の枠には別の選手を置く」方が総合点が高くなり、
+  //   捕手をDHや一塁で消費する編成 (例: ペレス一塁+守備型捕手スタメン) を避ける。
   const diamondScore = (p, pos) => canPlay(p, pos)
-    ? (ov(p) + usageBonus(p, pos) + posBonus(p, pos) + (pos === 'C' ? catcherAssessBonus(p) : 0))
+    ? (ov(p) + usageBonus(p, pos) + posBonus(p, pos)
+       + (pos === 'C' ? catcherAssessBonus(p) : -tbDhCatcherPenalty(p)))
     : -Infinity;
   // bestAssignment が扱えるサイズへ削減 (カバレッジ保証)。試合数・捕手査定込みで絞り込み、守備型捕手が漏れないようにする。
   const players = tbTrimForAssignment(cand, DIAMOND, p => ov(p) + ((getCardGamesOf(p) || 0) / 10) + catcherAssessBonus(p), 18);
@@ -1209,8 +1314,15 @@ function autoFillTeamBuild(opts) {
       for (const pos of FIELD_POS) {
         const fp = newBatters[pos];
         if (!fp || !canPlay(dhP, pos)) continue;   // DH選手がそのポジションを守れること
-        const gain = (tbDrsValue(dhP, pos) || 0) - (tbDrsValue(fp, pos) || 0);
-        if (gain > bestGain) { bestGain = gain; bestPos = pos; }   // 守備DRSが上回る位置のうち改善が最大
+        // 守備評価は defenseRating: 捕手(C)はリード×4+阻止率÷5+DRS÷10 の捕手評価で比較 (他はDRS)。
+        // 捕手価値の放棄(tbDhCatcherPenalty)の交換は C への移動時のみ加味する:
+        //   ・C なら dhP の放棄が解消し fp の放棄が発生 → 差し引きを加算
+        //   ・C 以外 (一塁など) は移動してもDHでも放棄したままで相殺 → 純粋な守備DRS比較
+        //   (C以外にも加えると「捕手をDHから一塁へ」の移動を不当に促してしまう)
+        const gain = (pos === 'C')
+          ? (defenseRating(dhP, pos) + tbDhCatcherPenalty(dhP)) - (defenseRating(fp, pos) + tbDhCatcherPenalty(fp))
+          : defenseRating(dhP, pos) - defenseRating(fp, pos);
+        if (gain > bestGain) { bestGain = gain; bestPos = pos; }   // 総合改善が最大の位置
       }
       if (!bestPos) break;   // どの守備位置でも現守備者を上回らない → DHのまま (既定どおり)
       const fieldP = newBatters[bestPos];
@@ -1227,8 +1339,12 @@ function autoFillTeamBuild(opts) {
       const curPos = new Map(chosen.map(e => [e.p, e.pos]));
       const defOpt = (p, pos) => {
         if (!canPlay(p, pos)) return -Infinity;
-        const drs = (pos === 'DH') ? 0 : (tbDrsValue(p, pos) || 0);
-        return drs + (curPos.get(p) === pos ? 0.001 : 0);   // 合計DRSが同じなら現状の配置を維持
+        // 捕手(C)はリード×4+阻止率÷5+DRS÷10 の捕手評価、他ポジションは守備DRS (defenseRating)。
+        // C以外(DH・一塁など)に捕手適性持ちを置く場合は「捕手価値の放棄」を減点
+        //   (ペレスの一塁DRSがプラスでも、捕手価値24点超を捨ててまで一塁へ回さない)。
+        const base  = (pos === 'DH') ? 0 : defenseRating(p, pos);
+        const waste = (pos === 'C') ? 0 : tbDhCatcherPenalty(p);
+        return base - waste + (curPos.get(p) === pos ? 0.001 : 0);   // 合計評価が同じなら現状の配置を維持
       };
       const ps = chosen.map(e => e.p);
       const assign = bestAssignment(DIAMOND, ps, defOpt);
@@ -1237,45 +1353,13 @@ function autoFillTeamBuild(opts) {
       }
     }
   }
-  // ===== 打順編成: 確定した9人に指定ロジックで 1〜9番を割り当てる =====
+  // ===== 打順編成: 確定した9人に現代MLBの采配ロジックで 1〜9番を割り当てる (aiAssignBattingSpots 共通) =====
   const newOrder = { C:null,'1B':null,'2B':null,'3B':null,SS:null,LF:null,CF:null,RF:null,DH:null };
-  const mini = (p, k) => (p && p.statsMini && Number.isFinite(p.statsMini[k])) ? p.statsMini[k] : 0;
-  // 打順評価に使う各指標
-  const mSpeed = p => stat(p, 'スピード');
-  const mSteal = p => mini(p, '盗塁能');
-  const mEye   = p => stat(p, '選球眼');
-  const mPow   = p => stat(p, 'パワー');
-  const mMeat  = p => stat(p, 'ミート');
-  const mChan  = p => stat(p, 'チャンス');
-  const mHR    = p => mini(p, 'HR能');
-  // 未割当の選手 (pos付き)
-  const remain = Object.keys(newBatters).filter(pos => newBatters[pos]).map(pos => ({ pos, p: newBatters[pos] }));
-  // 1枠を割当: filterFn を満たす候補から(無ければ全候補から) scoreFn 最大(min=true なら最小)の選手を選ぶ
-  const assignSpot = (spotNum, scoreFn, opts) => {
-    if (!remain.length) return;
-    let cands = remain;
-    if (opts && opts.filter) { const f = remain.filter(e => opts.filter(e.p)); if (f.length) cands = f; }
-    const better = (opts && opts.min) ? (a, b) => scoreFn(b.p) < scoreFn(a.p) : (a, b) => scoreFn(b.p) > scoreFn(a.p);
-    let pick = cands[0];
-    for (const e of cands) if (better(pick, e)) pick = e;
-    newOrder[pick.pos] = spotNum;
-    remain.splice(remain.indexOf(pick), 1);
-  };
-  // (1) 1番: スピード+盗塁能≧80 の中で スピード+盗塁能+選球眼 最大
-  assignSpot(1, p => mSpeed(p) + mSteal(p) + mEye(p), { filter: p => (mSpeed(p) + mSteal(p)) >= 80 });
-  // (2) 2番: 残りで総合力最大
-  assignSpot(2, p => ov(p));
-  // (3) 4番: 残りで パワー+ミート+チャンス×2+HR能×10 最大
-  assignSpot(4, p => mPow(p) + mMeat(p) + mChan(p) * 2 + mHR(p) * 10);
-  // (4) 3番: 残りで ミート+パワー+チャンス+スピード 最大
-  assignSpot(3, p => mMeat(p) + mPow(p) + mChan(p) + mSpeed(p));
-  // (5) 5番: 残りで ミート+パワー+HR能×20+チャンス 最大
-  assignSpot(5, p => mMeat(p) + mPow(p) + mHR(p) * 20 + mChan(p));
-  // (6) 9番: 残りで ミート+パワー+チャンス 最小
-  assignSpot(9, p => mMeat(p) + mPow(p) + mChan(p), { min: true });
-  // (7) 6・7・8番: 残りを総合力の高い順に
-  remain.sort((a, b) => ov(b.p) - ov(a.p));
-  [6, 7, 8].forEach((n, i) => { if (remain[i]) newOrder[remain[i].pos] = n; });
+  {
+    const entries = Object.keys(newBatters).filter(pos => newBatters[pos]).map(pos => ({ pos, p: newBatters[pos] }));
+    const spots = aiAssignBattingSpots(entries);
+    entries.forEach(e => { newOrder[e.pos] = spots.get(e) || null; });
+  }
 
   // ===== 控え (PH1 / PH2 / PH3 / 代走 / 守備 / 守備) =====
   const takeBest = (scoreFn) => {
@@ -1331,12 +1415,14 @@ function autoFillTeamBuild(opts) {
 
   const ph1  = takeBest(phScore);    // PH1: パワー+ミート+チャンス×2
   const def1 = takePlayer(pickDefenseSub(allBat.filter(p => !usedBat.has(p))));  // 守備1: ユーティリティ守備固め
-  // 守備2: 捕手で総合力が高い選手。捕手が居なければ守備1のロジックに準じる。
+  // 守備2: 控え捕手。総合力＋捕手査定(リード×4+阻止率÷5)が高い選手 (第2捕手も配球力を重視)。
+  //   捕手が居なければ守備1のロジックに準じる。
   let def2;
   { const rem = allBat.filter(p => !usedBat.has(p));
-    const catchers = rem.filter(p => canPlay(p, 'C')).sort((a, b) => ov(b) - ov(a));
+    const catchers = rem.filter(p => canPlay(p, 'C'))
+      .sort((a, b) => (ov(b) + catcherAssessBonus(b)) - (ov(a) + catcherAssessBonus(a)));
     def2 = takePlayer(catchers.length ? catchers[0] : pickDefenseSub(rem)); }
-  const pinchRun = takeBest(speedOf);// 代走: 走力(スピード)最大
+  const pinchRun = takeBest(speedValue);// 代走: 走力総合(スピード+盗塁能×2+盗塁実績) — 盗塁できる走者を優先 (MLB采配)
   const ph2  = takeBest(phScore);    // PH2
   const ph3  = takeBest(phScore);    // PH3
   // pinchHitters の並び: [PH1, PH2, PH3, 代走, 守備, 守備]
@@ -1496,6 +1582,7 @@ function tbStorageKey(team) { return TB_STORAGE_PREFIX + (team || 'original'); }
 
 function saveTeamBuild() {
   if (!TB_STATE) return false;
+  tbInvalidateRatingCal();  // 保存編成が変わる → 戦力評価の校正基準を次回参照時に再計算
   const idOf = playerIdOf;  // 名前+年+チーム+種別 を保存 (二刀流の投手/打者を区別)
   const serOrder = (o) => ({
     batters: Object.fromEntries(Object.entries(o.batters).map(([k,v]) => [k, idOf(v)])),
@@ -1577,6 +1664,104 @@ function tbAliasCurrentOrder() {
 function tbSwitchOrder(i) {
   if (!TB_STATE || !TB_STATE.orders) return;
   TB_STATE.currentOrder = Math.max(0, Math.min(TB_ORDER_COUNT - 1, i));
+  tbAliasCurrentOrder();
+  renderTeamBuild();
+}
+// ===== チーム戦力の4カテゴリ評価 =====
+//   「素点計算 (tbRawRatings)」+「全球団相対の自動校正 (tbCalibratedScore)」の2段構え。
+//   校正: オリジナルとSTLを除く29球団の保存編成(オーダー1)から各カテゴリの分布を取り、
+//     『中央値のチーム→71点(B) / 上位3チームの平均→100点(S帯の中心)』となる線形換算に載せる。
+//     → 上位5チーム前後が100点前後のS評価になり、素点のばらつき(機動力115点等)の影響を受けない。
+//   通常チームは15〜100点、オリジナル/年代不問オールスターは15〜120点にクランプ (100超=SS)。
+//   校正データ不足(保存編成8チーム未満)の場合は素点をそのまま表示。
+function tbRawRatings(batters, pitchers) {
+  const st = (p, k, d) => (p && p.stats && Number.isFinite(p.stats[k])) ? p.stats[k] : d;
+  const mi = (p, k) => (p && p.statsMini && Number.isFinite(p.statsMini[k])) ? p.statsMini[k] : 0;
+  batters = batters || {};
+  const POSL = ['C','1B','2B','3B','SS','LF','CF','RF','DH'];
+  let offSum = 0, mobSum = 0, defPts = 0;
+  for (const pos of POSL) {
+    const p = batters[pos];
+    if (!p) { offSum += 40; mobSum += 40; if (pos !== 'DH') defPts -= 5; continue; }
+    offSum += st(p,'ミート',50)*0.35 + st(p,'パワー',50)*0.35 + st(p,'選球眼',50)*0.15 + st(p,'チャンス',50)*0.15 + mi(p,'HR能')*1.5;
+    mobSum += st(p,'スピード',50) + mi(p,'盗塁能')*3;
+    if (pos !== 'DH') defPts += defenseRating(p, pos);
+  }
+  const pit = pitchers || {};
+  const avg = arr => { const a = (arr||[]).filter(Boolean).map(x => overallOf(x) || 0); return a.length ? a.reduce((s,v)=>s+v,0)/a.length : 40; };
+  return {
+    pitching: avg(pit.starter)*0.55 + avg([...(pit.setup||[]), ...(pit.closer||[])])*0.30 + avg(pit.middle)*0.15,
+    offense:  offSum / 9,
+    defense:  55 + defPts * 0.45,
+    mobility: mobSum / 9,
+  };
+}
+// MLB30球団(オリジナル除く)の保存編成から校正基準(5番目に強いチーム・中央値)を作る。遅延計算でキャッシュ。
+let TB_RATING_CAL = null;
+function tbInvalidateRatingCal() { TB_RATING_CAL = null; }
+function tbComputeRatingCal() {
+  const teams = MLB_DIVISIONS.flatMap(d => d.teams.map(t => t[0]));   // 30球団
+  const cats = { pitching: [], offense: [], defense: [], mobility: [] };
+  for (const code of teams) {
+    let tb = null;
+    try { tb = getSavedTeamBuild(code, 0); } catch (e) { tb = null; }
+    if (!tb || !tb.batters) continue;
+    const filled = Object.values(tb.batters).filter(Boolean).length;
+    if (filled < 7) continue;   // ほぼ空の編成はノイズとして除外
+    const r = tbRawRatings(tb.batters, tb.pitchers);
+    for (const k in cats) cats[k].push(r[k]);
+  }
+  const cal = {};
+  for (const k in cats) {
+    const arr = cats[k].slice().sort((a, b) => b - a);   // 素点の高い順
+    // p5 = 5番目に強いチームの素点 (S下限90のアンカー) / med = 中央値 (B下限70のアンカー)
+    cal[k] = (arr.length >= 8)
+      ? { p5: arr[Math.min(4, arr.length - 1)], med: arr[Math.floor(arr.length / 2)] }
+      : null;   // データ不足 → 素点表示
+  }
+  return cal;
+}
+// 素点 → 校正済み点数。アンカー: 中央値のチーム→70点(B下限) / 5番目に強いチーム→90点(S下限)。
+//   → 各項目で上位5チーム前後がS(90〜100)、中位はB、下位はC以下に分布する。
+//   分布が密集していても換算が暴れないよう分母(p5-med)は最低6を確保 (傾きの上限≈3.3)。
+//   クランプ: 通常チーム 15〜100 / オリジナル・年代不問オールスター 15〜120 (100超=SS)。
+function tbCalibratedScore(cat, raw, allowOver) {
+  if (!TB_RATING_CAL) TB_RATING_CAL = tbComputeRatingCal();
+  const c = TB_RATING_CAL[cat];
+  let v = raw;
+  if (c) v = 70 + (raw - c.med) * 20 / Math.max(c.p5 - c.med, 6);
+  return Math.max(15, Math.min(allowOver ? 120 : 100, v));
+}
+// 現在オーダーの4カテゴリ評価 (全球団相対の校正済み)。
+//   オリジナルチーム or 年度フィルタ「指定なし」(=年代を問わないオールスター編成) は100超え(SS)を許可する。
+function tbTeamRatings() {
+  const raw = tbRawRatings((TB_STATE && TB_STATE.batters) || {}, (TB_STATE && TB_STATE.pitchers) || {});
+  const allowOver = !!(TB_STATE && (TB_STATE.team === 'original' || TB_STATE.year == null));
+  return {
+    pitching: tbCalibratedScore('pitching', raw.pitching, allowOver),
+    offense:  tbCalibratedScore('offense',  raw.offense, allowOver),
+    defense:  tbCalibratedScore('defense',  raw.defense, allowOver),
+    mobility: tbCalibratedScore('mobility', raw.mobility, allowOver),
+  };
+}
+// 点数(整数表示値) → 評価。100超=SS(レインボー、オリジナル/オールスターのみ)。
+//   S:90〜100 / A:80〜89 / B:70〜79 / C:60〜69 / D:50〜59 / E:40〜49 / F:30〜39 / G:1〜29。
+function tbGradeOf(v) {
+  return v >= 101 ? 'SS' : v >= 90 ? 'S' : v >= 80 ? 'A' : v >= 70 ? 'B' : v >= 60 ? 'C' : v >= 50 ? 'D' : v >= 40 ? 'E' : v >= 30 ? 'F' : 'G';
+}
+
+// 「全change」: オーダー1〜3の野手(控え込み)と共有の投手陣を、年度設定に従ってすべて自動編成し直す。
+//   各オーダーで登録可能な選手の制約(年度・オーダー特例)が異なるため、
+//   オーダーを順に切り替えながら1つずつ自動編成する。投手は共有なので最初の1回のみ。
+function tbAutoFillAllOrders() {
+  if (!TB_STATE || !TB_STATE.orders) return;
+  const cur = TB_STATE.currentOrder || 0;
+  for (let i = 0; i < TB_ORDER_COUNT; i++) {
+    TB_STATE.currentOrder = i;
+    tbAliasCurrentOrder();
+    autoFillTeamBuild({ batters: true, pitchers: i === 0 });
+  }
+  TB_STATE.currentOrder = cur;   // 元のオーダー表示へ戻す
   tbAliasCurrentOrder();
   renderTeamBuild();
 }
@@ -1761,26 +1946,43 @@ function tbDrsValue(player, pos) {
   return d ? (d.value || 0) : 0;
 }
 
-// 捕手のレギュラー査定への加点: リードは1変わるごとに5pt、阻止率(盗塁阻止)は10変わるごとに1pt。
-//   (守備型捕手が打力型捕手に総合力で劣っても、リード/阻止率でスタメンに選ばれ得るようにする)
+// 捕手のレギュラー査定への加点: リード×4 + 阻止率÷5 (総合力換算)。
+//   ゲームエンジン分析による重み: リード1点はヒット判定(hitPt)を1下げ、相手の全打席(≈38/試合)に
+//   作用して約0.10失点/試合の防御価値。打者の総合力1点(自分の約4.3打席のみ)≈0.025点/試合なので
+//   リード1点 ≈ 総合力4点。阻止率は盗塁企図(約1.2回/試合)×成功率変化(0.8%/点)＋抑止効果 ≈ ÷5。
+//   打力型捕手を正捕手にできれば DH に別の強打者を置けてチーム力が上がる — この損得は
+//   bestAssignment(全体最適)が自動で解決するので、ここでは捕手固有の価値だけを加点する。
 function catcherAssessBonus(player) {
   if (!player || !player.catcher || !canPlay(player, 'C')) return 0;
   const lead = Number(player.catcher['リード']);
   const arm  = Number(player.catcher['阻止率']);
-  return (Number.isFinite(lead) ? lead * 5 : 0) + (Number.isFinite(arm) ? arm / 10 : 0);
+  return (Number.isFinite(lead) ? lead * 4 : 0) + (Number.isFinite(arm) ? arm / 5 : 0);
+}
+// 捕手適性のある選手を「C以外」(DH・一塁など他の守備位置) で使う時の
+//   「捕手価値の放棄」ペナルティ (MLB監督の采配)。
+//   リード/阻止率の良い捕手をC以外に置くと、正捕手として持つ価値(リード×4+阻止率÷5)を
+//   捨てた上に他の選手の枠まで塞ぐ (彼をマスクに回せば他の枠に別の選手を置ける)。
+//   本職捕手 (カードのポジションが「捕手」) は固定12点 + 査定×0.8 と特に重く減点し、
+//   それ以外の捕手適性持ちは査定×0.6。査定のマイナス分は0扱い (下手な捕手の転用は自由)。
+function tbDhCatcherPenalty(player) {
+  const cab = Math.max(0, catcherAssessBonus(player));
+  const primaryC = !!(player && typeof player.position === 'string'
+    && player.position.indexOf('捕手') >= 0 && canPlay(player, 'C'));
+  return primaryC ? (12 + cab * 0.8) : cab * 0.6;
 }
 
-// 守備の総合評価 (守備固め判定用)。基本は守備DRS。
-// 捕手は守備固めでも、守備DRSは5変わるごとに1pt・リードは1変わるごとに5pt・阻止率は10変わるごとに1pt で評価する。
+// 守備の総合評価 (守備固め判定・守備位置最適化用)。基本は守備DRS。
+// 捕手は打球処理(DRS)より配球が重要: 守備DRSは10につき1pt・リードは1につき4pt・阻止率は5につき1pt。
+//   (リード×4/阻止率÷5 はゲームエンジンの失点影響分析による総合力換算値 — catcherAssessBonus 参照)
 function defenseRating(player, pos) {
   if (!player) return -Infinity;
   const drs = tbDrsValue(player, pos) || 0;
   if (pos === 'C' && player.catcher) {
     const lead = Number(player.catcher['リード']);
     const arm  = Number(player.catcher['阻止率']);
-    return (drs / 5)                                     // 守備DRS: 5につき1pt
-      + (Number.isFinite(lead) ? lead * 5 : 0)           // リード: 1につき5pt
-      + (Number.isFinite(arm)  ? arm / 10 : 0);          // 阻止率: 10につき1pt
+    return (drs / 10)                                    // 守備DRS: 10につき1pt (捕手の打球処理は影響小)
+      + (Number.isFinite(lead) ? lead * 4 : 0)           // リード: 1につき4pt (≈0.10失点/試合の防御価値)
+      + (Number.isFinite(arm)  ? arm / 5 : 0);           // 阻止率: 5につき1pt
   }
   return drs;
 }
@@ -2113,7 +2315,15 @@ function renderTbDiamond() {
       <select class="tb-year-select">${yearOpts}</select>
     </div>
   </div>`;
-  // ここまでが守備フィールド本体 (SVG + 9枠 + 総合力 + オーダー/年度)。
+  // ダイヤモンド左下 (三塁枠の下・凡例の上): 現在オーダーの戦力4カテゴリ評価
+  const ratings = tbTeamRatings();
+  const rRows = [['投手力', ratings.pitching], ['攻撃力', ratings.offense], ['守備力', ratings.defense], ['機動力', ratings.mobility]]
+    .map(([lbl, v]) => { const disp = Math.round(v); const g = tbGradeOf(disp); return `<div class="tbr-row"><span class="tbr-label">${lbl}</span><span class="tbr-score">${disp}</span><span class="tbr-grade g-${g.toLowerCase()}">${g}</span></div>`; })
+    .join('');
+  html += `<div class="tb-team-ratings" title="現在のオーダーの戦力評価 (S:90〜100 A:80〜89 B:70〜79 C:60〜69 D:50〜59 E:40〜49 F:30〜39 G:〜29。100超SSはオリジナル/年代不問のオールスターのみ)">${rRows}</div>`;
+  // ダイヤモンド下中央 (捕手枠の下・凡例の上): 全changeボタン
+  html += `<button type="button" class="btn tb-allchange" title="オーダー1〜3の野手(控え込み)と投手陣を、年度設定に従ってすべて自動編成し直します">🔄 全change</button>`;
+  // ここまでが守備フィールド本体 (SVG + 9枠 + 総合力 + オーダー/年度 + 戦力評価 + 全change)。
   //   凡例と人数はフィールドの「下」(枠外) に置き、DH枠などと重ならないようにする。
   html = `<div class="tb-field">${html}</div>`;
   // 打順/DRS 凡例 + このオーダーの守備位置別 登録可能人数
@@ -2131,6 +2341,12 @@ function renderTbDiamond() {
   // オーダー切り替えボタン
   root.querySelectorAll('.tb-order-btn').forEach(btn => {
     btn.addEventListener('click', () => tbSwitchOrder(parseInt(btn.dataset.order, 10)));
+  });
+  // 全change: オーダー1〜3の野手・控え + 投手陣を年度設定に従い全自動編成
+  const allChg = root.querySelector('.tb-allchange');
+  if (allChg) allChg.addEventListener('click', () => {
+    if (!confirm('オーダー1・2・3の野手(控え込み)と投手陣を、すべて自動編成で上書きします。\nよろしいですか？')) return;
+    tbAutoFillAllOrders();
   });
   // 年度選択
   const yearSelEl = root.querySelector('.tb-year-select');
@@ -2875,6 +3091,7 @@ function beginGame() {
   G._lastIntroPitcher = { home: G.currentPitcher, away: null };
   G.autoVideoPlaying = false;   // 自動再生は停止状態で開始 (ユーザーがボタンで開始)
   G._videoActive = false;
+  G._videoRect = null;          // 動画表示位置を再計算 (最初の動画で固定)
   clearAutoVideoCountdown();
 
   // サイレント(シーズン自動高速進行)時は画面切替・描画をスキップ
@@ -3046,6 +3263,25 @@ function renderBbState(inning, top, outs) {
     const o = Math.min(2, Math.max(0, outs || 0));   // 表示は0〜2 (3つ目はチェンジで次の回へ)
     outsEl.innerHTML = [0, 1].map(i => `<span class="out-dot${i < o ? ' on' : ''}"></span>`).join('');
   }
+}
+// 上の実況ラベルの3行目に「NEXT チーム N番 選手名」を追記する。
+//   G.currentBatter は打席解決後に既に「次の打者」を指す (チェンジ時は次チームのその回の先頭打者)。
+//   ライブ表示中のみ表示 (履歴閲覧・試合終了/待機・未開始では出さない)。
+function renderNextBatterLine() {
+  const label = document.querySelector('#bbLabel');
+  if (!label) return;
+  const old = label.querySelector('.bb-next');
+  if (old) old.remove();   // 既存の3行目を消してから付け直す
+  const b = G.currentBatter;
+  if (G.historyView != null || G.ended || G.awaitingResult || !G.setup || !b) return;
+  const side = G.top ? 'away' : 'home';
+  const batIdx = side === 'away' ? G.awayBatIdx : G.homeBatIdx;
+  const team = labelTeam(side);
+  const name = b.fullNameTop || b.nameJa || '';
+  const span = document.createElement('span');
+  span.className = 'bb-next';
+  span.innerHTML = `<span class="bn-lbl">NEXT</span> <span class="bn-team">${team} ${batIdx + 1}番</span> <span class="bn-name">${name}</span>`;
+  label.appendChild(span);
 }
 // 走者バッジを描画 (1塁=bases[0], 2塁=bases[1], 3塁=bases[2])。履歴閲覧でも使うため bases を引数で受け取る
 function renderRunnerBadges(bases) {
@@ -3290,6 +3526,7 @@ function renderAll() {
   if (G.silent) return;   // シーズン自動高速進行中は描画しない
   renderState();
   renderBattedBall();
+  renderNextBatterLine();   // 実況ラベル3行目: 次打者(NEXT)
   updateScoreboard();
   renderSideBoards();
   const pcEl = $('#card-pitcher'), bcEl = $('#card-batter');
@@ -3753,6 +3990,8 @@ const PITCH_VIDEOS = ['defopit_tou', 'defopit_tou1', 'defopit_tou2'];
 const PITCHER_INTRO_VIDEOS = ['defopit_sta', 'defopit_sta1'];                 // 投手がマウンドに上がる
 const BATTER_INTRO_VIDEOS  = ['defobat_box', 'defobat_box1', 'defobat_box2']; // 打者が打席に入る
 const SIDE_CHANGE_VIDEO    = 'mlb_change';                                    // 3アウト攻守交替
+const STEAL_OK_VIDEOS      = ['defobat_ste', 'defobat_ste1'];                 // 盗塁成功
+const STEAL_NG_VIDEOS      = ['defobat_throw', 'defobat_throw1', 'defobat_throw2']; // 盗塁失敗(送球アウト)
 const pickVideo = list => list[(Math.random() * list.length) | 0];
 // 動画ON/OFF (セットアップのトグルで切替。OFFなら動画を一切再生せず、自動再生バーも出さない)。
 let VIDEO_ON = true;
@@ -3829,7 +4068,7 @@ function batResultClip(res, runs) {
 }
 // 任意の動画ファイル列(seq)をゲーム左側に重ねて順番に再生する汎用関数。
 //   1本目はユーザー操作直後なら音あり、2本目以降は自動再生制限でミュートにフォールバックする。
-function playVideoOverlay(seq) {
+function playVideoOverlay(seq, onDone) {
   try {
     if (!VIDEO_ON) return;     // 動画OFF時は一切再生しない
     if (!seq || !seq.length) return;
@@ -3845,12 +4084,16 @@ function playVideoOverlay(seq) {
     ov.appendChild(v);
     document.body.appendChild(ov);
     G._videoActive = true;     // 自動再生モードの「再生中か」判定に使用
-    const place = () => { const r = anchor.getBoundingClientRect(); ov.style.left = r.left + 'px'; ov.style.top = r.top + 'px'; ov.style.width = r.width + 'px'; ov.style.height = r.height + 'px'; };
+    // 動画の表示位置はゲーム中で固定する。最初に動画を出した時の .game-left の位置を記録し、
+    //   以降は投手/野手交代で .game-left の高さが変わっても同じ位置・サイズで再生する(ずれ防止)。
+    const freeze = () => { const r = anchor.getBoundingClientRect(); G._videoRect = { left: r.left, top: r.top, width: r.width, height: r.height }; };
+    if (!G._videoRect) freeze();
+    const place = () => { const r = G._videoRect; if (!r) return; ov.style.left = r.left + 'px'; ov.style.top = r.top + 'px'; ov.style.width = r.width + 'px'; ov.style.height = r.height + 'px'; };
     place();
-    const onResize = () => place();
+    const onResize = () => { freeze(); place(); };   // ウィンドウリサイズ時のみ位置を取り直す
     window.addEventListener('resize', onResize);
     let removed = false, safety = null;
-    const cleanup = () => { if (removed) return; removed = true; window.removeEventListener('resize', onResize); if (safety) clearTimeout(safety); ov.remove(); G._videoActive = false; onVideoSequenceComplete(); };
+    const cleanup = () => { if (removed) return; removed = true; window.removeEventListener('resize', onResize); if (safety) clearTimeout(safety); ov.remove(); G._videoActive = false; if (onDone) onDone(); else onVideoSequenceComplete(); };
     // 1本のクリップを再生し、終了/失敗/保険タイマーのいずれかで onClipEnd を一度だけ呼ぶ
     const playClip = (file, onClipEnd) => {
       if (safety) clearTimeout(safety);
@@ -3888,16 +4131,18 @@ function batTransitionKinds(before, cur, lastIntro) {
 }
 // 手動の球種選択後に呼ぶ。打席結果動画 → (攻守交替) → (投手登場) → 打者登場 をまとめて再生する。
 //   before = 投球前の { top, inning, pitcher } 。投球後の状態と比較して攻守交替/継投を検知する。
-function playPitchVideo(before) {
+function playPitchVideo(before, opts) {
   try {
     const game = document.querySelector('#game');
     if (!game || game.classList.contains('hidden')) return;   // ゲーム画面表示中のみ
     const seq = [];
-    // 1) 打席結果の動画 (対象外なら無し)
-    const clip = batResultClip(G.lastPitchResult, G.lastPitchRuns);
-    if (clip && clip.videos && clip.videos.length) {
-      if (clip.intro) seq.push(pickVideo(PITCH_VIDEOS));   // アウトは投球イントロ→結果
-      seq.push(pickVideo(clip.videos));
+    // 1) 打席結果の動画 (対象外なら無し)。noResult=盗塁死3アウト等で投球が無かった場合はスキップ。
+    if (!(opts && opts.noResult)) {
+      const clip = batResultClip(G.lastPitchResult, G.lastPitchRuns);
+      if (clip && clip.videos && clip.videos.length) {
+        if (clip.intro) seq.push(pickVideo(PITCH_VIDEOS));   // アウトは投球イントロ→結果
+        seq.push(pickVideo(clip.videos));
+      }
     }
     // 2) 次打者への繋ぎ (試合継続中のみ)
     if (before && !G.ended) {
@@ -3915,7 +4160,7 @@ function playPitchVideo(before) {
 }
 
 // ============== 自動再生モード (動画ON時のみ) ==============
-//   「動画再生中 ▶」= AIが自動進行。動画が終わる → 5秒カウントダウン → 0でAIが投球(投球確率で球種選択) → 動画。
+//   「動画再生中 ▶」= AIが自動進行。動画が終わる → 3秒カウントダウン → 0でAIが投球(投球確率で球種選択) → 動画。
 //   「動画停止中 ■」= AI停止。手動で球種ボタンを押して進められる。
 let autoVideoCountdownTimer = null;
 // 自動再生バーを出す条件: 試合画面・動画ON・試合継続中
@@ -3946,11 +4191,11 @@ function updateAutoVideoBar() {
     btn.classList.toggle('is-playing', !!G.autoVideoPlaying);
   }
 }
-// 5秒カウントダウン → 0でAI投球。
+// 3秒カウントダウン → 0でAI投球。
 function startAutoVideoCountdown() {
   clearAutoVideoCountdown();
   if (!G.autoVideoPlaying || G.ended) return;
-  let n = 5;
+  let n = 3;
   const el = document.querySelector('#autoVideoCountdown');
   if (el) el.textContent = String(n);
   autoVideoCountdownTimer = setInterval(() => {
@@ -3967,9 +4212,69 @@ function autoVideoThrowNext() {
   if (!p) return;
   const before = { top: G.top, inning: G.inning, pitcher: G.currentPitcher };
   pitchOne(p, true);
+  const events = G._prePitchEvents || [];
+  G._prePitchEvents = [];
+  if (events.length && VIDEO_ON) {
+    // 投球前イベント(代打/盗塁)がある: 各イベントのダイヤ表示+動画を順番に流し、
+    //   全て終わってから投球結果を表示して投球結果動画へ繋ぐ。
+    const noResult = events.some(e => e.type === 'steal' && e.thirdOut);  // 盗塁死3アウト=投球なし
+    playPrePitchEvents(events, 0, before, noResult);
+    return;
+  }
   playPitchVideo(before);
   // 動画が再生されなかった場合(結果動画なし等)でも、終了コールバックが来ないのでループを継続させる
   if (!G._videoActive && G.autoVideoPlaying && !G.ended) startAutoVideoCountdown();
+}
+// 投球前イベント列を1つずつ (フレーム表示→動画) 再生し、最後に投球結果へ繋ぐ再帰関数。
+function playPrePitchEvents(events, i, before, noResult) {
+  if (i >= events.length) {
+    // 全ての事前演出が完了 → 投球結果を表示して投球結果動画へ
+    renderAll();
+    playPitchVideo(before, { noResult });
+    if (!G._videoActive && G.autoVideoPlaying && !G.ended) startAutoVideoCountdown();
+    return;
+  }
+  const ev = events[i];
+  const next = () => playPrePitchEvents(events, i + 1, before, noResult);
+  if (ev.type === 'steal') {
+    renderStealFrame(ev);
+    playVideoOverlay([pickVideo(ev.success ? STEAL_OK_VIDEOS : STEAL_NG_VIDEOS)], next);
+  } else if (ev.type === 'pinch') {
+    renderPinchFrame(ev);
+    playVideoOverlay([pickVideo(BATTER_INTRO_VIDEOS)], next);   // 代打も打者登場動画(defobat_box種)
+  } else {
+    next();
+  }
+}
+// 盗塁の演出フレーム: ダイヤに盗塁直後(投球前)の状態を表示する (投球結果の打球は出さない)。
+function renderStealFrame(steal) {
+  if (!steal) return;
+  renderBbState(steal.inning, steal.top, steal.outs);
+  renderRunnerBadges(steal.bases);
+  const overlay = document.querySelector('#bbOverlay');
+  if (overlay) overlay.innerHTML = '';   // 打球軌道は描かない
+  const label = document.querySelector('#bbLabel');
+  if (label) {
+    label.className = 'bb-label ' + (steal.success ? 'hit' : 'out');
+    label.innerHTML = `<span class="bb-result">${steal.success ? '盗塁成功！' : '盗塁失敗！'}</span>`;
+  }
+  renderNextBatterLine();     // 実況ラベル3行目: 次打者(NEXT)
+  renderBbInfo(steal.info);   // 🏃💨/🏃❌ の通知
+}
+// 代打の演出フレーム: ダイヤに「代打 選手名」を表示する (投球結果の打球は出さない)。
+function renderPinchFrame(ev) {
+  if (!ev) return;
+  renderBbState(ev.inning, ev.top, ev.outs);
+  renderRunnerBadges(ev.bases);
+  const overlay = document.querySelector('#bbOverlay');
+  if (overlay) overlay.innerHTML = '';   // 打球軌道は描かない
+  const label = document.querySelector('#bbLabel');
+  if (label) {
+    label.className = 'bb-label bb';
+    label.innerHTML = `<span class="bb-result">代打 ${ev.batterName}</span>`;
+  }
+  renderNextBatterLine();   // 実況ラベル3行目: 次打者(NEXT)
+  renderBbInfo(ev.info);    // 🔁 代打: … の通知
 }
 // 動画(連続再生)が1区切り終わった時に呼ばれる。自動再生中なら次の投球までのカウントダウンを開始。
 function onVideoSequenceComplete() {
@@ -4003,16 +4308,36 @@ function pitchOne(pitch, isAuto) {
   if (G.lastInfo && (!G.infoNew || G.lastInfo.indexOf('プレイボール') >= 0)) {
     G.lastInfo = '';
   }
+  G._prePitchEvents = [];   // 今回の投球前イベント(代打/盗塁)。動画ONの自動再生で投球前演出に使用。
+  // ある時点(投球前)の状態スナップショットを作る (動画演出でダイヤに再現するため)
+  const snapPrePitch = () => ({
+    inning: G.inning, top: G.top, outs: G.outs,
+    bases: G.bases.map(b => b ? { ...b, _player: getRunnerPlayer(b) } : null),
+    info: G.lastInfo || '',
+  });
   // 打席前に野手交代 (代走→代打) を検討 (守備成立を保証した上で起用)
   // 自動試合(isAuto)時のみ AI が自動で代打/代走を実行する。手動操作時はオフ。
   if (isAuto) {
     const battingSide = G.top ? 'away' : 'home';
     maybePinchRun(battingSide);
+    const batterBefore = G.currentBatter;
     maybePinchHit(battingSide);
+    if (G.currentBatter !== batterBefore) {
+      // 代打が送られた: この時点(投球前)の状態を控える。動画演出でダイヤに「代打」を表示。
+      G._prePitchEvents.push(Object.assign({
+        type: 'pinch',
+        batterName: G.currentBatter ? (G.currentBatter.fullNameTop || G.currentBatter.nameJa || '代打') : '代打',
+      }, snapPrePitch()));
+    }
     // 自動盗塁: 投手VS打者結果の直前に判定。
     // 盗塁失敗で3アウトチェンジになった場合、この打席(投手VS打者)はノーカウント
     // (ヒット/アウト/スタミナ減少などを一切記録せず、そのままイニング交代)。
     const steal = maybeAutoSteal(battingSide);
+    if (steal && steal.attempted) {
+      G._prePitchEvents.push(Object.assign({
+        type: 'steal', success: steal.success, thirdOut: steal.thirdOut,
+      }, snapPrePitch()));
+    }
     if (steal && steal.thirdOut) {
       switchInning();
       checkEnd();
@@ -5079,6 +5404,10 @@ function pickReliever(setup, sideKey) {
     order = ['mop','middle','setup','closer'];   // 序盤の敗戦処理: モップ優先
   } else if (inning >= 9 && lead >= 1 && lead <= 3) {
     order = ['closer','setup','middle','mop'];
+  } else if (inning >= 9 && lead === 0 && sideKey === 'home') {
+    // 後攻の9回以降・同点: セーブ機会は永遠に来ない(サヨナラ勝ちで終わる)ため、
+    //   最高レバレッジの今、最強リリーフ(抑え)から注ぎ込む (MLBの定石)
+    order = ['closer','setup','middle','mop'];
   } else if ((inning === 7 || inning === 8) && closeGame) {
     order = ['setup','middle','closer','mop'];
   } else if (Math.abs(lead) >= 5) {
@@ -5220,6 +5549,13 @@ function manageStarterWorkload(sideKey) {
 
   // 失点5以上 → 余力あっても降板
   if (runs >= 5) { autoReliefSwitch(sideKey, false); return; }
+
+  // MLB的な降板判断の追加 (現代の継投マネジメント):
+  //   ・7回以降の接戦(2点差以内)で3失点以上 → 打者3巡目の失速が始まる前にブルペンへ (QSで御の字)
+  //   ・7回以降の同点でスタミナ20未満 → 疲れた先発に同点の終盤を任せず、フレッシュな腕へ
+  const closeGm = Math.abs(myScore - oppScore) <= 2;
+  if (inning >= 7 && closeGm && runs >= 3) { autoReliefSwitch(sideKey, false); return; }
+  if (inning >= 7 && tied && stamina < 20) { autoReliefSwitch(sideKey, false); return; }
 
   let threshold;
   if (outs < 15) {
@@ -5823,17 +6159,34 @@ function applyBatterSub(side, slotIdx, sub, kind) {
   }
 }
 
-// 代打検討: 終盤の接戦/ビハインドで、現打者より明確に良い好打者へ交代
+// 代打検討 (MLB監督の采配):
+//   ・7回以降の接戦(リード2点以内〜ビハインド)で検討。6点差以上の大敗では控えを温存する。
+//   ・レバレッジで基準を変える: 通常は+10明確に上回る時のみ / 得点圏は+6 / 9回以降のビハインド(最後の勝負)は+4。
+//   ・相手投手が左腕なら「対左」を加味して比較する (プラトーン起用)。
+//   ・得点圏ではチャンス(勝負強さ)も加点して比較する。
 function maybePinchHit(side) {
   const setup = G.setup[side];
   if (!setup.benchAvail || setup.benchAvail.length === 0) return;
   if (G.inning < 7) return;
-  if (leadFor(side) > 2) return;   // 高レバレッジ (接戦/ビハインド) のみ
+  const lead = leadFor(side);
+  if (lead > 2) return;      // リード3点以上: 打線をいじらない
+  if (lead <= -6) return;    // 6点差以上の大敗: 消化試合に控えを使わない
   const batIdx = side === 'away' ? G.awayBatIdx : G.homeBatIdx;
   const cur = setup.batters[batIdx];
-  let best = null, bestVal = offValue(cur) + 10;  // 明確に上回る場合のみ
+  const risp = !!(G.bases[1] || G.bases[2]);            // 得点圏に走者
+  const lastChance = (G.inning >= 9 && lead < 0);       // 9回以降のビハインド = 最後の勝負
+  const oppP = G.currentPitcher;
+  const vsL = !!(oppP && typeof oppP.hand === 'string' && oppP.hand.indexOf('左投') >= 0);
+  const phVal = (p) => {
+    let v = offValue(p);
+    if (vsL) v += ((p && p.statsMini && Number.isFinite(p.statsMini['対左投手'])) ? p.statsMini['対左投手'] : 0) * 1.2;  // 対左補正
+    if (risp) v += ((p && p.stats && Number.isFinite(p.stats['チャンス'])) ? p.stats['チャンス'] : 50) * 0.25;             // 勝負強さ
+    return v;
+  };
+  const margin = lastChance ? 4 : (risp ? 6 : 10);   // 勝負どころほど積極的に動く
+  let best = null, bestVal = phVal(cur) + margin;
   for (const ph of (setup.benchAvail || [])) {
-    const v = offValue(ph);
+    const v = phVal(ph);
     if (v <= bestVal) continue;
     if (!canSecureDefenseForSlot(side, batIdx, ph)) continue;
     bestVal = v; best = ph;
@@ -5841,19 +6194,25 @@ function maybePinchHit(side) {
   if (best) applyBatterSub(side, batIdx, best, '代打');
 }
 
-// 代走検討: 終盤の接戦で、塁上の鈍足走者を明確に速い走者へ交代
+// 代走検討 (MLB監督の采配): 8回以降の接戦(2点差以内)で「意味のある走者」だけを速い控えに代える。
+//   ・1塁/2塁の走者が主対象 (盗塁・単打での生還など足が得点に直結する)。
+//   ・3塁走者は既に得点圏の奥で足の価値が下がるため、+20以上の大幅改善時のみ。
+//   ・9回以降の同点/ビハインドは走者1人が試合を決める → 基準を+10に緩めて積極的に動く。
 function maybePinchRun(side) {
   const setup = G.setup[side];
   if (!setup.benchAvail || setup.benchAvail.length === 0) return;
   if (G.inning < 8) return;
-  if (Math.abs(leadFor(side)) > 2) return;
+  const lead = leadFor(side);
+  if (Math.abs(lead) > 2) return;
+  const clutch = (G.inning >= 9 && lead <= 0);   // 9回以降の同点/ビハインド
   for (let i = 0; i < 3; i++) {
     const ref = G.bases[i];
     if (!ref || ref.side !== side) continue;
     const slotIdx = ref.slotIdx;
     const runner = setup.batters[slotIdx];
     if (!runner) continue;
-    const minSpeed = speedValue(runner) + 15;  // 明確に速い場合のみ
+    const need = (i === 2) ? 20 : (clutch ? 10 : 15);   // 3塁走者は大幅改善時のみ / 勝負どころは積極的に
+    const minSpeed = speedValue(runner) + need;
     // 候補から「代走」役割を優先 → 走力総合値が高い順 に1人選ぶ
     let best = null, bestRank = 9, bestVal = -Infinity;
     for (const pr of (setup.benchAvail || [])) {
@@ -5970,7 +6329,8 @@ function maybeDefensiveUpgrade(side) {
   if (G.inning < 8) return;
   const lead = leadFor(side);
   if (lead < 1 || lead > 3) return;
-  let bestNet = 3, bestSlot = -1, bestDef = null;  // 明確なネット改善(>3)のみ採用
+  // 明確なネット改善のみ採用。9回以降は外した打者に打席が回りにくい(打力低下のコストが小さい)ため基準を緩める
+  let bestNet = (G.inning >= 9) ? 1.5 : 3, bestSlot = -1, bestDef = null;
   for (let i = 0; i < 9; i++) {
     const pos = setup.batterPos[i];
     if (pos === 'DH') continue;
@@ -7732,37 +8092,9 @@ function seasonDefaultPicks(teamCode, orderIdx, restSet) {
   return picks;
 }
 // 規定ルールによるAI打順決定。entries=[{pos, p}](9人) を受け取り、打順スポット順(1番→9番)に並べた [{pos, p}] を返す。
-//   ルール(チーム編成の自動編成と同一):
-//     1番: スピード+盗塁能≧80 の中で スピード+盗塁能+選球眼 最大
-//     2番: 残りで総合力最大 / 4番: パワー+ミート+チャンス×2+HR能×10 最大 / 3番: ミート+パワー+チャンス+スピード 最大
-//     5番: ミート+パワー+HR能×20+チャンス 最大 / 9番: ミート+パワー+チャンス 最小 / 6・7・8番: 残りを総合力順
+//   ロジックはチーム編成の自動編成と同一 (aiAssignBattingSpots = 現代MLBの監督采配ロジック)。
 function seasonAiBattingOrder(entries) {
-  const stat = (p, k) => (p && p.stats && Number.isFinite(p.stats[k])) ? p.stats[k] : 0;
-  const mini = (p, k) => (p && p.statsMini && Number.isFinite(p.statsMini[k])) ? p.statsMini[k] : 0;
-  const ov = p => overallOf(p) || 0;
-  const mSpeed = p => stat(p, 'スピード'), mSteal = p => mini(p, '盗塁能'), mEye = p => stat(p, '選球眼');
-  const mPow = p => stat(p, 'パワー'), mMeat = p => stat(p, 'ミート'), mChan = p => stat(p, 'チャンス'), mHR = p => mini(p, 'HR能');
-  const remain = entries.slice();
-  const spotOf = new Map();   // entry -> spot
-  const assignSpot = (spotNum, scoreFn, opts) => {
-    if (!remain.length) return;
-    let cands = remain;
-    if (opts && opts.filter) { const f = remain.filter(e => opts.filter(e.p)); if (f.length) cands = f; }
-    const better = (opts && opts.min) ? (a, b) => scoreFn(b.p) < scoreFn(a.p) : (a, b) => scoreFn(b.p) > scoreFn(a.p);
-    let pick = cands[0];
-    for (const e of cands) if (better(pick, e)) pick = e;
-    spotOf.set(pick, spotNum);
-    remain.splice(remain.indexOf(pick), 1);
-  };
-  assignSpot(1, p => mSpeed(p) + mSteal(p) + mEye(p), { filter: p => (mSpeed(p) + mSteal(p)) >= 80 });
-  assignSpot(2, p => ov(p));
-  assignSpot(4, p => mPow(p) + mMeat(p) + mChan(p) * 2 + mHR(p) * 10);
-  assignSpot(3, p => mMeat(p) + mPow(p) + mChan(p) + mSpeed(p));
-  assignSpot(5, p => mMeat(p) + mPow(p) + mHR(p) * 20 + mChan(p));
-  assignSpot(9, p => mMeat(p) + mPow(p) + mChan(p), { min: true });
-  remain.sort((a, b) => ov(b.p) - ov(a.p));
-  [6, 7, 8].forEach((n, i) => { if (remain[i]) spotOf.set(remain[i], n); });
-  remain.forEach((e, i) => { if (!spotOf.has(e)) spotOf.set(e, 6 + i); });   // 念のため未割当を埋める
+  const spotOf = aiAssignBattingSpots(entries);
   return entries.slice().sort((a, b) => (spotOf.get(a) || 99) - (spotOf.get(b) || 99));
 }
 // 保存編成の打順(batterOrder)から、守備位置を打順スポット順に並べた配列を返す (ドラッグ用の初期打順)

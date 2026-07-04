@@ -171,8 +171,8 @@
 </div>
 
 <script src="players.js?v=3"></script>
-<script src="card_parser.js?v=5"></script>
-<script src="card_store.js?v=2"></script>
+<script src="card_parser.js?v=6"></script>
+<script src="card_store.js?v=3"></script>
 <script src="card_view.js?v=3"></script>
 <script>
 (function(){
@@ -183,6 +183,7 @@
   let eraOrder = 'asc';       // 年代別(1年ごと): 'asc'=古い→新しい / 'desc'=新しい→古い (再クリックでトグル)
   let teamYearMode = 'none';  // チーム別の年度: 'none'=年度まとめ(撤廃) / 'year'=年度別 (再クリックでトグル)
   let posYearMode = 'none';   // ポジション別の年度: 'none'=年度まとめ / 'year'=年度別 (再クリックでトグル)
+  let titleSortMode = 'era';  // タイトルホルダー内の並び: 'era'=古い年代順 / 'ovr'=総合力順 (再クリックでトグル)
 
   function fmtMB(bytes) { return (bytes / (1024 * 1024)).toFixed(1); }
   // チーム名の正規化: 末尾の所属チーム数(例 "LAD2"→"LAD")を除く
@@ -347,7 +348,10 @@
         if (ra !== rb) return ra - rb;
         return a.localeCompare(b);
       });
-      keys.forEach(k => map.get(k).sort(cmpOvrDesc));   // 各グループ内は総合力の高い順
+      // 各グループ内の並び: 既定は年代の古い順 (再クリックで総合力順)。年不明は末尾。
+      const yr = e => { const y = parseInt(e.p.year, 10); return Number.isFinite(y) ? y : Infinity; };
+      const cmpEraAsc = (a, b) => (yr(a) - yr(b)) || cmpOvrDesc(a, b);   // 同年は総合力の高い順
+      keys.forEach(k => map.get(k).sort(titleSortMode === 'ovr' ? cmpOvrDesc : cmpEraAsc));
       return { keys, map, defaultOpen: false };
     }
 
@@ -543,6 +547,11 @@
       posBtn.textContent = `🧤 ポジション別（${posYearMode === 'year' ? '年度別' : '年度まとめ'}）`;
       posBtn.title = 'クリックで「年度別 / 年度まとめ」を切替（各グループ内は総合力の高い順）';
     }
+    const titleBtn = document.querySelector('#viewSwitch .vs-btn[data-view="title"]');
+    if (titleBtn) {
+      titleBtn.textContent = `🏅 タイトルホルダー（${titleSortMode === 'era' ? '古い年代順' : '総合力順'}）`;
+      titleBtn.title = 'クリックで「古い年代順 / 総合力順」を切替（各タイトル内の並び順）';
+    }
   }
 
   // 表示切替 (チーム別 / 総合力別 / 年代別)。同じビューを再クリックでサブ並び順をトグル
@@ -556,6 +565,7 @@
       else if (view === 'era')  eraOrder = (eraOrder === 'asc') ? 'desc' : 'asc';
       else if (view === 'team') teamYearMode = (teamYearMode === 'none') ? 'year' : 'none';  // 年度別 ⇔ 年度まとめ
       else if (view === 'pos')  posYearMode = (posYearMode === 'none') ? 'year' : 'none';    // ポジション＋年度別 ⇔ 年度まとめ
+      else if (view === 'title') titleSortMode = (titleSortMode === 'era') ? 'ovr' : 'era';  // 古い年代順 ⇔ 総合力順
       else return;
     } else {
       currentView = view;
@@ -636,25 +646,29 @@
     const keyOf = (x) => (window.CardStore ? window.CardStore.cardKey(x) : ((x.fullNameTop||'')+'_'+(x.year||'')));
     const existingKeys = new Set(existing.map(keyOf));
     let addedCount = 0, updatedCount = 0, parseFail = 0, quotaHit = false;
+    // まず全ファイルを解析してから、まとめて1回で保存する
+    //   (1枚ずつ保存＋全件再読込を繰り返すと枚数増加で O(N^2) になり非常に遅くなるため)。
+    const toSave = [];
     for (const f of htmlFiles) {
       try {
         const text = await f.text();
         const p = CARD_PARSER.parse(text, f.name);
         if (!p || !p.fullNameTop) { parseFail++; continue; }
         const key = keyOf(p);
-        const isDup = existingKeys.has(key);
-        try {
-          await window.CardStore.addOrUpdate(p);   // 重複は同名カードを上書き(更新)
-          existingKeys.add(key);
-          if (isDup) updatedCount++; else addedCount++;
-        } catch (saveErr) {
-          console.error(saveErr);   // localStorage モードでの容量超過など
-          quotaHit = true;
-          break;
-        }
+        if (existingKeys.has(key)) updatedCount++; else addedCount++;
+        existingKeys.add(key);
+        toSave.push(p);   // 重複は同名キーで上書き(更新)
       } catch (err) {
         console.error(err);
         parseFail++;
+      }
+    }
+    if (toSave.length) {
+      try {
+        await window.CardStore.addOrUpdateMany(toSave);   // 一括保存 (IDBは1トランザクション)
+      } catch (saveErr) {
+        console.error(saveErr);   // localStorage モードでの容量超過など
+        quotaHit = true;
       }
     }
     render();

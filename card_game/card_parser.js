@@ -111,12 +111,18 @@ function parseCard(html, filename) {
     seen.add(d.pos); return true;
   });
 
-  const catcherBar = pick(html, /<div class="catcher-bar">([\s\S]*?)<\/div>(?=\s*<\/div>|\s*<div)/);
-  if (catcherBar) {
-    const labels = pickAll(catcherBar, /<span class="ca-label">([\s\S]*?)<\/span>/g).map(decode);
-    const vals = pickAll(catcherBar, /<span class="ca-val[^"]*">([\s\S]*?)<\/span>/g).map(decode);
-    card.catcher = {};
-    for (let i = 0; i < labels.length; i++) card.catcher[labels[i]] = num(vals[i]);
+  // 捕手データ (リード/阻止率)。実カードは <div class="catcher-bar" style="…"> と属性付きで、
+  //   内側に <div class="ca-item"> がネストするため、閉じタグ探索はせず開始位置から
+  //   一定範囲のセグメントを走査して ca-label / ca-val (属性付き可) を対で拾う。
+  const cbOpen = html.match(/<div class="catcher-bar"[^>]*>/);
+  if (cbOpen) {
+    const catcherBar = html.slice(cbOpen.index, cbOpen.index + 1500);
+    const labels = pickAll(catcherBar, /<span class="ca-label"[^>]*>([\s\S]*?)<\/span>/g).map(decode);
+    const vals = pickAll(catcherBar, /<span class="ca-val[^"]*"[^>]*>([\s\S]*?)<\/span>/g).map(decode);
+    if (labels.length) {
+      card.catcher = {};
+      for (let i = 0; i < labels.length; i++) card.catcher[labels[i]] = num(vals[i]);
+    }
   }
 
   card.retsuden = decode(pick(html, /<div class="retsuden"[^>]*>([\s\S]*?)<\/div>/));

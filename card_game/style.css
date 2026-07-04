@@ -565,6 +565,50 @@ html, body {
   font-size: 13px;
   color: #c8d4ff;
 }
+/* ダイヤモンド下中央 (捕手枠の下・凡例の上): 全changeボタン。左右余白は小さめ */
+#teambuild .tb-allchange {
+  position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%);
+  z-index: 21;
+  background: linear-gradient(135deg,#ff4444,#cc0000);
+  padding: 5px 8px; font-size: 13px; white-space: nowrap;
+}
+/* ダイヤモンド左下 (三塁枠の下・凡例の上): 戦力4カテゴリ評価 (投手力/攻撃力/守備力/機動力) */
+#teambuild .tb-team-ratings {
+  position: absolute; left: 4px; bottom: 2px; z-index: 20;
+  display: flex; flex-direction: column; gap: 3px;
+  background: rgba(0,0,0,0.72);
+  border: 1px solid #6677cc; border-radius: 6px;
+  padding: 5px 8px;
+  pointer-events: none;   /* 表示専用。背後のクリックを妨げない */
+}
+#teambuild .tbr-row { display: flex; align-items: center; gap: 6px; }
+#teambuild .tbr-label { font-size: 12px; font-weight: 700; color: #c8d4ff; white-space: nowrap; }
+#teambuild .tbr-score { font-size: 13px; font-weight: 900; color: #fff; min-width: 24px; text-align: right; }
+#teambuild .tbr-grade {
+  display: inline-block; min-width: 22px; text-align: center;
+  font-weight: 900; font-size: 14px; padding: 1px 5px; border-radius: 4px; color: #fff;
+}
+/* グレード色は実況パワフルプロ野球の能力査定色を踏襲:
+   S=金 / A=ピンク寄りの赤 / B=橙 / C=黄 / D=白 / E=水色 / F=青 / G=灰 */
+#teambuild .tbr-grade.g-s {   /* S=光沢のあるピンク (ハイライト入りグラデ) */
+  background: linear-gradient(135deg,#ffd6ef 0%,#ff6fc0 45%,#e6198f 100%);
+  color: #fff; text-shadow: 0 1px 1px rgba(120,0,60,0.7);
+  box-shadow: inset 0 1px 2px rgba(255,255,255,0.85), 0 0 5px rgba(255,80,180,0.65);
+}
+#teambuild .tbr-grade.g-a { background: #f0426e; }                                                    /* A=赤(ピンク寄り) */
+#teambuild .tbr-grade.g-b { background: #f07820; }                                                    /* B=橙 */
+#teambuild .tbr-grade.g-c { background: #e8c020; color: #332800; }                                    /* C=黄 */
+#teambuild .tbr-grade.g-d { background: #3faa4f; }                                                    /* D=緑 */
+#teambuild .tbr-grade.g-e { background: #58c8f0; color: #083344; }                                    /* E=水色 */
+#teambuild .tbr-grade.g-f { background: #3f74d8; }                                                    /* F=青 */
+#teambuild .tbr-grade.g-g { background: #888; }                                                       /* G=灰 */
+/* SS=105超 (オリジナル/年代不問のオールスターのみ)。URカードと同じ虹色ホログラム */
+#teambuild .tbr-grade.g-ss {
+  min-width: 28px; letter-spacing: -0.5px;
+  background: linear-gradient(115deg,#ff3c96,#7850ff,#3caaff,#3cffc8,#e6ff46,#ff963c,#ff3c96);
+  background-size: 280% 100%; color: #fff; text-shadow: 0 0 3px rgba(0,0,0,0.7);
+  box-shadow: 0 0 8px rgba(255,120,220,0.8); animation: urHoloBadge 7s linear infinite;
+}
 #teambuild .tb-diamond-legend .tb-legend-row {
   display: flex; gap: 12px; align-items: center;
 }
@@ -1044,6 +1088,11 @@ body.in-game .header-game-state { display: inline-flex; }
   font-size: 18px; font-weight: 900; letter-spacing: 0.5px; color: #e6e6e6;
   line-height: 1.2;
 }
+/* 実況ラベル3行目: 次打者 (NEXT チーム N番 選手名)。文字サイズは1行目(.bb-pitch)と同じ */
+.field-area .bb-next { font-size: 14px; font-weight: 900; letter-spacing: 0.3px; line-height: 1.2; white-space: nowrap; }
+.field-area .bb-next .bn-lbl  { color: #7fd7ff; letter-spacing: 1.5px; }
+.field-area .bb-next .bn-team { color: #ffcc66; }
+.field-area .bb-next .bn-name { color: #fff; }
 .field-area .bb-label.hr  { border-color: #ff66cc; }
 .field-area .bb-label.hit { border-color: #8aff66; }
 .field-area .bb-label.err { border-color: #ffcc44; }
