@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>MLBカード野球ゲーム</title>
-<link rel="stylesheet" href="style.css?v=154">
+<link rel="stylesheet" href="style.css?v=161">
 </head>
 <body>
   <div class="app">
@@ -284,6 +284,13 @@
             <span class="bs-inning" id="bbStateInning">1回表</span>
             <span class="bs-outs" id="bbStateOuts" aria-label="アウトカウント"></span>
           </div>
+          <!-- 実況解説者のテロップ: ラベルは枠の外・上に独立表示、本文は本塁より下〜1回表表示の手前まで幅広く配置 -->
+          <div class="bb-commentary" id="bbCommentary" hidden>
+            <span class="bc-label">実況</span>
+            <div class="bc-box">
+              <span class="bc-text" id="bbCommentaryText"></span>
+            </div>
+          </div>
           <!-- 試合終了後の振り返り (戻る/進む)。ダイヤモンド枠内・下部にオーバーレイ表示 -->
           <div class="bb-history" id="bbHistory" hidden>
             <select class="bb-hist-sel" id="bbHistInning" title="イニングへジャンプ"></select>
@@ -337,6 +344,6 @@
   <script src="players.js?v=26"></script>
   <script src="card_store.js?v=3"></script>
   <script src="card_view.js?v=26"></script>
-  <script src="game.js?v=343"></script>
+  <script src="game.js?v=353"></script>
 </body>
 </html>

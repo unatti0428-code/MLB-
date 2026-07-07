@@ -1251,7 +1251,7 @@ function autoFillTeamBuild(opts) {
   // 現在のオーダーに出場可能な野手だけを候補にする (オーダー制約)
   const cand = allBat.filter(p => playerAllowedInOrder(p, curOrderIdx));
   // 守備の実加点: センターライン=守備DRS×0.6 (DRS+10の遊撃手は総合力6点ぶんの価値) /
-  //   コーナー=×0.25 (打力優先) / C=0 (リード×4+阻止率÷5 の捕手査定側で評価) / DH=0。
+  //   コーナー=×0.25 (打力優先) / C=0 (リード×2.0+阻止率÷5 の捕手査定側で評価) / DH=0。
   const DEF_POS_W = { 'SS': 0.6, '2B': 0.6, 'CF': 0.6, '1B': 0.25, '3B': 0.25, 'LF': 0.25, 'RF': 0.25 };
   const posBonus = (p, pos) => {
     const drs = tbDrsValue(p, pos);
@@ -1269,7 +1269,7 @@ function autoFillTeamBuild(opts) {
   // 起用ボーナス: 年度試合数10につき1ポイント (実際の出場=打数を加味し、数ポイント差なら試合数が多い選手を起用)。
   //   ただし、その位置で守備への悪影響が大きい / ミート+パワーがその位置の最高より15以上低い 場合は
   //   このボーナスを与えない (総合力のみで評価)。
-  //   捕手(C)の守備判定は生のDRSでなく捕手評価(リード×4+阻止率÷5+DRS÷10)で行う
+  //   捕手(C)の守備判定は生のDRSでなく捕手評価(リード×2.0+阻止率÷5+DRS÷10)で行う
   //   — 打球処理(DRS)が悪くてもリードの良い正捕手を門前払いしないため。
   const usageBonus = (p, pos) => {
     const g = getCardGamesOf(p);
@@ -1283,7 +1283,7 @@ function autoFillTeamBuild(opts) {
     if (meatPow(p) <= (maxMeatPowAt[pos] || 0) - 15) return 0;  // 攻撃力の低下大 → 適用しない
     return g / 10;
   };
-  // 捕手は「リード×4 + 阻止率÷5」をレギュラー査定に加味 (リード重視のMLB監督采配)。
+  // 捕手は「リード×2.0 + 阻止率÷5」をレギュラー査定に加味 (リード重視のMLB監督采配)。
   //   さらに、捕手適性のある選手を「C以外」(DH・一塁など) に置く場合は tbDhCatcherPenalty で減点する
   //   — 「リードの良い捕手はマスクに回し、他の枠には別の選手を置く」方が総合点が高くなり、
   //   捕手をDHや一塁で消費する編成 (例: ペレス一塁+守備型捕手スタメン) を避ける。
@@ -1314,7 +1314,7 @@ function autoFillTeamBuild(opts) {
       for (const pos of FIELD_POS) {
         const fp = newBatters[pos];
         if (!fp || !canPlay(dhP, pos)) continue;   // DH選手がそのポジションを守れること
-        // 守備評価は defenseRating: 捕手(C)はリード×4+阻止率÷5+DRS÷10 の捕手評価で比較 (他はDRS)。
+        // 守備評価は defenseRating: 捕手(C)はリード×2.0+阻止率÷5+DRS÷10 の捕手評価で比較 (他はDRS)。
         // 捕手価値の放棄(tbDhCatcherPenalty)の交換は C への移動時のみ加味する:
         //   ・C なら dhP の放棄が解消し fp の放棄が発生 → 差し引きを加算
         //   ・C 以外 (一塁など) は移動してもDHでも放棄したままで相殺 → 純粋な守備DRS比較
@@ -1339,7 +1339,7 @@ function autoFillTeamBuild(opts) {
       const curPos = new Map(chosen.map(e => [e.p, e.pos]));
       const defOpt = (p, pos) => {
         if (!canPlay(p, pos)) return -Infinity;
-        // 捕手(C)はリード×4+阻止率÷5+DRS÷10 の捕手評価、他ポジションは守備DRS (defenseRating)。
+        // 捕手(C)はリード×2.0+阻止率÷5+DRS÷10 の捕手評価、他ポジションは守備DRS (defenseRating)。
         // C以外(DH・一塁など)に捕手適性持ちを置く場合は「捕手価値の放棄」を減点
         //   (ペレスの一塁DRSがプラスでも、捕手価値24点超を捨ててまで一塁へ回さない)。
         const base  = (pos === 'DH') ? 0 : defenseRating(p, pos);
@@ -1415,7 +1415,7 @@ function autoFillTeamBuild(opts) {
 
   const ph1  = takeBest(phScore);    // PH1: パワー+ミート+チャンス×2
   const def1 = takePlayer(pickDefenseSub(allBat.filter(p => !usedBat.has(p))));  // 守備1: ユーティリティ守備固め
-  // 守備2: 控え捕手。総合力＋捕手査定(リード×4+阻止率÷5)が高い選手 (第2捕手も配球力を重視)。
+  // 守備2: 控え捕手。総合力＋捕手査定(リード×2.0+阻止率÷5)が高い選手 (第2捕手も配球力を重視)。
   //   捕手が居なければ守備1のロジックに準じる。
   let def2;
   { const rem = allBat.filter(p => !usedBat.has(p));
@@ -1946,21 +1946,22 @@ function tbDrsValue(player, pos) {
   return d ? (d.value || 0) : 0;
 }
 
-// 捕手のレギュラー査定への加点: リード×4 + 阻止率÷5 (総合力換算)。
+// 捕手のレギュラー査定への加点: リード×2.0 + 阻止率÷5 (総合力換算)。
 //   ゲームエンジン分析による重み: リード1点はヒット判定(hitPt)を1下げ、相手の全打席(≈38/試合)に
 //   作用して約0.10失点/試合の防御価値。打者の総合力1点(自分の約4.3打席のみ)≈0.025点/試合なので
-//   リード1点 ≈ 総合力4点。阻止率は盗塁企図(約1.2回/試合)×成功率変化(0.8%/点)＋抑止効果 ≈ ÷5。
+//   リード1点 ≈ 総合力4点だが、査定への影響を抑えるため50%(×2.0)に緩和している
+//   (リード-7の捕手1人で守備力が極端に沈むのを防ぐ)。阻止率は ÷5。
 //   打力型捕手を正捕手にできれば DH に別の強打者を置けてチーム力が上がる — この損得は
 //   bestAssignment(全体最適)が自動で解決するので、ここでは捕手固有の価値だけを加点する。
 function catcherAssessBonus(player) {
   if (!player || !player.catcher || !canPlay(player, 'C')) return 0;
   const lead = Number(player.catcher['リード']);
   const arm  = Number(player.catcher['阻止率']);
-  return (Number.isFinite(lead) ? lead * 4 : 0) + (Number.isFinite(arm) ? arm / 5 : 0);
+  return (Number.isFinite(lead) ? lead * 2.0 : 0) + (Number.isFinite(arm) ? arm / 5 : 0);
 }
 // 捕手適性のある選手を「C以外」(DH・一塁など他の守備位置) で使う時の
 //   「捕手価値の放棄」ペナルティ (MLB監督の采配)。
-//   リード/阻止率の良い捕手をC以外に置くと、正捕手として持つ価値(リード×4+阻止率÷5)を
+//   リード/阻止率の良い捕手をC以外に置くと、正捕手として持つ価値(リード×2.0+阻止率÷5)を
 //   捨てた上に他の選手の枠まで塞ぐ (彼をマスクに回せば他の枠に別の選手を置ける)。
 //   本職捕手 (カードのポジションが「捕手」) は固定12点 + 査定×0.8 と特に重く減点し、
 //   それ以外の捕手適性持ちは査定×0.6。査定のマイナス分は0扱い (下手な捕手の転用は自由)。
@@ -1972,8 +1973,9 @@ function tbDhCatcherPenalty(player) {
 }
 
 // 守備の総合評価 (守備固め判定・守備位置最適化用)。基本は守備DRS。
-// 捕手は打球処理(DRS)より配球が重要: 守備DRSは10につき1pt・リードは1につき4pt・阻止率は5につき1pt。
-//   (リード×4/阻止率÷5 はゲームエンジンの失点影響分析による総合力換算値 — catcherAssessBonus 参照)
+// 捕手は打球処理(DRS)より配球が重要: 守備DRSは10につき1pt・リードは1につき2.0pt・阻止率は5につき1pt。
+//   (リード×2.0/阻止率÷5 はゲームエンジンの失点影響分析(1点≈4pt相当)を査定用に50%へ緩和した値
+//    — catcherAssessBonus 参照。リード-7の捕手1人で守備力が極端に沈むのを防ぐ)
 function defenseRating(player, pos) {
   if (!player) return -Infinity;
   const drs = tbDrsValue(player, pos) || 0;
@@ -1981,7 +1983,7 @@ function defenseRating(player, pos) {
     const lead = Number(player.catcher['リード']);
     const arm  = Number(player.catcher['阻止率']);
     return (drs / 10)                                    // 守備DRS: 10につき1pt (捕手の打球処理は影響小)
-      + (Number.isFinite(lead) ? lead * 4 : 0)           // リード: 1につき4pt (≈0.10失点/試合の防御価値)
+      + (Number.isFinite(lead) ? lead * 2.0 : 0)         // リード: 1につき2.0pt (失点影響4ptの50%に緩和)
       + (Number.isFinite(arm)  ? arm / 5 : 0);           // 阻止率: 5につき1pt
   }
   return drs;
@@ -3102,7 +3104,10 @@ function beginGame() {
     renderAll();
     logLine(`🏟️ プレイボール！ ${G.innings}回戦\n(AWAY ${labelTeam('away')} vs HOME ${labelTeam('home')})`, 'event-inning');
     // 試合開始演出: 投手登場(1回表の先発) → 打者登場
-    playVideoOverlay([pickVideo(PITCHER_INTRO_VIDEOS), pickVideo(BATTER_INTRO_VIDEOS)]);
+    playVideoOverlay([
+      { file: pickVideo(PITCHER_INTRO_VIDEOS), onStart: () => showPitcherIntroComment() },
+      { file: pickVideo(BATTER_INTRO_VIDEOS), onStart: () => showBatterIntroComment() },
+    ]);
   }
 }
 
@@ -3282,6 +3287,36 @@ function renderNextBatterLine() {
   span.className = 'bb-next';
   span.innerHTML = `<span class="bn-lbl">NEXT</span> <span class="bn-team">${team} ${batIdx + 1}番</span> <span class="bn-name">${name}</span>`;
   label.appendChild(span);
+}
+// ダイヤモンド左下 (bb-stateの対角) に、一流のMLB実況解説者になりきった分析テロップを表示する。
+//   コメント本体は applyOutcome 内の broadcasterComment() が打席解決時に G.lastPitchResult.comment
+//   へ格納済み。ここではその文字列を表示するだけ。ライブ表示中のみ (履歴閲覧・試合終了/待機では出さない)。
+// 実況テロップを空にして隠す。盗塁/代打の演出フレーム表示中(投球結果が確定する前)にも使う
+//   — これらのフレームは bb-label を「盗塁成功！」「代打 選手名」等に上書きするが、
+//   実況側を消さないと最終結果のコメントが動画より一足先に見えてしまうため。
+function hideBroadcastComment() {
+  const el = document.querySelector('#bbCommentary');
+  const txtEl = document.querySelector('#bbCommentaryText');
+  if (el) el.hidden = true;
+  if (txtEl) txtEl.textContent = '';
+}
+function renderBroadcastComment() {
+  const el = document.querySelector('#bbCommentary');
+  const txtEl = document.querySelector('#bbCommentaryText');
+  if (!el || !txtEl) return;
+  // 試合終了直後の3秒間は showGameEndComment() が表示した終戦コメントをそのまま維持する
+  //   (この間に renderAll() が呼ばれても、G.ended を理由に消してしまわないようにする)。
+  if (G._showingEndComment) return;
+  if (G.historyView != null || G.ended || G.awaitingResult) return hideBroadcastComment();
+  const res = G.lastPitchResult;
+  if (res && res.comment) { el.hidden = false; txtEl.textContent = res.comment; return; }
+  // まだ1球も投げられていない試合開始直後は、定型のオープニングコメントを表示する
+  if (!res && G.pitchHistory && G.pitchHistory.length === 1) {
+    el.hidden = false;
+    txtEl.textContent = 'さあプレイボールだ。両先発投手の立ち上がりに注目したい。';
+    return;
+  }
+  hideBroadcastComment();
 }
 // 走者バッジを描画 (1塁=bases[0], 2塁=bases[1], 3塁=bases[2])。履歴閲覧でも使うため bases を引数で受け取る
 function renderRunnerBadges(bases) {
@@ -3527,6 +3562,7 @@ function renderAll() {
   renderState();
   renderBattedBall();
   renderNextBatterLine();   // 実況ラベル3行目: 次打者(NEXT)
+  renderBroadcastComment(); // ダイヤ左下: 実況解説者のテロップ
   updateScoreboard();
   renderSideBoards();
   const pcEl = $('#card-pitcher'), bcEl = $('#card-batter');
@@ -3763,7 +3799,8 @@ function renderHistoryBar() {
   const bar = document.querySelector('#bbHistory');
   if (!bar) return;
   const hist = G.pitchHistory || [];
-  if ((!G.awaitingResult && !G.ended) || hist.length === 0) { bar.hidden = true; return; }
+  // 試合終了直後、実況で終戦コメントを見せている3秒間は 戻る/進む バーをまだ出さない
+  if (G._showingEndComment || (!G.awaitingResult && !G.ended) || hist.length === 0) { bar.hidden = true; return; }
   bar.hidden = false;
   const idx = (G.historyView == null) ? hist.length - 1 : G.historyView;
   const countEl = document.querySelector('#bbHistCount');
@@ -4094,12 +4131,18 @@ function playVideoOverlay(seq, onDone) {
     window.addEventListener('resize', onResize);
     let removed = false, safety = null;
     const cleanup = () => { if (removed) return; removed = true; window.removeEventListener('resize', onResize); if (safety) clearTimeout(safety); ov.remove(); G._videoActive = false; if (onDone) onDone(); else onVideoSequenceComplete(); };
-    // 1本のクリップを再生し、終了/失敗/保険タイマーのいずれかで onClipEnd を一度だけ呼ぶ
-    const playClip = (file, onClipEnd) => {
+    // 1本のクリップを再生し、終了/失敗/保険タイマーのいずれかで onClipEnd を一度だけ呼ぶ。
+    //   seq の要素は ファイル名文字列 または { file, onStart } (onStart=そのクリップの再生開始時に呼ぶ
+    //   コールバック。打者登場動画に合わせた実況テロップの切替などに使う)。
+    const playClip = (entry, onClipEnd) => {
+      const file = (typeof entry === 'string') ? entry : (entry && entry.file);
+      const onStart = (entry && typeof entry === 'object' && typeof entry.onStart === 'function') ? entry.onStart : null;
+      if (!file) { onClipEnd(); return; }
       if (safety) clearTimeout(safety);
       let fired = false;
       const fire = () => { if (fired) return; fired = true; if (safety) clearTimeout(safety); onClipEnd(); };
       v.onended = fire; v.onerror = fire;
+      if (onStart) { try { onStart(); } catch (e) { /* 演出用コールバックの失敗は無視 */ } }
       v.src = videoSrc(file);   // laa_* は team_out/laa_out、それ以外は douga
       v.load(); place();
       safety = setTimeout(fire, 20000);
@@ -4151,8 +4194,8 @@ function playPitchVideo(before, opts) {
       const defSide = G.top ? 'home' : 'away';
       for (const kind of batTransitionKinds(before, cur, G._lastIntroPitcher)) {
         if (kind === 'change') seq.push(SIDE_CHANGE_VIDEO);                       // 3アウト攻守交替
-        else if (kind === 'pitcher') { seq.push(pickVideo(PITCHER_INTRO_VIDEOS)); G._lastIntroPitcher[defSide] = G.currentPitcher; } // 投手登場
-        else seq.push(pickVideo(BATTER_INTRO_VIDEOS));                            // 次打者が打席へ
+        else if (kind === 'pitcher') { seq.push({ file: pickVideo(PITCHER_INTRO_VIDEOS), onStart: () => showPitcherIntroComment() }); G._lastIntroPitcher[defSide] = G.currentPitcher; } // 投手登場 (再生開始で投手紹介の実況)
+        else seq.push({ file: pickVideo(BATTER_INTRO_VIDEOS), onStart: () => showBatterIntroComment() });  // 次打者が打席へ (再生開始で打者紹介の実況)
       }
     }
     playVideoOverlay(seq);
@@ -4238,10 +4281,13 @@ function playPrePitchEvents(events, i, before, noResult) {
   const next = () => playPrePitchEvents(events, i + 1, before, noResult);
   if (ev.type === 'steal') {
     renderStealFrame(ev);
-    playVideoOverlay([pickVideo(ev.success ? STEAL_OK_VIDEOS : STEAL_NG_VIDEOS)], next);
+    // 盗塁動画(defobat_ste=成功/defobat_throw=失敗)の再生開始で、成否に応じた実況を出す。
+    playVideoOverlay([{ file: pickVideo(ev.success ? STEAL_OK_VIDEOS : STEAL_NG_VIDEOS), onStart: () => showStealComment(ev) }], next);
   } else if (ev.type === 'pinch') {
     renderPinchFrame(ev);
-    playVideoOverlay([pickVideo(BATTER_INTRO_VIDEOS)], next);   // 代打も打者登場動画(defobat_box種)
+    // 代打も打者登場動画(defobat_box種)。再生開始で代打選手の紹介を実況に出す。
+    //   今日の成績は渡さない (この直後に表示する打席結果が成績に含まれており、結果を先に明かしてしまうため)。
+    playVideoOverlay([{ file: pickVideo(BATTER_INTRO_VIDEOS), onStart: () => showBatterIntroComment(ev.batterObj || null, null) }], next);
   } else {
     next();
   }
@@ -4259,6 +4305,7 @@ function renderStealFrame(steal) {
     label.innerHTML = `<span class="bb-result">${steal.success ? '盗塁成功！' : '盗塁失敗！'}</span>`;
   }
   renderNextBatterLine();     // 実況ラベル3行目: 次打者(NEXT)
+  hideBroadcastComment();     // 打席結果はまだ確定表示しない (投球結果動画と同じタイミングで見せる)
   renderBbInfo(steal.info);   // 🏃💨/🏃❌ の通知
 }
 // 代打の演出フレーム: ダイヤに「代打 選手名」を表示する (投球結果の打球は出さない)。
@@ -4274,6 +4321,7 @@ function renderPinchFrame(ev) {
     label.innerHTML = `<span class="bb-result">代打 ${ev.batterName}</span>`;
   }
   renderNextBatterLine();   // 実況ラベル3行目: 次打者(NEXT)
+  hideBroadcastComment();   // 打席結果はまだ確定表示しない (代打の登場動画が終わるまで結果を明かさない)
   renderBbInfo(ev.info);    // 🔁 代打: … の通知
 }
 // 動画(連続再生)が1区切り終わった時に呼ばれる。自動再生中なら次の投球までのカウントダウンを開始。
@@ -4327,6 +4375,7 @@ function pitchOne(pitch, isAuto) {
       G._prePitchEvents.push(Object.assign({
         type: 'pinch',
         batterName: G.currentBatter ? (G.currentBatter.fullNameTop || G.currentBatter.nameJa || '代打') : '代打',
+        batterObj: G.currentBatter,   // 登場動画に合わせた代打選手の実況紹介 (タイトル/成績) に使用
       }, snapPrePitch()));
     }
     // 自動盗塁: 投手VS打者結果の直前に判定。
@@ -4336,6 +4385,7 @@ function pitchOne(pitch, isAuto) {
     if (steal && steal.attempted) {
       G._prePitchEvents.push(Object.assign({
         type: 'steal', success: steal.success, thirdOut: steal.thirdOut,
+        runnerName: steal.runnerName, catcherName: steal.catcherName,
       }, snapPrePitch()));
     }
     if (steal && steal.thirdOut) {
@@ -4748,6 +4798,7 @@ function applyOutcome(outcome, pitch) {
   const kirePart  = shownKire != null ? `(キレ${shownKire})` : '';
   const pitchInfo = `${speedPart}${kirePart}${speedPart || kirePart ? 'の' : ''}${pitch.name}`;
   const runnersInfo = { runners: [...G.bases] }; // 走者退避 (HR集計用)
+  const outsBefore = G.outs;   // 実況テロップ(broadcasterComment)で「先頭打者」「2死満塁」等の判定に使用
 
   // 打席結果トラッキング用: ホームインした走者の {side, slotIdx} を集める
   let scoredRunners = [];
@@ -5048,6 +5099,15 @@ function applyOutcome(outcome, pitch) {
   // リード履歴を記録 (打席後のスコア差)
   const aSum = G.score.away.reduce((a,b)=>a+b,0);
   const hSum = G.score.home.reduce((a,b)=>a+b,0);
+  // ===== 名物実況者のテロップ解説 (ダイヤモンド左下に表示) =====
+  //   bb-label(結果の描写)を補完し、「なぜ重要か・流れがどう動いたか」を一言添える。
+  if (G.lastPitchResult) {
+    G.lastPitchResult.comment = broadcasterComment(outcome, runs, {
+      B, P, side, outsBefore, runnersInfo, aSum, hSum, fineplay: lpr.fineplay,
+      bStat, pStat, teamHits: G.hits[side],
+      fielder: lpr.fielder, fielderDrs: lpr.fielderDrs, flavor: lpr.flavor,
+    });
+  }
   G.leadHistory.push({
     inning: G.inning, top: G.top,
     awayScore: aSum, homeScore: hSum,
@@ -5072,6 +5132,554 @@ function applyOutcome(outcome, pitch) {
   }
   G.historyView = null;  // 新しい打席が進んだらライブ表示に戻す
   endAtBat();
+}
+
+// ============== 名物実況者のテロップ解説 (ダイヤモンド下部・bb-stateの対角) ==============
+//   bb-label(結果の描写)を補完し、一流のMLB実況者になりきって「なぜ重要か・流れがどう動いたか」
+//   を一言添える分析コメント。試合の状況(逆転/同点/大差/接戦の終盤/2死満塁での踏ん張り 等)に加え、
+//   その日ここまでの成績(打者の複数安打・投手の奪三振数・ノーヒット継続中 等)も加味して生成する。
+//   ctx: { B(打者), P(投手), side(打撃側), outsBefore(打席前アウト数),
+//          runnersInfo.runners(打席前の塁の状況), aSum/hSum(この打席後の合計得点), fineplay,
+//          bStat(打者のこの試合の成績・この打席分を含む), pStat(投手のこの登板の成績・この打席分を含む),
+//          teamHits(この打席後の打撃側チーム総安打数), fielder(処理した野手)/fielderDrs(その守備位置のDRS) }
+// ============== 打者紹介の実況 (打者登場動画 defobat_box* の再生開始に同期して表示) ==============
+// カードのタイトル(アワード)略称 → 日本語名 (import.html の AWARD_NAME と同一)
+const BC_AWARD_NAME = {
+  MVP: 'MVP', WSMVP: 'ワールドシリーズMVP', LCSMVP: 'リーグ優勝シリーズMVP',
+  CY: 'サイ・ヤング賞', ROY: '新人王',
+  AVG: '首位打者', ERA: '最優秀防御率', HR: '本塁打王', RBI: '打点王', SB: '盗塁王',
+  K: '最多奪三振', W: '最多勝', SV: '最多セーブ', HLD: '最多ホールド', OPS: '最高OPS',
+  HAA: 'ハンク・アーロン賞', RC: 'ロベルト・クレメンテ賞', CB: 'カムバック賞',
+  GG: 'ゴールドグラブ賞', SS: 'シルバースラッガー賞', CSR: '盗塁阻止率1位',
+};
+// 打者紹介で使う優先順 (格の高い打撃タイトルから)
+const BC_AWARD_PRIORITY = ['MVP', 'WSMVP', 'LCSMVP', 'HR', 'AVG', 'RBI', 'OPS', 'SB', 'HAA', 'ROY', 'SS', 'GG', 'CSR'];
+// カードのタイトル(バナーの「タイトル: MVP HR2 …」表記)を略称配列で取得。結果は選手objにキャッシュ。
+function bcExtractAwards(p) {
+  if (!p) return [];
+  if (p._bcAwards) return p._bcAwards;
+  let out = [];
+  if (p.rawHtml) {
+    const m = p.rawHtml.match(/<span class="banner-awards"[^>]*>([\s\S]*?)<\/span>/);
+    if (m) {
+      const txt = m[1].replace(/<[^>]*>/g, '').trim().replace(/^タイトル\s*[:：]\s*/, '');
+      const set = new Set();
+      txt.split(/\s+/).forEach(tok => {
+        const abbr = tok.replace(/\d+$/, '').trim();   // 末尾の受賞回数 (MVP2→MVP) を除去
+        if (abbr && BC_AWARD_NAME[abbr]) set.add(abbr);
+      });
+      out = [...set];
+    }
+  }
+  p._bcAwards = out;
+  return out;
+}
+// 打者の「肩書き」: タイトル(年付き。例「2025年本塁打王」) > 今季成績(本塁打/打率/盗塁) の順で1つ選ぶ。無ければ ''。
+function bcBatterTitle(b) {
+  if (!b) return '';
+  const awards = bcExtractAwards(b);
+  for (const abbr of BC_AWARD_PRIORITY) {
+    if (awards.includes(abbr)) {
+      const yr = Number.isFinite(b.year) ? `${b.year}年` : '';
+      return `${yr}${BC_AWARD_NAME[abbr]}`;
+    }
+  }
+  // タイトルが無ければカードの成績 (record) から特徴を拾う
+  const r = b.record || {};
+  const pf = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+  const hr = pf(r['本塁打']), avg = pf(r['打率']), sb = pf(r['盗塁']);
+  if (hr != null && hr >= 40) return `${hr}本塁打の長距離砲`;
+  if (hr != null && hr >= 25) return `${hr}本塁打の強打者`;
+  if (avg != null && avg >= 0.31) return `打率${String(avg).replace(/^0/, '')}の好打者`;
+  if (sb != null && sb >= 30) return `${sb}盗塁の俊足`;
+  return '';
+}
+// 打席に入る打者の紹介文。st=その打者の今日の成績 (代打などで無い/未確定なら null)。
+function batterIntroText(b, st) {
+  if (!b) return '';
+  const name = b.fullNameTop || b.nameJa || '打者';
+  const title = bcBatterTitle(b);
+  let today = '';
+  if (st) {
+    const h = st.H || 0, ab = st.AB || 0, hr = st.HR || 0, bb = st.BB || 0;
+    if (hr >= 1 && h >= 2)      today = `今日は${h}安打${hr}本塁打と絶好調だ。`;
+    else if (hr >= 1)           today = `今日すでに一発を放っている。`;
+    else if (h >= 2)            today = `今日${h}安打と当たっている。`;
+    else if (h === 1)           today = `今日もヒットが1本出ている。`;
+    else if (ab >= 2)           today = `今日はここまで${ab}打数ノーヒット。ここで一本欲しいところだ。`;
+    else if (ab === 0 && bb >= 1) today = `今日はここまで四球での出塁のみ。バットで結果が欲しい。`;
+  }
+  const who = title ? `${title}の${name}` : name;
+  const tail = today || pickRand(['さあ、どんな打撃を見せるか。', 'この打席に注目だ。', 'じっくり見ていきたい打席だ。']);
+  return `打席には${who}。${tail}`;
+}
+// 打者紹介を実況テロップに表示する。b/st 省略時は「これから打席に入る打者」(G.currentBatter) を紹介。
+//   打者登場動画 (defobat_box*) の再生開始コールバック (playVideoOverlay の onStart) から呼ばれる。
+function showBatterIntroComment(b, st) {
+  try {
+    if (G.silent || G.ended) return;
+    const el = document.querySelector('#bbCommentary');
+    const txtEl = document.querySelector('#bbCommentaryText');
+    if (!el || !txtEl) return;
+    let batter = b, stat = st;
+    if (!batter) {
+      batter = G.currentBatter;
+      const side = G.top ? 'away' : 'home';
+      const batIdx = side === 'away' ? G.awayBatIdx : G.homeBatIdx;
+      stat = (G.batterStats && G.batterStats[side]) ? G.batterStats[side][batIdx] : null;
+      if (stat && stat.player !== batter) stat = null;   // 交代等でズレていたら今日の成績は出さない
+    }
+    const text = batterIntroText(batter, stat);
+    if (!text) return;
+    el.hidden = false;
+    txtEl.textContent = text;
+  } catch (e) { /* 紹介は補助演出。失敗してもゲームは継続 */ }
+}
+
+// ============== 投手紹介の実況 (投手登場動画 defopit_sta* の再生開始に同期して表示) ==============
+// 投手の「肩書き」優先順 (打撃タイトルと共通の BC_AWARD_NAME を使う)
+const BC_PITCHER_AWARD_PRIORITY = ['MVP', 'WSMVP', 'LCSMVP', 'CY', 'ERA', 'W', 'SV', 'HLD', 'K', 'ROY', 'HAA', 'CB'];
+// 投手の肩書き: タイトル(年付き) > カードの通算成績(セーブ/防御率/勝利/奪三振) の順で1つ選ぶ。無ければ ''。
+function bcPitcherTitle(p) {
+  if (!p) return '';
+  const awards = bcExtractAwards(p);
+  for (const abbr of BC_PITCHER_AWARD_PRIORITY) {
+    if (awards.includes(abbr)) {
+      const yr = Number.isFinite(p.year) ? `${p.year}年` : '';
+      return `${yr}${BC_AWARD_NAME[abbr]}`;
+    }
+  }
+  const r = p.record || {};
+  const pf = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+  const era = pf(r['防御率']), w = pf(r['勝利']), sv = pf(r['セーブ']), k = pf(r['奪三振']);
+  if (sv != null && sv >= 25) return `${sv}セーブの守護神`;
+  if (era != null && era > 0 && era <= 2.5) return `防御率${r['防御率']}の好投手`;
+  if (w != null && w >= 15) return `${w}勝投手`;
+  if (k != null && k >= 180) return `奪三振${k}の本格派`;
+  return '';
+}
+// 投手の紹介文。roleKey='starter'/'middle'/'setup'/'closer'/'mop' (不明ならnull)。
+//   マウンドに上がった直後(この登板ではまだ無失点=0投球)のため、今日の投球成績は使わず
+//   肩書き＋役割に応じた煽り文句で紹介する。
+function pitcherIntroText(p, roleKey) {
+  if (!p) return '';
+  const name = p.fullNameTop || p.nameJa || '投手';
+  const title = bcPitcherTitle(p);
+  const who = title ? `${title}の${name}` : name;
+  const tailPool = {
+    starter: ['先発マウンドに上がる。試合の入りに注目だ。', 'いよいよ試合が動き出す。立ち上がりが大事だ。'],
+    closer:  ['抑えの登場だ。試合の行方を託された。', 'ここは守護神の出番…ゲームを締めくくる大事な場面だ。'],
+    setup:   ['セットアッパーの登板だ。勝ちパターンの継投が始まる。', '試合終盤、重要な繋ぎの場面だ。'],
+  }[roleKey] || ['マウンドに上がる。ここからの投球に注目だ。', 'リリーフ登板…流れを渡さないための継投だ。'];
+  return `マウンドには${who}。${pickRand(tailPool)}`;
+}
+// 投手紹介を実況テロップに表示する。p省略時は G.currentPitcher (これから登板する投手) を紹介。
+//   投手登場動画 (defopit_sta*) の再生開始コールバック (playVideoOverlay の onStart) から呼ばれる。
+function showPitcherIntroComment(p) {
+  try {
+    if (G.silent || G.ended) return;
+    const el = document.querySelector('#bbCommentary');
+    const txtEl = document.querySelector('#bbCommentaryText');
+    if (!el || !txtEl) return;
+    const pitcher = p || G.currentPitcher;
+    if (!pitcher) return;
+    const defSide = G.top ? 'home' : 'away';
+    const setup = G.setup && G.setup[defSide];
+    const idx = setup ? setup.activeIdx : -1;
+    const roleKey = (setup && setup.pitcherRoles) ? setup.pitcherRoles[idx] : null;
+    const text = pitcherIntroText(pitcher, roleKey);
+    if (!text) return;
+    el.hidden = false;
+    txtEl.textContent = text;
+  } catch (e) { /* 紹介は補助演出。失敗してもゲームは継続 */ }
+}
+
+// ============== 盗塁の実況 (defobat_ste=成功/defobat_throw=失敗 動画の再生開始に同期して表示) ==============
+//   ev: { success, runnerName, catcherName } (executeSteal の戻り値経由で G._prePitchEvents に格納済み)
+function stealResultComment(ev) {
+  if (!ev) return '';
+  const runner  = ev.runnerName  || '走者';
+  const catcher = ev.catcherName || '捕手';
+  if (ev.success) {
+    return pickRand([
+      `${runner}、スタートが冴えた！危なげなく二塁へ盗んだ。`,
+      `見事なスタートだ。${runner}、この足はチームの武器になる。`,
+      `タイミングばっちり…${runner}、盗塁成功だ。`,
+    ]);
+  }
+  return pickRand([
+    `${catcher}の好返球…${runner}、二塁で刺されてしまった。`,
+    `完璧な送球だ！${catcher}、走者を刺した。`,
+    `${runner}のスタートが遅れた。${catcher}の肩が勝った。`,
+  ]);
+}
+// 盗塁の実況をテロップに表示する。
+function showStealComment(ev) {
+  try {
+    if (G.silent || G.ended) return;
+    const el = document.querySelector('#bbCommentary');
+    const txtEl = document.querySelector('#bbCommentaryText');
+    if (!el || !txtEl) return;
+    const text = stealResultComment(ev);
+    if (!text) return;
+    el.hidden = false;
+    txtEl.textContent = text;
+  } catch (e) { /* 紹介は補助演出。失敗してもゲームは継続 */ }
+}
+
+// ============== 試合終了の実況 (試合終了直後の3秒間だけ表示) ==============
+// 最終スコアの状況(引き分け/サヨナラ/延長/大差/接戦)に応じた終戦コメントを生成する。
+function gameEndCommentText() {
+  const aSum = G.score.away.reduce((a, b) => a + b, 0);
+  const hSum = G.score.home.reduce((a, b) => a + b, 0);
+  const awayName = labelTeam('away'), homeName = labelTeam('home');
+  if (aSum === hSum) {
+    return pickRand([
+      `ここで試合終了…${aSum}対${hSum}の引き分けだ。決着はつかなかった。`,
+      `決着つかず、${aSum}対${hSum}のまま試合終了となった。`,
+    ]);
+  }
+  const winTeam = aSum > hSum ? awayName : homeName;
+  const winScore = Math.max(aSum, hSum), loseScore = Math.min(aSum, hSum);
+  const diff = winScore - loseScore;
+  if (G.homeWalkoffIdx != null) {
+    return pickRand([
+      `サヨナラで${homeName}が勝利を掴んだ！劇的な幕切れだ。`,
+      `${homeName}、土壇場での逆転勝利…これがサヨナラの醍醐味だ。`,
+    ]);
+  }
+  if (G.inning > G.innings) {
+    return pickRand([
+      `延長${G.inning}回…長い戦いを制したのは${winTeam}だ。`,
+      `${G.inning}回までもつれた末、${winTeam}が制した。`,
+    ]);
+  }
+  if (diff >= 6) {
+    return pickRand([
+      `${winTeam}の圧勝だ。${winScore}対${loseScore}、危なげない勝利だった。`,
+      `完勝の${winTeam}。今日は最初から最後まで主導権を握っていた。`,
+    ]);
+  }
+  return pickRand([
+    `${winTeam}が${winScore}対${loseScore}で勝利した。締まったゲームだった。`,
+    `見応えのある試合だった。最後は${winTeam}に軍配が上がった。`,
+  ]);
+}
+// 試合終了コメントを実況テロップに表示し、3秒後に消して 戻る/進む バーの表示に切り替える。
+function showGameEndComment() {
+  try {
+    if (G.silent) return;
+    const el = document.querySelector('#bbCommentary');
+    const txtEl = document.querySelector('#bbCommentaryText');
+    if (!el || !txtEl) return;
+    const text = gameEndCommentText();
+    if (!text) return;
+    G._showingEndComment = true;
+    el.hidden = false;
+    txtEl.textContent = text;
+    setTimeout(() => {
+      G._showingEndComment = false;
+      renderAll();   // 通常描画に戻す → 実況が消え、戻る/進むバーが表示される
+    }, 3000);
+  } catch (e) { /* 演出は補助機能。失敗してもゲームは継続 */ }
+}
+
+function broadcasterComment(outcome, runs, ctx) {
+  try {
+    const { B, P, side, outsBefore, runnersInfo, aSum, hSum, fineplay, bStat, pStat, teamHits, fielder, fielderDrs, flavor } = ctx;
+    const batter  = B ? (B.fullNameTop || B.nameJa || '打者') : '打者';
+    const pitcher = P ? (P.fullNameTop || P.nameJa || '投手') : '投手';
+    const fielderName = fielder ? (fielder.fullNameTop || fielder.nameJa || '野手') : '野手';
+    // 打者のHR能 (statsMini) — ホームランのコメントを長打力に応じて変える
+    const hrAbility = (B && B.statsMini && Number.isFinite(B.statsMini['HR能'])) ? B.statsMini['HR能'] : 0;
+    // ゴロの質 (実況の表現を「強いゴロ/緩いゴロ」までに留め、動画と食い違いうる具体描写(ワンバウンド等)は避ける)
+    const flavorStr = flavor || '';
+    const weakGrounder   = (outcome === 'GO_SLOW') || /ボテボテ|力ない/.test(flavorStr);
+    const strongGrounder = !weakGrounder && /詰まった/.test(flavorStr);
+    const bases = (runnersInfo && runnersInfo.runners) || [null, null, null];
+    const risp = !!(bases[1] || bases[2]);              // 打席前、得点圏に走者
+    const basesEmptyBefore = !bases.some(Boolean);
+    const leadoff = (outsBefore === 0 && basesEmptyBefore);   // 無死走者なし(先頭打者)
+    const twoOutJam = (outsBefore === 2 && risp);              // 2死・得点圏の踏ん張りどころ
+    const isHit = (outcome === '1B' || outcome === '2B' || outcome === '3B' || outcome === 'HR');
+
+    // スコア状況: この打席の得点を反映した「後」の状態と「前」の状態を比較する
+    const myAfter  = side === 'away' ? aSum : hSum;
+    const oppAfter = side === 'away' ? hSum : aSum;
+    const myBefore = myAfter - runs;
+    const leadBefore = myBefore - oppAfter;
+    const leadAfter  = myAfter  - oppAfter;
+    const lateInning  = G.inning >= 7;
+    const finalFrame  = G.inning >= G.innings;   // 延長含め最終回以降
+    const walkoff  = (!G.top && finalFrame && leadAfter > 0 && leadBefore <= 0);
+    // 逆転(comeback) = 「負けていた」状態から追いついて上回った時のみ。0-0(まだ無得点)や同点からの勝ち越しは
+    //   「逆転」ではないので明確に区別する (誤って「逆転だ」と言わないため)。
+    const comeback       = !walkoff && leadBefore < 0 && leadAfter > 0;
+    // 均衡を破る(goAhead) = 同点(0-0含む)から勝ち越した場合。ゲーム全体がまだ無得点なら「先制」、
+    //   両者が既に得点した後の同点を破った場合は「勝ち越し」の表現を使う。
+    const goAhead        = !walkoff && !comeback && leadBefore === 0 && leadAfter > 0;
+    const firstScore     = goAhead && myBefore === 0 && oppAfter === 0;   // この一打まで完全に無得点
+    const tiedGame       = !walkoff && !comeback && !goAhead && leadAfter === 0 && leadBefore !== 0;
+    const blowoutExtend = !walkoff && Math.abs(leadAfter) >= 6 && Math.abs(leadAfter) > Math.abs(leadBefore);
+    const closeLate      = lateInning && Math.abs(leadAfter) <= 1;
+    // 成績がらみの話題: 本日複数安打・複数奪三振・ノーヒット継続中 (それぞれ該当outcomeの時だけ有効)
+    const multiHit  = isHit && bStat && bStat.H >= 2;                              // 本日2安打目以降
+    const multiK    = (outcome === 'K') && pStat && pStat.K >= 2;                   // この登板で2つ目以降の奪三振
+    const noHitBid  = !isHit && G.inning >= 4 && teamHits === 0;                     // 4回以降・相手打線をノーヒットに抑え中
+
+    let base = '';
+    let skipOverlay = false;   // HR等、ベース文言自体に状況を織り込み済みの場合は状況オーバーレイを省く
+    let statNoteUsed = false;  // ベース文言内で既に成績(複数安打/複数奪三振)に触れた場合、重複を避けるためオーバーレイ側では省く
+
+    switch (outcome) {
+      case 'HR': {
+        skipOverlay = true;
+        if (walkoff) base = pickRand([
+          `サヨナラホームランだ！${batter}、これ以上のドラマがあるだろうか！`,
+          `劇的な一発でゲームセット！${batter}が全てを決めた！`,
+        ]);
+        else if (comeback) base = pickRand([
+          `これで逆転だ！一振りで試合をひっくり返した、${batter}会心の一発。`,
+          `劣勢を跳ね返す一発…流れが完全にこちらへ傾いた。`,
+        ]);
+        else if (firstScore) base = pickRand([
+          `先制のホームランだ！${batter}、大事な均衡を最初に破った。`,
+          `幸先の良い一発…${pitcher}、立ち上がりから足をすくわれた。`,
+        ]);
+        else if (goAhead) base = pickRand([
+          `貴重な勝ち越しの一発…${batter}、値千金の一撃だ。`,
+          `これで勝ち越した！${pitcher}にとっては重い一発だ。`,
+        ]);
+        else if (tiedGame) base = pickRand([
+          `同点に追いついた！ここから息もつかせぬ展開になりそうだ。`,
+          `土壇場で追いつく一発…${batter}、勝負強さを見せつけた。`,
+        ]);
+        else if (blowoutExtend) base = pickRand([
+          `ダメ押しの一発…もう試合の大勢は決まったと言っていいだろう。`,
+          `完全に突き放した。${pitcher}、この回は割り切るしかない。`,
+        ]);
+        else if (runs >= 3) base = pickRand([
+          `これは大きい！${runs}点が一気に入るビッグイニングの一発だ。`,
+          `${batter}、完璧なタイミングでバットを一閃…${pitcher}にとっては悪夢のような瞬間だ。`,
+        ]);
+        else if (multiHit) base = pickRand([
+          `${batter}、本日${bStat.HR >= 2 ? bStat.HR + '本目のアーチ' : bStat.H + '本目の安打'}だ！今日は止まらない。`,
+          `絶好調の${batter}…この一発でさらに調子を上げてきた。`,
+        ]);
+        // HR能(長打力)によってホームランの受け止め方を変える: 本職の一撃か、意外性のある一発か。
+        else if (hrAbility >= 15) base = pickRand([
+          `${batter}、看板通りのパワーだ！分かっていても止められない一発だ。`,
+          `本塁打を量産するその一振り…${pitcher}、対策のしようがなかった。`,
+          `これぞ長距離砲の仕事だ。${batter}の一発は誰も驚かない。`,
+        ]);
+        else if (hrAbility <= -5) base = pickRand([
+          `驚きの一発だ！${batter}にこんな長打力があったとは。`,
+          `らしくない一発…だがルールブック通り、これも1点だ。`,
+          `まさかの本塁打…${pitcher}、意表を突かれた形だ。`,
+        ]);
+        else base = pickRand([
+          `${batter}、豪快な一発だ！これぞパワーヒッターの真骨頂。`,
+          `完璧に捉えた…${pitcher}、痛恨の一発を浴びてしまった。`,
+          `会心のスイングから生まれた一発。ベンチも沸き立っている。`,
+          `詰まりながらも運んだ…${batter}、勝負強さの証明だ。`,
+          `甘く入った一球を見逃さなかった。プロの目だ。`,
+        ]);
+        break;
+      }
+      case '3B':
+      case '2B': {
+        const kind = outcome === '3B' ? '三塁打' : '長打';
+        base = (runs > 0) ? pickRand([
+          `勝負どころで${kind}…${batter}、値千金の一打だ。`,
+          `絶妙なコースを突く一打で走者を確実に還した。`,
+          `逆方向へ弾き返す好打。${batter}、狙い澄ました一撃だ。`,
+        ]) : pickRand([
+          `${kind}を放って好機を広げる。次打者に望みをつなぐ一打だ。`,
+          `鋭い打球…これで得点圏に走者を進めた。`,
+          `ギャップを鋭く突いた。守備陣の反応が遅れた。`,
+        ]);
+        break;
+      }
+      case '1B': {
+        if (risp && runs > 0) base = pickRand([
+          `ここで欲しかった一本…${batter}、プレッシャーの中でしっかり弾き返した。`,
+          `値千金のタイムリー。これがベテランの技だ。`,
+          `狙い球を絞った勝負…見事に的中させた。`,
+        ]);
+        else if (risp) base = pickRand([
+          `ヒットで好機を広げる。まだまだ攻撃は終わらない。`,
+          `粘りの一本で走者を進めた。チームバッティングだ。`,
+        ]);
+        else if (leadoff) base = pickRand([
+          `先頭打者出塁…投手にとっては避けたかった形だ。`,
+          `無死の走者、これが大きな一つになるかもしれない。`,
+        ]);
+        else if (multiHit) { statNoteUsed = true; base = pickRand([
+          `${batter}、本日${bStat.H}本目の安打だ。今日のバットは完全に生きている。`,
+          `また安打…${pitcher}、この打者との相性が悪い。`,
+        ]); }
+        else base = pickRand([
+          `きれいなヒットで出塁。${batter}、良いスイングだった。`,
+          `軽打ながら効果的な一本だ。`,
+          `逆方向へ流し打ち…technical な対応だ。`,
+          `内野の頭上を越える、狙い通りの一打だ。`,
+        ]);
+        break;
+      }
+      case 'BB': {
+        if (runs > 0) base = pickRand([
+          `押し出しの四球…${pitcher}、これは痛い。`,
+          `制球を乱してしまった代償は大きい。押し出しで1点が入った。`,
+        ]);
+        else if (leadoff) base = pickRand([
+          `先頭打者への四球…投手にとって避けたい形からのスタートだ。`,
+          `無死からの走者…${pitcher}、立ち上がりに苦労している。`,
+        ]);
+        else base = pickRand([
+          `粘りの四球でチャンスを広げる。`,
+          `${pitcher}、ここは慎重になりすぎたか。`,
+          `際どいコースが続いた末の四球。バッテリーも慎重だった。`,
+        ]);
+        break;
+      }
+      case 'K': {
+        if (twoOutJam) base = pickRand([
+          `ここで三振を奪ったのは大きい！${pitcher}、ピンチをしのいだ。`,
+          `絶体絶命の場面で三振…これがエースの意地だ。`,
+        ]);
+        else if (multiK) { statNoteUsed = true; base = pickRand([
+          `${pitcher}、これで${pStat.K}個目の奪三振だ。切れ味が増している。`,
+          `三振の山を築く${pitcher}…今日は制球も球威も申し分ない。`,
+        ]); }
+        else base = pickRand([
+          `きっちり三振を奪う。${pitcher}、テンポの良いピッチングだ。`,
+          `完全にタイミングを外された…見事な投球だ。`,
+          `低めのボール球に手を出してしまった。配球の勝利だ。`,
+          `見逃し三振…${pitcher}、際どいコースを丁寧に突いた。`,
+        ]);
+        break;
+      }
+      case 'E': {
+        base = pickRand([
+          `痛恨のミスだ…これが試合の流れを変えるかもしれない。`,
+          `守備の乱れが出た。プレッシャーの中でのミス、これは大きい。`,
+          `何でもない打球だったが…この一つが後々響くかもしれない。`,
+        ]);
+        break;
+      }
+      case 'SAC_FLY': {
+        base = pickRand([
+          `犠牲フライで1点…${batter}、チームバッティングを見せた。`,
+          `しっかり走者を還す打球。これも立派な仕事だ。`,
+          `深い外野フライで得点…狙い通りの一打だ。`,
+        ]);
+        break;
+      }
+      case 'GO_DP': {
+        base = pickRand([
+          `痛恨のダブルプレー…一気に流れが変わってしまった。`,
+          `併殺打…これ以上ない形でチャンスを潰してしまった。`,
+          `完璧な併殺コンビネーション。${pitcher}、これで一気に息をついた。`,
+        ]);
+        break;
+      }
+      case 'GO':
+      case 'GO_SLOW': {
+        // 内野ゴロ。動画の打球感と食い違わないよう、表現は「強いゴロ/緩いゴロ/通常」の枠に留め、
+        //   ワンバウンド等の具体的な打球描写はしない。
+        if (twoOutJam) base = pickRand([
+          `このアウトは大きい。${pitcher}、ピンチを最小限に抑えた。`,
+          `土壇場でしのいだ…流れを渡さなかった。`,
+        ]);
+        else if (weakGrounder) base = pickRand([
+          `力のない打球…${pitcher}、粘り勝ちだ。`,
+          `弱い打球で仕留めた。${batter}、タイミングが合っていなかった。`,
+          `緩い打球で焦らせない。${pitcher}のペースだ。`,
+        ]);
+        else if (strongGrounder) base = pickRand([
+          `詰まらされた…力はあったが芯を外された。`,
+          `鋭いようで詰まった打球。${pitcher}、内角を上手く使った。`,
+          `手元で詰まらせる投球…力を吸収されてしまった。`,
+        ]);
+        else base = pickRand([
+          `内野ゴロで手堅くアウトを稼ぐ。`,
+          `打たせて取るピッチング…${pitcher}、ペースを崩さない。`,
+          `${pitcher}、狙い通りにゴロを打たせた。`,
+        ]);
+        break;
+      }
+      case 'FO': {
+        // 外野・内野フライアウト
+        base = twoOutJam ? pickRand([
+          `高く舞い上がった打球…${pitcher}、この回をしのぎ切った。`,
+          `土壇場のフライアウト。ベンチも胸をなでおろしただろう。`,
+        ]) : pickRand([
+          `打ち上げさせて仕留めた。${pitcher}、丁寧な投球だ。`,
+          `詰まった打球が高々と舞い上がった。`,
+          `難なく処理された。危なげない守備だ。`,
+          `力んだスイングが浮いた打球を呼んでしまった。`,
+        ]);
+        break;
+      }
+      case 'LO': {
+        // ライナーアウト
+        base = pickRand([
+          `鋭い打球だったが、正面を突いてしまった。運もこちら側にはなかった。`,
+          `強い打球…しかし好位置に守っていた守備が捕った。`,
+          `ライナーの軌道…あと少しずれていればヒットだった。`,
+          `${batter}、当たりは悪くなかったが真正面。野球とはそういうものだ。`,
+        ]);
+        break;
+      }
+      default: {
+        base = twoOutJam ? pickRand([
+          `このアウトは大きい。${pitcher}、ピンチを最小限に抑えた。`,
+          `土壇場でしのいだ…流れを渡さなかった。`,
+        ]) : pickRand([
+          `${pitcher}、丁寧に打ち取った。`,
+          `無難にアウトを重ねる。悪くない入りだ。`,
+        ]);
+      }
+    }
+
+    // ファインプレー: アウト全般に優先して上書き (HRは対象外)。選手名とDRS(守備力)に応じて評し方を変える。
+    if (!skipOverlay && fineplay) {
+      const drs = Number.isFinite(fielderDrs) ? fielderDrs : 0;
+      if (drs >= 15) base = pickRand([
+        `さすがは${fielderName}だ！ゴールドグラブ級の守備で試合を締めた。`,
+        `${fielderName}、この守備範囲は反則級だ。あの打球に追いつくとは。`,
+        `${fielderName}なら捕って当然…と言いたくなる、鉄壁の守備だ。`,
+      ]);
+      else if (drs >= 5) base = pickRand([
+        `${fielderName}、堅実な守備でピンチを摘んだ。頼れる存在だ。`,
+        `安定感のある${fielderName}の守備が光った瞬間だ。`,
+      ]);
+      else base = pickRand([
+        `${fielderName}、まさかのファインプレーだ！練習の成果が出た瞬間だ。`,
+        `守備であまり目立たない${fielderName}が、値千金のプレーを見せた。`,
+        `会心の守備…${fielderName}、これぞプロの技だ。`,
+      ]);
+    }
+
+    if (skipOverlay) return base;
+
+    // 状況・成績オーバーレイ: 最も重要な話題を優先度順に一つだけ選んで一言付け足す
+    let overlay = '';
+    if (walkoff) overlay = `そしてサヨナラだ！${batter}がヒーローになった！`;
+    else if (comeback) overlay = `これで逆転…流れは完全にこちら側だ。`;
+    else if (firstScore) overlay = `これが先制点だ。${side === 'away' ? '先攻' : '後攻'}が幸先の良いスタートを切った。`;
+    else if (goAhead) overlay = `これで勝ち越した。${pitcher}にとっては厳しい展開だ。`;
+    else if (tiedGame) overlay = `同点に追いついた。まだまだこの試合、分からない。`;
+    else if (blowoutExtend) overlay = `試合の大勢はもう決まったと言っていいだろう。`;
+    else if (multiHit && !statNoteUsed) overlay = `${batter}、これで本日${bStat.H}本目のヒットだ。今日は絶好調と言っていい。`;
+    else if (multiK && !statNoteUsed) overlay = `${pitcher}、これで${pStat.K}個目の三振を奪った。`;
+    else if (noHitBid && Math.random() < 0.35) overlay = `${pitcher}、ここまで${G.inning}回、相手打線をノーヒットに抑えている。`;
+    else if (closeLate && Math.random() < 0.5) overlay = `一点を争う緊迫の展開…まだ目が離せない。`;
+
+    return `${base}${overlay ? '　' + overlay : ''}`;
+  } catch (e) {
+    return '';   // 解説は補助演出。失敗してもゲームは継続
+  }
 }
 
 // 走者を by 塁進める。ホームインした走者の {side, slotIdx} 配列を返す
@@ -5616,7 +6224,7 @@ function showReliefDialog() {
   // 投手交代の演出 (登場動画)。次の球は同じ打者なので打者登場は流さない。
   if (!G._lastIntroPitcher) G._lastIntroPitcher = { home: null, away: null };
   G._lastIntroPitcher[info.side] = G.currentPitcher;   // 回頭の重複再生を防ぐ
-  playVideoOverlay([pickVideo(PITCHER_INTRO_VIDEOS)]);
+  playVideoOverlay([{ file: pickVideo(PITCHER_INTRO_VIDEOS), onStart: () => showPitcherIntroComment(opts[n].p) }]);
   renderAll();
 }
 
@@ -5697,7 +6305,8 @@ function executeSteal(side) {
   const runnerPlayer = getRunnerPlayer(ref);
   const rn = runnerPlayer ? (runnerPlayer.fullNameTop || runnerPlayer.nameJa || '走者') : '走者';
   const { souru, touru } = getRunnerStealStats(runnerPlayer);
-  const { arm, taoTou } = getStealDefenseStats();
+  const { catcher, arm, taoTou } = getStealDefenseStats();
+  const catcherName = catcher ? (catcher.fullNameTop || catcher.nameJa || '捕手') : '捕手';
   const success = judgeStealOnce(souru, touru, arm, taoTou);
   if (success) {
     G.bases[1] = ref;     // 1塁 → 2塁
@@ -5705,7 +6314,7 @@ function executeSteal(side) {
     const st = G.batterStats && G.batterStats[ref.side] && G.batterStats[ref.side][ref.slotIdx];
     if (st) st.SB = (st.SB || 0) + 1;
     logLine(`🏃💨 ${rn} 二盗成功！`, 'event-hit');
-    return { attempted: true, success: true, thirdOut: false };
+    return { attempted: true, success: true, thirdOut: false, runnerName: rn, runnerPlayer, catcherName, souru, touru };
   }
   // 失敗 (盗塁死)
   const stF = G.batterStats && G.batterStats[ref.side] && G.batterStats[ref.side][ref.slotIdx];
@@ -5718,7 +6327,7 @@ function executeSteal(side) {
   if (pStat) pStat.outs = (pStat.outs || 0) + 1;  // イニング消化 (投手の投球回に計上)
   const thirdOut = G.outs >= 3;
   logLine(`🏃❌ ${rn} 盗塁失敗、二塁でタッチアウト！${thirdOut ? ' スリーアウトチェンジ！！' : ''}`, 'event-out');
-  return { attempted: true, success: false, thirdOut };
+  return { attempted: true, success: false, thirdOut, runnerName: rn, runnerPlayer, catcherName, arm };
 }
 
 // 手動盗塁ダイアログ: 能力値と目安成功率を開示し、実行可否を確認
@@ -6464,6 +7073,7 @@ function finishGame() {
   G.awaitingResult = true;
   logLine('🏁 試合終了！ 「🏁 試合結果へ」ボタンで結果・戦評を表示します', 'event-inning');
   updateAutoFinishButton();
+  showGameEndComment();   // 実況で終戦コメントを表示 → 3秒後に消して戻る/進むバーを表示
   renderAll();
 }
 

@@ -996,7 +996,9 @@ body.in-game .header-game-state { display: inline-flex; }
   background: rgba(0,0,0,0.45);
   border: 1px solid #6677cc;
   border-radius: 6px;
-  padding: 3px 2px;
+  /* 下だけ余白を広げ、ダイヤモンド本体(field-inner)の大きさは変えずに
+     bb-state(1回表)/bb-commentary(実況)を下げるスペースを確保する */
+  padding: 3px 2px 40px 2px;
   overflow: visible;
 }
 /* グラウンド本体 (芝・軌道・走者): 上面に打球結果テキスト(2行)用の余白を空けて少し下げる */
@@ -1146,6 +1148,46 @@ body.in-game .header-game-state { display: inline-flex; }
 }
 .field-area .bb-label.bb  .bb-result { color: #ffe8aa; }
 
+/* ダイヤモンド下部。一流実況者のテロップ解説 (ニュースティッカー風)。
+   「実況」ラベルは枠の外に独立させて上に配置し、本文の箱は本塁グラフィックの下端より下の帯に収め、
+   右は bb-state(1回表/アウト表示)の手前まで幅広く使い、より多くの文字数を表示できるようにする。 */
+.field-area .bb-commentary {
+  position: absolute;
+  left: 8px; right: 100px;   /* 右は bb-state の手前(左端まで約91px)に十分な余白を残して止める */
+  bottom: 8px;
+  z-index: 6;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  pointer-events: none;
+}
+.field-area .bb-commentary[hidden] { display: none; }
+.field-area .bb-commentary .bc-label {
+  /* 箱の外・上に浮かせた独立ラベル */
+  flex: none;
+  font-size: 11px; font-weight: 900; letter-spacing: 1.5px; color: #fff;
+  background: linear-gradient(135deg,#ff5a3c,#c8231a);
+  border-radius: 3px; padding: 2px 6px; line-height: 1.4;
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+  box-shadow: 0 0 5px rgba(255,90,60,0.6);
+}
+.field-area .bb-commentary .bc-box {
+  width: 100%;
+  max-height: 58px;   /* 3行分ちょうど。4行目が出てもここで確実に切る (overflow:hidden) */
+  overflow: hidden;
+  background: rgba(0,0,0,0.72);
+  border: 1px solid #cc7a2a;
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+.field-area .bb-commentary .bc-text {
+  display: block;
+  font-size: 13px; font-weight: 700; color: #ffe8c0; line-height: 1.3;
+  letter-spacing: 0.2px;
+  /* キリの良い位置にこだわらず詰めて折り返し、3行に収まりやすくする */
+  white-space: normal; word-break: break-all; overflow-wrap: anywhere;
+  text-align: left;
+  text-shadow: 1px 1px 0 #000;
+}
+
 /* 試合終了後の振り返りバー (戻る/進む)。ダイヤ枠内・下部にオーバーレイ(高さを変えない) */
 .field-area .bb-history {
   position: absolute;
@@ -1178,7 +1220,10 @@ body.in-game .header-game-state { display: inline-flex; }
 /* === ダイヤモンド下の自動再生バー (動画ON時) === */
 .auto-video-bar {
   display: flex; align-items: center; justify-content: center; gap: 16px;
-  margin-top: 6px; padding: 8px; min-height: 52px;
+  /* ダイヤモンド(.field-area)の枠線自体はそのまま。ボタンだけを枠線に少し近づけるため
+     負のmargin-topで引き上げる(実況テロップ/1回表表示の下端とは重ならない範囲)。 */
+  margin-top: -14px;
+  padding: 8px; min-height: 52px;
 }
 .auto-video-bar[hidden] { display: none; }
 .av-toggle { background: linear-gradient(135deg,#4488ff,#1144aa); }   /* 停止中 = 青 */
