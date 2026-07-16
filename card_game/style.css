@@ -2634,6 +2634,13 @@ body.in-game .header-game-state { display: inline-flex; }
 .season-table td.sortcol { font-weight: 800; color: #0b2d6b; }      /* ソート中の列を強調 */
 .season-table .rankcell { font-weight: 700; }
 .season-table tbody tr.srow:hover td { background: #dceafc; }
+/* 勝敗表: 地区首位 / ワイルドカード進出圏(上位3チーム) をピンク系で明確化 (td 背景で even/odd を上書き) */
+.season-table tr.div-top td, .season-table tr.wc-in td { background: #f7dfe7; font-weight: 700; }
+.season-table tr.wc-in td { border-top: 1px solid #d98aa6; border-bottom: 1px solid #d98aa6; }
+.season-table td.magic { font-weight: 800; color: #b3103c; }
+.season-wildcard { table-layout: fixed; min-width: 520px; }
+.season-wildcard th:first-child, .season-wildcard td:first-child { width: 46px; }
+.season-wildcard th:nth-child(2), .season-wildcard td:nth-child(2) { width: 156px; overflow: hidden; text-overflow: ellipsis; }
 /* 上位3名: 金・銀・銅 (td 背景で even/odd を上書き) */
 .season-table tr.rank-1 td { background: #fff2bf; font-weight: 700; }
 .season-table tr.rank-2 td { background: #e7ebef; font-weight: 700; }
