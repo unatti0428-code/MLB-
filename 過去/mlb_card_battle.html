@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLB カードバトル ⚾</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:radial-gradient(ellipse at center,#0d0d2b 0%,#050510 100%);min-height:100vh;font-family:'MS Gothic','Yu Gothic','Hiragino Kaku Gothic Pro',monospace;color:#fff;overflow-x:hidden;}
+
+/* ── SCREENS ── */
+.screen{display:none;min-height:100vh;}
+.screen.active{display:flex;}
+
+/* ── TITLE ── */
+#screen-title{flex-direction:column;align-items:center;justify-content:center;gap:24px;padding:40px 20px;}
+.title-logo{font-size:44px;font-weight:900;letter-spacing:6px;text-shadow:0 0 30px #4488ff,2px 2px 0 #000;color:#fff;}
+.title-sub{font-size:16px;letter-spacing:4px;color:#88aaff;text-shadow:0 0 12px #4488ff;}
+.team-select-area{display:flex;gap:30px;flex-wrap:wrap;justify-content:center;margin-top:10px;}
+.team-card{width:250px;padding:18px;border-radius:12px;cursor:pointer;border:3px solid #4466aa44;background:rgba(0,20,60,0.6);transition:all 0.2s;}
+.team-card:hover,.team-card.selected{border-color:#88aaff;box-shadow:0 0 30px #4488ff66;transform:translateY(-4px);}
+.team-card-name{font-size:16px;font-weight:900;letter-spacing:2px;margin-bottom:10px;}
+.team-card-line{font-size:12px;color:#aabbdd;line-height:1.9;}
+.hint-box{font-size:11px;color:#445566;max-width:480px;text-align:center;line-height:1.9;background:rgba(0,10,30,0.5);border:1px solid #223344;border-radius:8px;padding:10px 16px;}
+
+/* ── BUTTONS ── */
+.btn{padding:10px 28px;border-radius:8px;border:none;cursor:pointer;font-size:14px;font-weight:900;letter-spacing:2px;transition:all 0.15s;font-family:inherit;}
+.btn:disabled{opacity:0.35;cursor:not-allowed;transform:none!important;box-shadow:none!important;}
+.btn-primary{background:linear-gradient(135deg,#1144aa,#2266cc);color:#fff;border:2px solid #4488ff;text-shadow:1px 1px 0 #000;box-shadow:0 4px 16px #2244aa66;}
+.btn-primary:not(:disabled):hover{background:linear-gradient(135deg,#2255bb,#3377dd);box-shadow:0 4px 24px #4488ffaa;transform:translateY(-2px);}
+.btn-sm{padding:7px 14px;font-size:12px;letter-spacing:1px;}
+.btn-fb{background:linear-gradient(135deg,#660000,#aa2222);border:2px solid #ff4444;color:#fff;}
+.btn-sl{background:linear-gradient(135deg,#004400,#007700);border:2px solid #44ff88;color:#fff;}
+.btn-ch{background:linear-gradient(135deg,#4a3200,#886600);border:2px solid #ffaa00;color:#fff;}
+.btn-cb{background:linear-gradient(135deg,#000055,#1122aa);border:2px solid #6688ff;color:#fff;}
+.btn-fb:not(:disabled):hover{box-shadow:0 0 14px #ff444466;}
+.btn-sl:not(:disabled):hover{box-shadow:0 0 14px #44ff8866;}
+.btn-ch:not(:disabled):hover{box-shadow:0 0 14px #ffaa0066;}
+.btn-cb:not(:disabled):hover{box-shadow:0 0 14px #6688ff66;}
+.btn-swing{background:linear-gradient(135deg,#660044,#aa0077);border:2px solid #ff44cc;color:#fff;}
+.btn-take{background:linear-gradient(135deg,#444400,#887700);border:2px solid #ffee00;color:#fff;}
+.btn-swing:not(:disabled):hover{box-shadow:0 0 14px #ff44cc66;}
+.btn-take:not(:disabled):hover{box-shadow:0 0 14px #ffee0066;}
+.btn-next{background:linear-gradient(135deg,#224422,#336633);border:2px solid #66cc66;color:#fff;}
+
+/* ── GAME SCREEN ── */
+#screen-game{flex-direction:column;gap:8px;padding:8px;}
+.scoreboard{background:linear-gradient(90deg,#04040e,#0c0c28,#04040e);border:2px solid #4466aa;border-radius:10px;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+.score-team{font-size:14px;font-weight:900;letter-spacing:1px;}
+.score-pts{font-size:32px;font-weight:900;color:#ffee88;text-shadow:0 0 14px #ffcc44;}
+.inning-box{text-align:center;}
+.inning-label{font-size:10px;color:#778899;letter-spacing:2px;}
+.inning-val{font-size:18px;font-weight:900;color:#88ccff;}
+.count-box{display:flex;gap:14px;}
+.count-item{text-align:center;}
+.count-label{font-size:9px;color:#778899;letter-spacing:1px;}
+.count-val{font-size:20px;font-weight:900;}
+.cnt-b{color:#44cc44;}.cnt-s{color:#ff4444;}.cnt-o{color:#ffaa44;}
+
+.game-body{display:flex;gap:8px;flex:1;min-height:0;}
+.side-panel{width:175px;min-width:175px;background:rgba(0,10,30,0.7);border:1px solid #4466aa33;border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:5px;}
+.panel-title{font-size:9px;color:#667799;letter-spacing:2px;}
+.team-badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:900;letter-spacing:2px;margin-bottom:2px;}
+.player-big-name{font-size:14px;font-weight:900;letter-spacing:1px;line-height:1.2;}
+.player-year{font-size:10px;color:#88aacc;}
+.stat-row{display:flex;justify-content:space-between;font-size:10px;margin-top:1px;}
+.sn{color:#8899bb;}.sv{font-weight:900;}
+.stam-bg{height:5px;background:#111133;border-radius:3px;overflow:hidden;margin:3px 0;}
+.stam-fill{height:100%;border-radius:3px;transition:width 0.5s,background 0.5s;}
+.order-list{font-size:10px;line-height:2;}
+
+.center-panel{flex:1;display:flex;flex-direction:column;gap:8px;}
+.field-display{background:radial-gradient(ellipse at center bottom,#1a3a1a 0%,#0d1f0d 55%,#060e06 100%);border:2px solid #2a5a2a;border-radius:10px;padding:14px;display:flex;flex-direction:column;align-items:center;gap:10px;position:relative;}
+.diamond{position:relative;width:100px;height:100px;}
+.base{position:absolute;width:16px;height:16px;border:2px solid #6a9a4a;border-radius:2px;background:#1a3a1a;transform:rotate(45deg);transition:background 0.3s,box-shadow 0.3s;}
+.base.on{background:#ffcc44;border-color:#ffee88;box-shadow:0 0 10px #ffcc44;}
+.base-2b{top:0;left:42px;}.base-1b{right:0;top:42px;}.base-3b{left:0;top:42px;}.base-home{bottom:0;left:42px;}
+.outs-row{display:flex;gap:6px;}
+.out-pip{width:12px;height:12px;border-radius:50%;border:2px solid #ff6622;background:#111;}
+.out-pip.on{background:#ff6622;box-shadow:0 0 8px #ff6622;}
+.pitch-line{font-size:13px;text-align:center;min-height:36px;display:flex;align-items:center;justify-content:center;color:#aabbdd;}
+.result-line{font-size:26px;font-weight:900;text-align:center;letter-spacing:4px;min-height:44px;display:flex;align-items:center;justify-content:center;text-shadow:2px 2px 0 #000;}
+.guess-line{font-size:11px;color:#88aaff;text-align:center;min-height:16px;}
+
+.action-panel{background:rgba(0,5,20,0.85);border:2px solid #4466aa;border-radius:10px;padding:10px 14px;flex-shrink:0;}
+.action-title{font-size:10px;color:#667799;letter-spacing:3px;margin-bottom:6px;}
+.action-msg{font-size:12px;color:#aabbdd;min-height:28px;line-height:1.6;}
+.action-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;}
+
+/* ── GAME OVER ── */
+#screen-gameover{flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:40px;}
+.winner-text{font-size:46px;font-weight:900;letter-spacing:6px;text-shadow:0 0 40px currentColor,2px 2px 0 #000;}
+.final-score{font-size:30px;font-weight:900;color:#ffee88;text-shadow:0 0 20px #ffcc44,2px 2px 0 #000;}
+.game-summary{font-size:13px;color:#aabbdd;text-align:center;line-height:2;background:rgba(0,10,30,0.6);border:1px solid #334455;border-radius:10px;padding:14px 24px;}
+
+/* ── ANIMATIONS ── */
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+.anim-pulse{animation:pulse 0.45s ease-in-out 3;}
+.anim-blink{animation:blink 0.7s infinite;}
+
+/* ── PITCH TYPE COLORS ── */
+.c-fb{color:#ff6644;}.c-sl{color:#44ff88;}.c-ch{color:#ffaa00;}.c-cb{color:#6688ff;}
+</style>
+</head>
+<body>
+
+<!-- ==================== TITLE ==================== -->
+<div id="screen-title" class="screen active">
+  <div class="title-logo">⚾ MLB カードバトル</div>
+  <div class="title-sub">CARD BATTLE GAME</div>
+
+  <div class="team-select-area">
+    <div class="team-card" id="card-A" onclick="selectTeam('A')">
+      <div class="team-card-name" style="color:#4488ff;">⚡ チームA ／ コール軍団</div>
+      <div class="team-card-line">
+        🔥 先発: <b>Geコール 2019</b> [総合力 104]<br>
+        1番: Aaジャッジ 2022 [109]<br>
+        2番: Joベンチ 1972 [86]<br>
+        3番: イ・ジョンフ 2025 [59]
+      </div>
+    </div>
+    <div class="team-card" id="card-B" onclick="selectTeam('B')">
+      <div class="team-card-name" style="color:#ff6644;">⚡ チームB ／ シース旅団</div>
+      <div class="team-card-line">
+        🔥 先発: <b>Dyシース 2022</b> [総合力 101]<br>
+        1番: Baボンズ 2001 [133]<br>
+        2番: Joベンチ 1972 [86]<br>
+        3番: イ・ジョンフ 2025 [59]
+      </div>
+    </div>
+  </div>
+
+  <button class="btn btn-primary" id="btn-start" disabled onclick="startGame()">⚾ 試合開始（3イニング）</button>
+
+  <div class="hint-box">
+    ● <b>投手</b>は球種を選択→相手を打ち取れ！　● <b>打者</b>は球種を読んでスイング<br>
+    ● 読みが当たれば強打チャンス！　● 4ボール＝四球 / 3ストライク＝三振<br>
+    ● 3イニング後、得点の多いチームが勝利！
+  </div>
+</div>
+
+<!-- ==================== GAME ==================== -->
+<div id="screen-game" class="screen">
+
+  <!-- Scoreboard -->
+  <div class="scoreboard">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span class="score-team" id="sco-nameA">チームA</span>
+      <span class="score-pts" id="sco-a">0</span>
+    </div>
+    <div class="inning-box">
+      <div class="inning-label" id="inn-label">1回表</div>
+      <div class="inning-val" id="inn-val">⬆ 1</div>
+    </div>
+    <div class="count-box">
+      <div class="count-item"><div class="count-label">B</div><div class="count-val cnt-b" id="cnt-b">0</div></div>
+      <div class="count-item"><div class="count-label">S</div><div class="count-val cnt-s" id="cnt-s">0</div></div>
+      <div class="count-item"><div class="count-label">O</div><div class="count-val cnt-o" id="cnt-o">0</div></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span class="score-pts" id="sco-b">0</span>
+      <span class="score-team" id="sco-nameB">チームB</span>
+    </div>
+  </div>
+
+  <!-- Main area -->
+  <div class="game-body">
+
+    <!-- Pitcher panel -->
+    <div class="side-panel">
+      <div class="panel-title">🔥 投手</div>
+      <div class="team-badge" id="p-badge">HOU</div>
+      <div class="player-big-name" id="p-name">Geコール</div>
+      <div class="player-year" id="p-year">2019</div>
+      <div class="stat-row"><span class="sn">防御率</span><span class="sv" id="p-era">2.50</span></div>
+      <div class="stat-row"><span class="sn">奪三振</span><span class="sv" id="p-k">326</span></div>
+      <div class="stat-row"><span class="sn">制球</span><span class="sv" id="p-ctrl">77</span></div>
+      <div class="stat-row"><span class="sn">K能力</span><span class="sv" id="p-kab">99</span></div>
+      <div class="stat-row"><span class="sn">総合力</span><span class="sv" id="p-pow">104</span></div>
+      <div style="margin-top:5px;">
+        <div class="panel-title">スタミナ</div>
+        <div class="stam-bg"><div class="stam-fill" id="stam-fill" style="width:100%"></div></div>
+        <div style="font-size:10px;color:#88cc66;text-align:right;" id="stam-txt">100%</div>
+      </div>
+      <div style="margin-top:4px;">
+        <div class="panel-title">直前の球</div>
+        <div id="last-pitch" style="font-size:11px;color:#aabbdd;">---</div>
+      </div>
+    </div>
+
+    <!-- Center -->
+    <div class="center-panel">
+      <div class="field-display">
+        <div class="diamond">
+          <div class="base base-2b" id="base-2"></div>
+          <div class="base base-1b" id="base-1"></div>
+          <div class="base base-3b" id="base-3"></div>
+          <div class="base base-home" style="background:#2a5a2a;"></div>
+        </div>
+        <div class="outs-row">
+          <div class="out-pip" id="op1"></div>
+          <div class="out-pip" id="op2"></div>
+        </div>
+        <div class="result-line" id="result-line">⚾</div>
+        <div class="pitch-line" id="pitch-line">投手が球種を選択中...</div>
+        <div class="guess-line" id="guess-line"></div>
+      </div>
+
+      <!-- Action panel -->
+      <div class="action-panel">
+        <div class="action-title" id="act-title">◼ アクション</div>
+        <div class="action-msg" id="act-msg">試合開始！</div>
+        <div class="action-btns" id="act-btns"></div>
+      </div>
+    </div>
+
+    <!-- Batter panel -->
+    <div class="side-panel">
+      <div class="panel-title">🏏 打者</div>
+      <div class="team-badge" id="b-badge">NYY</div>
+      <div class="player-big-name" id="b-name">Aaジャッジ</div>
+      <div class="player-year" id="b-year">2022</div>
+      <div class="stat-row"><span class="sn">打率</span><span class="sv" id="b-avg">.311</span></div>
+      <div class="stat-row"><span class="sn">本塁打</span><span class="sv" id="b-hr">62</span></div>
+      <div class="stat-row"><span class="sn">ミート</span><span class="sv" id="b-meet">80</span></div>
+      <div class="stat-row"><span class="sn">パワー</span><span class="sv" id="b-pow2">109</span></div>
+      <div class="stat-row"><span class="sn">選球眼</span><span class="sv" id="b-eye">94</span></div>
+      <div class="stat-row"><span class="sn">三振耐性</span><span class="sv" id="b-kres">43</span></div>
+      <div style="margin-top:5px;">
+        <div class="panel-title">打順</div>
+        <div class="order-list" id="order-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== GAME OVER ==================== -->
+<div id="screen-gameover" class="screen">
+  <div class="winner-text" id="win-text">勝利！</div>
+  <div class="final-score" id="fin-score"></div>
+  <div class="game-summary" id="game-summary"></div>
+  <button class="btn btn-primary" onclick="goTitle()" style="margin-top:10px;">🏠 タイトルへ戻る</button>
+</div>
+
+<script>
+// ============================================================
+// CARD DATA
+// ============================================================
+const PITCHERS = {
+  cole: {
+    id:'cole', name:'Geコール', nameEn:'Gerrit Cole', year:2019, team:'HOU',
+    tc:'#002d62', ta:'#eb6e1f', power:104,
+    era:'2.50', k:326, wins:20,
+    stamina:84, ctrl:77, mental:80, kab:99, weight:69,
+    pitches:[
+      {name:'フォーシーム', type:'FB', spd:159, pwr:94, use:0.53},
+      {name:'スライダー',   type:'SL', spd:147, pwr:81, use:0.24},
+      {name:'チェンジアップ',type:'CH', spd:146, pwr:72, use:0.07},
+      {name:'カーブ',       type:'CB', spd:136, pwr:74, use:0.16},
+    ]
+  },
+  cease: {
+    id:'cease', name:'Dyシース', nameEn:'Dylan Cease', year:2022, team:'CHI',
+    tc:'#111133', ta:'#8888bb', power:101,
+    era:'2.20', k:227, wins:14,
+    stamina:78, ctrl:62, mental:83, kab:86, weight:87,
+    pitches:[
+      {name:'フォーシーム', type:'FB', spd:159, pwr:84, use:0.41},
+      {name:'スライダー',   type:'SL', spd:144, pwr:98, use:0.44},
+      {name:'カーブ',       type:'CB', spd:134, pwr:70, use:0.15},
+    ]
+  }
+};
+
+const BATTERS = {
+  bonds: {
+    id:'bonds', name:'Baボンズ', nameEn:'Barry Bonds', year:2001, team:'SAN',
+    tc:'#111133', ta:'#ff8888', power:133,
+    avg:'.328', hr:73, rbi:137,
+    meet:84, pow:132, spd:68, eye:143, kres:71,
+    pb:{FB:0, SL:0, CB:0, CH:0}
+  },
+  judge: {
+    id:'judge', name:'Aaジャッジ', nameEn:'Aaron Judge', year:2022, team:'NYY',
+    tc:'#001a55', ta:'#aaccff', power:109,
+    avg:'.311', hr:62, rbi:131,
+    meet:80, pow:109, spd:70, eye:94, kres:43,
+    pb:{FB:3, SL:3, CB:9, CH:-9}
+  },
+  bench: {
+    id:'bench', name:'Joベンチ', nameEn:'Johnny Bench', year:1972, team:'CIN',
+    tc:'#880000', ta:'#ff9999', power:86,
+    avg:'.270', hr:40, rbi:125,
+    meet:61, pow:92, spd:60, eye:91, kres:81,
+    pb:{FB:0, SL:0, CB:0, CH:0}
+  },
+  lee: {
+    id:'lee', name:'イ・ジョンフ', nameEn:'Lee Jung-hoo', year:2025, team:'SAN',
+    tc:'#111133', ta:'#88bbff', power:59,
+    avg:'.266', hr:8, rbi:55,
+    meet:70, pow:51, spd:70, eye:62, kres:88,
+    pb:{FB:-2, SL:-4, CB:-4, CH:0}
+  }
+};
+
+const TEAM_DEF = {
+  A: {name:'チームA', pitcher:'cole',  lineup:['judge','bench','lee']},
+  B: {name:'チームB', pitcher:'cease', lineup:['bonds','bench','lee']}
+};
+
+const TYPE_COLOR = {FB:'#ff6644', SL:'#44ff88', CB:'#6688ff', CH:'#ffaa00'};
+const TYPE_JP    = {FB:'ストレート', SL:'スライダー', CB:'カーブ', CH:'チェンジアップ'};
+
+// ============================================================
+// STATE
+// ============================================================
+let G = {};
+
+function newGame(pTeam) {
+  const cTeam = pTeam === 'A' ? 'B' : 'A';
+  G = {
+    playerTeam: pTeam,
+    cpuTeam: cTeam,
+    score: {A:0, B:0},
+    hits: {A:0, B:0},
+    ks: {A:0, B:0},
+    inning: 1,
+    maxInnings: 3,
+    half: 'top',         // top=A bats, bot=B bats
+    battingT: 'A',
+    pitchingT: 'B',
+    outs: 0,
+    balls: 0,
+    strikes: 0,
+    bases: [false,false,false],
+    batterIdx: {A:0, B:0},
+    stamina: {A:100, B:100},
+    pitchCount: {A:0, B:0},
+    phase: 'PITCH_SELECT',
+    selPitch: null,
+    selGuess: null,
+    swingDec: null,
+  };
+}
+
+// ============================================================
+// TITLE
+// ============================================================
+let selTeam = null;
+function selectTeam(t) {
+  selTeam = t;
+  document.getElementById('card-A').classList.toggle('selected', t==='A');
+  document.getElementById('card-B').classList.toggle('selected', t==='B');
+  document.getElementById('btn-start').disabled = false;
+}
+
+function startGame() {
+  if (!selTeam) return;
+  show('screen-game');
+  newGame(selTeam);
+  updateUI();
+  setTimeout(runPhase, 400);
+}
+
+function goTitle() {
+  show('screen-title');
+  selTeam = null;
+  document.getElementById('card-A').classList.remove('selected');
+  document.getElementById('card-B').classList.remove('selected');
+  document.getElementById('btn-start').disabled = true;
+}
+
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+// ============================================================
+// UI
+// ============================================================
+function updateUI() {
+  const {battingT, pitchingT, score, inning, half, balls, strikes, outs, bases, stamina, batterIdx} = G;
+
+  // Score
+  document.getElementById('sco-a').textContent = score.A;
+  document.getElementById('sco-b').textContent = score.B;
+  document.getElementById('cnt-b').textContent = balls;
+  document.getElementById('cnt-s').textContent = strikes;
+  document.getElementById('cnt-o').textContent = outs;
+
+  // Inning
+  const sym = half==='top' ? '⬆' : '⬇';
+  const ja  = half==='top' ? '表' : '裏';
+  document.getElementById('inn-label').textContent = inning + '回' + ja;
+  document.getElementById('inn-val').textContent   = sym + ' ' + inning;
+
+  // Outs
+  document.getElementById('op1').classList.toggle('on', outs >= 1);
+  document.getElementById('op2').classList.toggle('on', outs >= 2);
+
+  // Bases
+  [0,1,2].forEach(i => document.getElementById('base-'+(i===0?1:i===1?2:3)).classList.toggle('on', bases[i]));
+
+  // Stamina
+  const st = Math.max(0, Math.round(stamina[pitchingT]));
+  const sfill = document.getElementById('stam-fill');
+  sfill.style.width = st + '%';
+  sfill.style.background = st > 60 ? 'linear-gradient(90deg,#22cc44,#88ff66)'
+    : st > 30 ? 'linear-gradient(90deg,#cc8822,#ffcc44)'
+    : 'linear-gradient(90deg,#cc2222,#ff4444)';
+  document.getElementById('stam-txt').textContent = st + '%';
+
+  // Pitcher panel
+  const P = PITCHERS[TEAM_DEF[pitchingT].pitcher];
+  set('p-badge',  P.team);
+  set('p-name',   P.name);
+  set('p-year',   P.year + ' SEASON');
+  set('p-era',    P.era);
+  set('p-k',      P.k);
+  set('p-ctrl',   P.ctrl);
+  set('p-kab',    P.kab);
+  set('p-pow',    P.power);
+  el('p-badge').style.background = P.tc;
+  el('p-badge').style.border = '1px solid ' + P.ta;
+
+  // Batter panel
+  const bKey = TEAM_DEF[battingT].lineup[batterIdx[battingT]];
+  const B = BATTERS[bKey];
+  set('b-badge', B.team);
+  set('b-name',  B.name);
+  set('b-year',  B.year + ' SEASON');
+  set('b-avg',   B.avg);
+  set('b-hr',    B.hr);
+  set('b-meet',  B.meet);
+  set('b-pow2',  B.pow);
+  set('b-eye',   B.eye);
+  set('b-kres',  B.kres);
+  el('b-badge').style.background = B.tc;
+  el('b-badge').style.border = '1px solid ' + B.ta;
+
+  // Order list
+  const lineup = TEAM_DEF[battingT].lineup;
+  const cur = batterIdx[battingT];
+  el('order-list').innerHTML = lineup.map((id, i) => {
+    const b = BATTERS[id];
+    const active = i === cur;
+    return `<div style="${active?'color:#ffee44;font-weight:900;':'color:#5566aa;'}">`
+      + (active ? '▶ ' : '　') + (i+1) + '. ' + b.name + '</div>';
+  }).join('');
+}
+
+function el(id) { return document.getElementById(id); }
+function set(id, v) { el(id).textContent = v; }
+function setHTML(id, v) { el(id).innerHTML = v; }
+
+function showResult(txt, color) {
+  const r = el('result-line');
+  r.textContent = txt;
+  r.style.color = color;
+  r.classList.remove('anim-pulse');
+  void r.offsetWidth; // reflow
+  r.classList.add('anim-pulse');
+}
+
+function setMsg(txt, loading=false) {
+  el('act-msg').innerHTML = loading
+    ? `<span class="anim-blink">${txt}</span>` : txt;
+}
+
+function setBtns(list) {
+  const c = el('act-btns');
+  c.innerHTML = '';
+  list.forEach(b => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm ' + (b.cls||'btn-primary');
+    btn.textContent = b.label;
+    btn.onclick = b.fn;
+    c.appendChild(btn);
+  });
+}
+
+// ============================================================
+// PHASE ENGINE
+// ============================================================
+function runPhase() {
+  updateUI();
+  const isPlayerPitching = G.pitchingT === G.playerTeam;
+  const isPlayerBatting  = G.battingT  === G.playerTeam;
+
+  if (G.phase === 'PITCH_SELECT') {
+    el('result-line').textContent = '⚾';
+    el('result-line').style.color = '#fff';
+    el('result-line').classList.remove('anim-pulse');
+    el('guess-line').textContent = '';
+    el('pitch-line').textContent = '';
+    if (isPlayerPitching) {
+      phasePitchSelect();
+    } else {
+      set('act-title', '◼ CPU投手が考え中');
+      setMsg('CPU投手が球種を決定中...', true);
+      setBtns([]);
+      setTimeout(() => { G.selPitch = cpuPitch(); G.phase='BATTER_GUESS'; runPhase(); }, 900);
+    }
+
+  } else if (G.phase === 'BATTER_GUESS') {
+    if (isPlayerBatting) {
+      phaseBatterGuess();
+    } else {
+      setMsg('CPU打者が球種を読み中...', true);
+      setTimeout(() => { G.selGuess = cpuGuess(); G.phase='BATTER_ACTION'; runPhase(); }, 700);
+    }
+
+  } else if (G.phase === 'BATTER_ACTION') {
+    if (isPlayerBatting) {
+      phaseBatterAction();
+    } else {
+      setTimeout(() => { G.swingDec = cpuSwing(); resolvePitch(); }, 700);
+    }
+  }
+}
+
+function phasePitchSelect() {
+  const P = PITCHERS[TEAM_DEF[G.pitchingT].pitcher];
+  set('act-title', '⚡ 球種選択 ─ あなたが投げます');
+  setMsg('どの球種で攻める？');
+  setBtns(P.pitches.map(p => ({
+    label: p.name + ' ' + p.spd + 'km',
+    cls: 'btn-' + p.type.toLowerCase(),
+    fn: () => {
+      G.selPitch = p;
+      el('pitch-line').innerHTML = `<span style="color:${TYPE_COLOR[p.type]};font-weight:900;">${p.name}</span>　${p.spd}km/h　球威${p.pwr}`;
+      G.phase = 'BATTER_GUESS';
+      runPhase();
+    }
+  })));
+}
+
+function phaseBatterGuess() {
+  const P = PITCHERS[TEAM_DEF[G.pitchingT].pitcher];
+  const types = [...new Set(P.pitches.map(p => p.type))];
+  set('act-title', '🔮 球種を読む ─ あなたが打ちます');
+  setMsg('相手投手が何を投げてくるか読め！');
+  setBtns(types.map(t => ({
+    label: TYPE_JP[t],
+    cls: 'btn-' + t.toLowerCase(),
+    fn: () => {
+      G.selGuess = t;
+      el('guess-line').textContent = '読み: ' + TYPE_JP[t];
+      G.phase = 'BATTER_ACTION';
+      runPhase();
+    }
+  })));
+}
+
+function phaseBatterAction() {
+  set('act-title', '🏏 スイングするか見逃すか');
+  setMsg('判断せよ！');
+  setBtns([
+    {label:'🏏 スイング！', cls:'btn-swing', fn:() => { G.swingDec=true; resolvePitch(); }},
+    {label:'👁 見逃し',    cls:'btn-take',  fn:() => { G.swingDec=false; resolvePitch(); }},
+  ]);
+}
+
+// ============================================================
+// CPU AI
+// ============================================================
+function cpuPitch() {
+  const P = PITCHERS[TEAM_DEF[G.pitchingT].pitcher];
+  let r = Math.random(), cum = 0;
+  for (const p of P.pitches) { cum += p.use; if (r <= cum) return p; }
+  return P.pitches[0];
+}
+function cpuGuess() {
+  const P = PITCHERS[TEAM_DEF[G.pitchingT].pitcher];
+  const types = P.pitches.map(p => p.type);
+  return types[Math.floor(Math.random() * types.length)];
+}
+function cpuSwing() {
+  const P  = PITCHERS[TEAM_DEF[G.pitchingT].pitcher];
+  const B  = BATTERS[TEAM_DEF[G.battingT].lineup[G.batterIdx[G.battingT]]];
+  const strikeP = (P.ctrl / 100) * (G.stamina[G.pitchingT] / 100);
+  // Smart CPU: swing if likely strike + good pitch read; take otherwise
+  const guessRight = G.selGuess === G.selPitch.type;
+  const baseSwing = 0.62 + (strikeP - 0.5) * (B.eye / 100) * 0.5;
+  return Math.random() < (guessRight ? baseSwing + 0.15 : baseSwing - 0.1);
+}
+
+// ============================================================
+// PITCH RESOLUTION
+// ============================================================
+function resolvePitch() {
+  setBtns([]);
+  const P    = PITCHERS[TEAM_DEF[G.pitchingT].pitcher];
+  const bKey = TEAM_DEF[G.battingT].lineup[G.batterIdx[G.battingT]];
+  const B    = BATTERS[bKey];
+  const pitch = G.selPitch;
+  const guess = G.selGuess;
+  const swing = G.swingDec;
+  const stamMod = G.stamina[G.pitchingT] / 100;
+
+  // Stamina decay
+  G.stamina[G.pitchingT] = Math.max(0, G.stamina[G.pitchingT] - (1.5 + Math.random() * 2));
+  G.pitchCount[G.pitchingT]++;
+
+  // Strike zone
+  const strikeProb = Math.min(0.92, (P.ctrl / 100) * 0.85 * stamMod + 0.1);
+  const isStrike   = Math.random() < strikeProb;
+
+  // Show pitch
+  const pcolor = TYPE_COLOR[pitch.type] || '#fff';
+  el('pitch-line').innerHTML =
+    `<span style="color:${pcolor};font-weight:900;">${pitch.name}</span>　` +
+    `${pitch.spd}km/h　球威${pitch.pwr}　` +
+    `<span style="color:${isStrike?'#ff5544':'#4488ff'};font-weight:900;">${isStrike?'ストライク！':'ボール'}</span>`;
+
+  el('last-pitch').innerHTML = `<span style="color:${pcolor}">${pitch.name}</span> ${pitch.spd}km`;
+
+  const guessHit = (guess === pitch.type);
+  if (guessHit) el('guess-line').textContent += ' ✓ 読み的中！';
+
+  // ──── TAKE ────
+  if (!swing) {
+    if (isStrike) {
+      G.strikes++;
+      showResult('ストライク', '#ff4444');
+      if (G.strikes >= 3) { G.ks[G.battingT]++; setTimeout(() => { showResult('⚡ 三　振 ⚡','#ff4444'); setMsg(B.name + ' 三振！'); setTimeout(doOut, 1200); }, 400); return; }
+      setMsg('ストライクを見逃した！　' + countStr());
+    } else {
+      G.balls++;
+      showResult('ボール', '#4488ff');
+      if (G.balls >= 4) { setTimeout(() => { showResult('🚶 四　球','#88ffff'); setMsg(B.name + ' 四球！'); setTimeout(() => doWalk(B), 1200); }, 400); return; }
+      setMsg('ボール！　' + countStr());
+    }
+    setTimeout(nextPitch, 1000);
+    return;
+  }
+
+  // ──── SWING ────
+  const guessBonus  = guessHit ? 0.28 : -0.14;
+  const pitchBonus  = (B.pb[pitch.type] || 0) / 100;
+
+  // Miss (swing & miss → strike)
+  const missBase = Math.max(0.05, Math.min(0.78,
+    (P.kab / 100 * 0.6 - B.kres / 100 * 0.4 + 0.15) * stamMod - guessBonus * 0.4
+  ));
+  if (Math.random() < missBase) {
+    G.strikes++;
+    showResult('空　振！', '#ff6622');
+    setMsg(B.name + ' 空振り！　' + countStr());
+    if (G.strikes >= 3) { G.ks[G.battingT]++; setTimeout(() => { showResult('⚡ 三　振 ⚡','#ff4444'); setMsg(B.name + ' 三振！'); setTimeout(doOut, 1200); }, 500); return; }
+    setTimeout(nextPitch, 1000);
+    return;
+  }
+
+  // Contact
+  const hitBase = ((B.meet / 100) - (pitch.pwr / 220)) + guessBonus * 0.8 + pitchBonus;
+  const hitProb = Math.max(0.08, Math.min(0.72, hitBase + (isStrike ? 0 : -0.12)));
+  if (Math.random() > hitProb) {
+    showResult('打球アウト', '#ffaa44');
+    setMsg(B.name + ' 打ち取られた！');
+    setTimeout(doOut, 1100);
+    return;
+  }
+
+  // Hit type
+  G.hits[G.battingT]++;
+  const hrBase = (B.pow / 280 + guessBonus * 0.4 + pitchBonus * 0.3) * stamMod;
+  const hrProb = Math.max(0, Math.min(0.55, hrBase));
+  const r = Math.random();
+  if (r < hrProb) {
+    doHR(B);
+  } else if (r < hrProb + 0.04) {
+    showResult('🔥 三　塁　打！', '#ffcc44');
+    setMsg(B.name + ' 三塁打！');
+    setTimeout(() => doAdvance(3), 900);
+  } else if (r < hrProb + 0.04 + 0.15) {
+    showResult('💥 二　塁　打！', '#44ff88');
+    setMsg(B.name + ' 二塁打！');
+    setTimeout(() => doAdvance(2), 900);
+  } else {
+    showResult('✅ ヒット！', '#44ff88');
+    setMsg(B.name + ' ヒット！');
+    setTimeout(() => doAdvance(1), 900);
+  }
+}
+
+function countStr() { return `(B${G.balls} S${G.strikes} O${G.outs})`; }
+
+// ============================================================
+// GAME ACTIONS
+// ============================================================
+function doAdvance(bases) {
+  let runs = 0;
+  const nb = [...G.bases];
+  for (let i = 2; i >= 0; i--) {
+    if (!nb[i]) continue;
+    if (i + bases >= 3) { runs++; nb[i] = false; }
+    else { nb[i+bases] = true; nb[i] = false; }
+  }
+  if (bases - 1 < 3) nb[bases - 1] = true; else runs++;
+  G.bases = nb;
+  if (runs > 0) {
+    G.score[G.battingT] += runs;
+    setMsg(`${runs}点入った！　得点: ${G.score.A} - ${G.score.B}`);
+    updateUI();
+  }
+  nextAB();
+}
+
+function doHR(B) {
+  let runs = 1;
+  G.bases.forEach(b => { if (b) runs++; });
+  G.bases = [false,false,false];
+  G.score[G.battingT] += runs;
+  showResult('🚀 本 塁 打！！！', '#ff4422');
+  setMsg(`💥 ${B.name} が ${runs}点本塁打！　得点: ${G.score.A} - ${G.score.B}`);
+  updateUI();
+  setTimeout(nextAB, 1400);
+}
+
+function doOut() {
+  G.outs++;
+  if (G.outs >= 3) { setTimeout(endHalf, 600); return; }
+  nextAB();
+}
+
+function doWalk(B) {
+  const nb = [...G.bases];
+  let runs = 0;
+  if (nb[0] && nb[1] && nb[2]) { runs++; nb[2] = false; }
+  if (nb[0] && nb[1]) nb[2] = true;
+  if (nb[0]) nb[1] = true;
+  nb[0] = true;
+  G.bases = nb;
+  if (runs > 0) {
+    G.score[G.battingT] += runs;
+    setMsg(`四球で ${runs}点！　得点: ${G.score.A} - ${G.score.B}`);
+  }
+  updateUI();
+  nextAB();
+}
+
+function nextAB() {
+  G.balls   = 0;
+  G.strikes = 0;
+  G.selPitch = null;
+  G.selGuess = null;
+  G.swingDec = null;
+  const len = TEAM_DEF[G.battingT].lineup.length;
+  G.batterIdx[G.battingT] = (G.batterIdx[G.battingT] + 1) % len;
+  G.phase = 'PITCH_SELECT';
+  setTimeout(runPhase, 600);
+}
+
+function nextPitch() {
+  G.selPitch = null;
+  G.selGuess = null;
+  G.swingDec = null;
+  G.phase = 'PITCH_SELECT';
+  runPhase();
+}
+
+// ============================================================
+// INNING FLOW
+// ============================================================
+function endHalf() {
+  G.balls   = 0;
+  G.strikes = 0;
+  G.outs    = 0;
+  G.bases   = [false,false,false];
+  G.selPitch = null;
+  G.selGuess = null;
+  G.swingDec = null;
+
+  if (G.half === 'top') {
+    G.half     = 'bot';
+    G.battingT  = 'B';
+    G.pitchingT = 'A';
+    showResult('', '#fff');
+    el('pitch-line').textContent = '';
+    el('guess-line').textContent = '';
+    const lbl = G.inning + '回裏 開始！';
+    setMsg(lbl);
+    set('act-title', '◼ ' + lbl);
+    updateUI();
+    G.phase = 'PITCH_SELECT';
+    setTimeout(runPhase, 1400);
+  } else {
+    G.inning++;
+    G.half     = 'top';
+    G.battingT  = 'A';
+    G.pitchingT = 'B';
+    if (G.inning > G.maxInnings) {
+      setTimeout(endGame, 400);
+      return;
+    }
+    showResult('', '#fff');
+    el('pitch-line').textContent = '';
+    el('guess-line').textContent = '';
+    const lbl = G.inning + '回表 開始！';
+    setMsg(lbl);
+    set('act-title', '◼ ' + lbl);
+    updateUI();
+    G.phase = 'PITCH_SELECT';
+    setTimeout(runPhase, 1400);
+  }
+}
+
+// ============================================================
+// GAME END
+// ============================================================
+function endGame() {
+  show('screen-gameover');
+  const {score, playerTeam, hits, ks} = G;
+  const sA = score.A, sB = score.B;
+
+  let isPlayerWin, isTie = sA === sB;
+  if (!isTie) isPlayerWin = (playerTeam === 'A') ? sA > sB : sB > sA;
+
+  let wtxt, wcolor;
+  if (isTie) { wtxt = '引き分け！'; wcolor = '#88aaff'; }
+  else if (isPlayerWin) { wtxt = '🏆 プレイヤー勝利！'; wcolor = '#ffee44'; }
+  else { wtxt = 'CPU 勝利'; wcolor = '#ff6644'; }
+
+  el('win-text').textContent  = wtxt;
+  el('win-text').style.color  = wcolor;
+  el('fin-score').textContent = `チームA  ${sA} - ${sB}  チームB`;
+
+  const PA = PITCHERS[TEAM_DEF.A.pitcher];
+  const PB = PITCHERS[TEAM_DEF.B.pitcher];
+  el('game-summary').innerHTML =
+    `<b>${G.maxInnings}イニング終了</b><br>` +
+    `チームA 先発: ${PA.name}　安打 ${hits.A}　三振 ${ks.A}<br>` +
+    `チームB 先発: ${PB.name}　安打 ${hits.B}　三振 ${ks.B}<br><br>` +
+    `<span style="color:#88aaff">─ 使用カード ─</span><br>` +
+    TEAM_DEF.A.lineup.map(id => BATTERS[id].name + ' (' + BATTERS[id].year + ')').join('　') + '<br>' +
+    TEAM_DEF.B.lineup.map(id => BATTERS[id].name + ' (' + BATTERS[id].year + ')').join('　');
+}
+</script>
+</body>
+</html>
