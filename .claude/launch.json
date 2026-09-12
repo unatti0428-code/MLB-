@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": [".claude/static-server.js", ".", "3457"],
       "port": 3457
+    },
+    {
+      "name": "game-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "port": 3456
     }
   ]
 }

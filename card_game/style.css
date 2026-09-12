@@ -246,7 +246,8 @@ html, body {
   background: rgba(0,0,0,0.55); border-radius: 10px; overflow: hidden;
   pointer-events: none;   /* 裏のクリックを妨げない */
 }
-#pitchVideoOverlay video { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 0 26px rgba(0,0,0,0.7); }
+/* object-fit:contain で縦横比は保ったまま、動画本来の解像度が小さい場合も常にコンテナいっぱいまで拡大する */
+#pitchVideoOverlay video { width: 100%; height: 100%; object-fit: contain; box-shadow: 0 0 26px rgba(0,0,0,0.7); }
 
 /* VSカード 2枚 (左上) */
 .game-left .vs-area {
@@ -565,13 +566,28 @@ html, body {
   font-size: 13px;
   color: #c8d4ff;
 }
-/* ダイヤモンド下中央 (捕手枠の下・凡例の上): 全changeボタン。左右余白は小さめ */
-#teambuild .tb-allchange {
+/* ダイヤモンド下中央 (捕手枠の下・凡例の上): 「全30」チェック + 全changeボタン。左右余白は小さめ */
+#teambuild .tb-allchange-wrap {
   position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%);
   z-index: 21;
+  display: flex; align-items: stretch; gap: 5px;
+}
+#teambuild .tb-allchange {
   background: linear-gradient(135deg,#ff4444,#cc0000);
   padding: 5px 8px; font-size: 13px; white-space: nowrap;
 }
+#teambuild .tb-allchange:disabled { opacity: 0.65; cursor: progress; transform: none; }
+/* 「全30」チェック: 全changeボタンと同じ赤系グラデで揃える */
+#teambuild .tb-all30 {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: linear-gradient(135deg,#ff4444,#cc0000);
+  border-radius: 6px; padding: 5px 8px;
+  color: #fff; font-size: 13px; font-weight: 900; letter-spacing: 1px;
+  white-space: nowrap; cursor: pointer; user-select: none;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+#teambuild .tb-all30:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,0.4); }
+#teambuild .tb-all30 input { accent-color: #fff; cursor: pointer; margin: 0; }
 /* ダイヤモンド左下 (三塁枠の下・凡例の上): 戦力4カテゴリ評価 (投手力/攻撃力/守備力/機動力) */
 #teambuild .tb-team-ratings {
   position: absolute; left: 4px; bottom: 2px; z-index: 20;
@@ -582,6 +598,15 @@ html, body {
   pointer-events: none;   /* 表示専用。背後のクリックを妨げない */
 }
 #teambuild .tbr-row { display: flex; align-items: center; gap: 6px; }
+/* 戦力評価の物差し(基準年)の表示 + 取り直しボタン。親は pointer-events:none なのでここだけ有効化する */
+#teambuild .tbr-base {
+  pointer-events: auto; margin-top: 2px;
+  background: rgba(255,255,255,0.10); color: #c8d4ff;
+  border: 1px solid #6677cc; border-radius: 4px;
+  font-size: 10px; font-weight: 700; font-family: inherit;
+  padding: 2px 4px; cursor: pointer; white-space: nowrap; text-align: center;
+}
+#teambuild .tbr-base:hover { background: rgba(255,255,255,0.22); color: #fff; }
 #teambuild .tbr-label { font-size: 12px; font-weight: 700; color: #c8d4ff; white-space: nowrap; }
 #teambuild .tbr-score { font-size: 13px; font-weight: 900; color: #fff; min-width: 24px; text-align: right; }
 #teambuild .tbr-grade {
@@ -2672,3 +2697,86 @@ body.in-game .header-game-state { display: inline-flex; }
 .h2h-table td.h2h-win { color: #1565c0; }
 .h2h-table td.h2h-lose { color: #c0392b; }
 
+
+/* === 選手カードの「動画」ボタン (原本が無いフォールバック表示用。原本カード側は card_view.js が iframe 内へ同等のスタイルを注入する) === */
+.full-card .left-panel .cv-video-btn {
+  position: absolute; left: 8px; bottom: 6px; z-index: 7;
+  display: inline-flex; align-items: center; gap: 4px;
+  background: linear-gradient(135deg,#ff4444,#cc0000); color: #fff; border: none; border-radius: 6px;
+  padding: 4px 8px; font-size: 12px; font-weight: 900; letter-spacing: 1px; font-family: inherit;
+  cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,.6);
+}
+.full-card .left-panel .cv-video-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,.6); }
+.full-card .left-panel .cv-video-btn:disabled { background: linear-gradient(135deg,#777,#444); color: #ccc; cursor: not-allowed; opacity: .75; }
+.full-card .left-panel .cv-video-btn .cnt { background: rgba(0,0,0,.35); border-radius: 10px; padding: 0 6px; font-size: 11px; }
+
+/* === 選手固有動画のポップアップ (画面全体に半透明で重ね、動画をできるだけ大きく再生) === */
+.cv-vpop {
+  position: fixed; inset: 0; z-index: 1200;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: stretch; justify-content: stretch;
+  padding: 0;
+  animation: fadeIn 0.15s ease-out;
+}
+.cv-vpop-panel {
+  flex: 1 1 auto; width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  background: rgba(12,16,44,0.90);
+  color: #fff; overflow: hidden;
+}
+.cv-vpop-head {
+  flex: none;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px;
+  background: rgba(255,255,255,0.06); border-bottom: 1px solid rgba(102,119,204,0.6);
+}
+/* 見出しと説明文は幅が足りなければ省略(…)し、右端のボタンは必ず画面内に収める */
+.cv-vpop-head .ttl { font-size: 16px; font-weight: 900; letter-spacing: 1px; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cv-vpop-head .sub { font-size: 12px; color: #c8d4ff; margin-left: auto; white-space: nowrap; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.cv-vpop-head .cv-vpop-all, .cv-vpop-head .cv-vpop-close { flex: none; }
+.cv-vpop-close {
+  background: #aa2222; color: #fff; border: none; border-radius: 6px;
+  font-size: 13px; font-weight: 900; padding: 6px 10px; cursor: pointer; font-family: inherit;
+}
+.cv-vpop-close:hover { background: #cc3333; }
+.cv-vpop-all {
+  background: linear-gradient(135deg,#4488ff,#1144aa); color: #fff; border: none; border-radius: 6px;
+  font-size: 13px; font-weight: 900; padding: 6px 10px; cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.cv-vpop-all:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,0.4); }
+.cv-vpop-body { flex: 1 1 auto; min-height: 0; display: flex; gap: 12px; padding: 10px 12px 12px; }
+.cv-vpop-cats {
+  flex: 0 0 230px; display: flex; flex-direction: column; gap: 6px;
+  overflow-y: auto; min-height: 0;
+}
+.cv-vgroup { font-size: 12px; font-weight: 700; color: #ffd66b; margin: 4px 0 0; }
+.cv-vcat-wrap { display: flex; flex-direction: column; gap: 3px; }
+.cv-vcat {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  background: linear-gradient(135deg,#4488ff,#1144aa); color: #fff; border: none; border-radius: 6px;
+  padding: 8px 10px; font-size: 13px; font-weight: 900; letter-spacing: 0.5px; font-family: inherit;
+  cursor: pointer; text-align: left; transition: transform 0.1s, box-shadow 0.1s;
+}
+.cv-vcat:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,0.4); }
+.cv-vcat.active { background: linear-gradient(135deg,#ff4444,#cc0000); }
+.cv-vcat .cnt { background: rgba(0,0,0,0.35); border-radius: 10px; padding: 1px 7px; font-size: 11px; white-space: nowrap; }
+/* 1,2,3… の番号ボタン (その1本だけ再生) */
+.cv-vnums { display: flex; flex-wrap: wrap; gap: 4px; padding-left: 10px; }
+.cv-vnum {
+  min-width: 30px; height: 26px; padding: 0 8px;
+  background: rgba(255,255,255,0.12); color: #fff; border: 1px solid rgba(102,119,204,0.8); border-radius: 5px;
+  font-size: 13px; font-weight: 900; font-family: inherit; cursor: pointer;
+}
+.cv-vnum:hover { background: rgba(255,255,255,0.22); }
+.cv-vnum.active { background: linear-gradient(135deg,#ff4444,#cc0000); border-color: #ff8888; }
+.cv-vpop-stage { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.cv-vpop-stage video {
+  flex: 1 1 auto; min-height: 0; width: 100%; height: 100%;
+  background: #000; border-radius: 8px; object-fit: contain;
+}
+.cv-vpop-now { flex: none; font-size: 12px; color: #c8d4ff; word-break: break-all; }
+@media (max-width: 640px) {
+  .cv-vpop-body { flex-direction: column; }
+  .cv-vpop-cats { flex: none; flex-direction: row; flex-wrap: wrap; max-height: 40vh; }
+  .cv-vpop-head .sub { display: none; }
+}

@@ -18,11 +18,16 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 // 球種短縮 ⇔ 球種フル名 マッピング
 // FB=フォーシーム / 2C=ツーシーム / CT=カットボール / SL=スライダー
 // CB=カーブ / CH=チェンジアップ / SF=シンカー
+// 別名の球種は、対応する短縮コード(=打者の球種対応 pitchPoints のキー)の配列に並べる。
+//   ライジング/サイクロン … 速球系なので FB (フォーシーム) 扱い
+//   ハードスライダー       … スライダー系なので SL 扱い
+// 配列の並び順に注意: shortenPitchName は最初に一致したキーを表示名に使うため、
+//   「ハードスライダー」のような複合名は元の「スライダー」より前に置き、球種名が縮まないようにする。
 const PITCH_SHORT_TO_FULL = {
-  'FB': ['フォーシーム'],
+  'FB': ['フォーシーム','ライジング','サイクロン'],
   '2C': ['ツーシーム'],
   'CT': ['カットボール'],
-  'SL': ['スライダー'],
+  'SL': ['ハードスライダー','スライダー'],
   'CB': ['カーブ'],
   'CH': ['チェンジアップ','サークルチェンジ'],
   'SF': ['シンカー','スプリット','スプリッター','フォーク'],
@@ -97,9 +102,15 @@ const MLB_DIVISIONS = [
   { label: 'ナショナルリーグ中地区', teams: [['CHC','カブス'],['CIN','レッズ'],['MIL','ブルワーズ'],['PIT','パイレーツ'],['STL','カージナルス']] },
   { label: 'ナショナルリーグ西地区', teams: [['ARI','ダイヤモンドバックス'],['COL','ロッキーズ'],['LAD','ドジャース'],['SD','パドレス'],['SF','ジャイアンツ']] },
 ];
-// チーム選択肢の HTML (オリジナル + 地区別 optgroup)
+// 「オリジナル系」チーム: 特定球団に縛られず全選手から編成できる枠。
+//   'original'(オリジナル) と 'RCP'(レッドチリペッパー) の2つ。保存はチームごとに独立している。
+//   MLB_DIVISIONS の30球団には含めない (シーズンは30球団のみで進行する)。
+const ORIGINAL_TEAMS = { original: 'オリジナル(全選手)', RCP: 'レッドチリペッパー (RCP)' };
+function isOriginalTeam(t) { return !!t && Object.prototype.hasOwnProperty.call(ORIGINAL_TEAMS, String(t)); }
+// チーム選択肢の HTML (オリジナル系 + 地区別 optgroup)
 function teamOptionsHtml(originalLabel) {
   let html = `<option value="original">${originalLabel}</option>`;
+  html += `<option value="RCP">${ORIGINAL_TEAMS.RCP}</option>`;
   for (const div of MLB_DIVISIONS) {
     html += `<optgroup label="${div.label}">`;
     for (const [code, name] of div.teams) html += `<option value="${code}">${name} (${code})</option>`;
@@ -232,6 +243,27 @@ function init() {
   });
   updateVoiceToggleBtn();
   initVoice();
+  // セットアップの BGM ON/OFF トグル (MLB/aiuta の楽曲をランダム再生。音量は小さめで実況を邪魔しない)
+  const bgmBtn = $('#bgmToggle');
+  if (bgmBtn) bgmBtn.addEventListener('click', () => {
+    BGM_ON = !BGM_ON;
+    try { localStorage.setItem('mlb_bgm_on', BGM_ON ? '1' : '0'); } catch (e) {}
+    if (BGM_ON) startBgm(); else stopBgm();
+    updateBgmToggleBtn();
+  });
+  updateBgmToggleBtn();
+  // ブラウザの自動再生制限対策: 最初のユーザー操作(クリック/キー)でBGMの再生手続きを開始する。
+  //   一度でも開始したらリスナーを外す。バッファ待ち中(まだ再生前)の再クリックで早期再生させないため、
+  //   paused状態ではなく _bgmStarted で判定する(ユーザー操作後は遅延play()も自動再生制限に掛からない)。
+  const _bgmKick = () => {
+    startBgm();
+    if (_bgmStarted) {
+      document.removeEventListener('click', _bgmKick);
+      document.removeEventListener('keydown', _bgmKick);
+    }
+  };
+  document.addEventListener('click', _bgmKick);
+  document.addEventListener('keydown', _bgmKick);
   // 試合画面・ダイヤモンド下の 自動再生トグル (動画再生中 ▶ / 動画停止中 ■)
   const avBtn = $('#autoVideoBtn');
   if (avBtn) avBtn.addEventListener('click', toggleAutoVideo);
@@ -601,6 +633,9 @@ const TEAM_ALIASES = {
   SLN: 'STL',                            // St. Louis Cardinals
   AZ:  'ARI', ARZ: 'ARI',                // Arizona Diamondbacks
   FLA: 'MIA', FLO: 'MIA',                // Miami (旧Florida) Marlins
+  BRO: 'BAL', BLO: 'BAL',                // Brooklyn Dodgers (ジャッキー・ロビンソン等) → BAL 所属として扱う
+  LOU: 'PIT',                            // Louisville Colonels (消滅。ワグナー等の選手はPITへ移籍)
+  'ST.': 'STL',                          // 「ST. LOUIS」が途中で切れた表記 (ホーンスビー1934-37) → STL 所属として扱う
 };
 // チーム名の正規化: 末尾の所属チーム数(例 "LAD2"→"LAD")を除き、頭のローマ字のみにしたうえで別名を正式コードへ寄せる
 function normalizeTeam(t) {
@@ -608,7 +643,7 @@ function normalizeTeam(t) {
   return TEAM_ALIASES[s] || s;
 }
 function applyTeamFilter(players, team) {
-  if (team === 'original' || !team) return players;
+  if (isOriginalTeam(team) || !team) return players;
   const tag = normalizeTeam(team);
   return players.filter(p => normalizeTeam(p.team) === tag);
 }
@@ -1512,11 +1547,26 @@ function autoFillTeamBuild(opts) {
   //   マイナー選手は除外する。先発カードのマイナーがこの待ち行列経由で控え等へ流れ込み、
   //   減点比較(reservePool)を素通りして通常の中継投手より優先されるのを防ぐ。
   const leftoverStarters = mainPool.filter(p => !usedPit.has(p) && isStarterCard(p) && !isMinorPlayer(p)).sort((a, b) => starterScore(b) - starterScore(a));
-  // 抑え(1): 先発カードは除外・回復量4以上・セーブ数最大 (同数なら総合力)
+  // 抑え適性スコア: 実力(総合力)を主軸にした複合評価。
+  //   旧ロジックは「セーブ数」が第1キーで、総合力はセーブ数が同数のときしか見ていなかった。
+  //   しかしセーブ数はチームの勝ち試合数や起用法で決まる「機会」の指標であって投手の優秀さではなく、
+  //   全年代が混ざるオリジナルチームでは、セーブ機会に恵まれただけの投手が名クローザーを押しのけてしまう。
+  //   例) リベラ2008 (総合力103/39S/防1.40) は エステベス2025 (総合力83/42S/防2.45) に対し
+  //       旧: 39S < 42S だけで敗北 → 新: 113 > 91 で正しく選ばれる。
+  //   セーブ数は「抑えの経験」を表す補助点(上限+6)に留め、単独で順位を決めさせない。
+  const closerScore = (p) => {
+    const ment = (p && p.stats && Number.isFinite(p.stats['精神'])) ? p.stats['精神'] : 70;
+    const era  = getSeasonERAOf(p);
+    return ov(p)                                                    // 主軸: 総合力 (マイナーは大減点済み)
+         + Math.min(getSeasonSavesOf(p), 40) * 0.15                 // 抑え実績: 40セーブで頭打ちの +0〜6
+         + (era < 99 ? clamp((3.50 - era) * 1.5, -4, 4) : 0)        // 失点の少なさ: ±4
+         + clamp((ment - 70) * 0.06, -2, 2)                         // 勝負度胸(精神): ±2
+         + clamp((45 - getStaminaOf(p)) * 0.08, 0, 2);              // 短いイニング専門ほど有利: 0〜+2
+  };
+  // 抑え(1): 先発カードは除外・回復量4以上 → 抑え適性スコア最大
   let closer = [];
   { const rem = mainPool.filter(p => !usedPit.has(p) && !isStarterCard(p) && okRec(p));
-    // 通常選手を最優先(マイナーは穴埋めのみ) → セーブ数 → 総合力 の順
-    rem.sort((a, b) => ((isMinorPlayer(a)?1:0) - (isMinorPlayer(b)?1:0)) || getSeasonSavesOf(b) - getSeasonSavesOf(a) || ov(b) - ov(a));
+    rem.sort((a, b) => closerScore(b) - closerScore(a));
     if (rem.length) { closer = [rem[0]]; usedPit.add(rem[0]); } }
   // ===== 予備(年度違い等)を拾うヘルパ =====
   //   「年度違い予備(過去2年・総合力73以内)」を最優先(先発適性スコア順)で入れ、居なければ指定年度の余りで埋める。
@@ -1726,12 +1776,23 @@ function tbRawRatings(batters, pitchers) {
     mobility: mobSum / 9,
   };
 }
-// MLB30球団(オリジナル除く)の保存編成から校正基準(5番目に強いチーム・中央値)を作る。遅延計算でキャッシュ。
-let TB_RATING_CAL = null;
+// ===== 戦力評価の「基準」(絶対評価) =====
+// 校正アンカーを基準年(通常2025年)の30球団で作り、localStorage に保存して固定する。
+//   固定しないと、2023年など選手層の薄い年で全球団を組み直したときに基準そのものが一緒に下がり、
+//   マイナー選手だらけで明らかに弱い編成でも A・S が付いてしまう(常に「その年の中での相対評価」になる)。
+//   基準を固定すれば、どの年で編成しても基準年のチームと同じ物差しで採点される。
+const TB_RATING_BASE_KEY = 'mlb_tb_rating_base_v1';
+const TB_RATING_BASE_MIN = 20;   // 自動で基準を作るのに必要な保存済みチーム数 (少数の編成で基準が固まるのを防ぐ)
+let TB_RATING_CAL = null;        // 判定に使う校正アンカー (基準のキャッシュ)
 function tbInvalidateRatingCal() { TB_RATING_CAL = null; }
+
+// 現在 localStorage に保存されている30球団の編成から、校正アンカーの候補を作る。
+//   戻り値: { cal, teams, year } … cal=カテゴリ別アンカー / teams=使えた球団数 / year=編成の年度(最多)
 function tbComputeRatingCal() {
   const teams = MLB_DIVISIONS.flatMap(d => d.teams.map(t => t[0]));   // 30球団
   const cats = { pitching: [], offense: [], defense: [], mobility: [] };
+  const years = {};
+  let used = 0;
   for (const code of teams) {
     let tb = null;
     try { tb = getSavedTeamBuild(code, 0); } catch (e) { tb = null; }
@@ -1740,6 +1801,13 @@ function tbComputeRatingCal() {
     if (filled < 7) continue;   // ほぼ空の編成はノイズとして除外
     const r = tbRawRatings(tb.batters, tb.pitchers);
     for (const k in cats) cats[k].push(r[k]);
+    used++;
+    // 何年の編成を基準にしたのか記録する (保存データの年度フィルタ。null=指定なし)
+    try {
+      const pl = JSON.parse(localStorage.getItem(TB_STORAGE_PREFIX + code) || 'null');
+      const y = (pl && pl.year != null) ? String(pl.year) : 'none';
+      years[y] = (years[y] || 0) + 1;
+    } catch (e) { /* 年度が読めなくても基準づくりは続行する */ }
   }
   const cal = {};
   for (const k in cats) {
@@ -1749,24 +1817,62 @@ function tbComputeRatingCal() {
       ? { p5: arr[Math.min(4, arr.length - 1)], med: arr[Math.floor(arr.length / 2)] }
       : null;   // データ不足 → 素点表示
   }
-  return cal;
+  const year = Object.keys(years).sort((a, b) => years[b] - years[a])[0] || 'none';
+  return { cal, teams: used, year };
+}
+
+function tbLoadRatingBase() {
+  try {
+    const o = JSON.parse(localStorage.getItem(TB_RATING_BASE_KEY) || 'null');
+    return (o && o.cal && Object.values(o.cal).some(Boolean)) ? o : null;
+  } catch (e) { return null; }
+}
+// いま保存されている全球団の編成を「基準」として保存する。成功したら基準の情報を返す。
+function tbCaptureRatingBase() {
+  const snap = tbComputeRatingCal();
+  if (!Object.values(snap.cal).some(Boolean)) return null;   // 8球団未満 → 基準にできない
+  const base = { cal: snap.cal, teams: snap.teams, year: snap.year, savedAt: Date.now() };
+  try { localStorage.setItem(TB_RATING_BASE_KEY, JSON.stringify(base)); } catch (e) { return null; }
+  TB_RATING_CAL = base.cal;
+  return base;
+}
+// 判定に使う校正アンカーを返す。
+//   ① 保存済みの基準があればそれを使う (他の年で組み直しても動かない = 絶対評価)
+//   ② 基準が未設定で、20球団以上の編成が保存されていれば、その時点の編成を基準として自動で固定する
+//   ③ それ以外 (編成がまだ少ない) は従来どおりその場の編成から算出する (基準としては保存しない)
+function tbRatingCal() {
+  if (TB_RATING_CAL) return TB_RATING_CAL;
+  const base = tbLoadRatingBase();
+  if (base) { TB_RATING_CAL = base.cal; return TB_RATING_CAL; }
+  const snap = tbComputeRatingCal();
+  if (snap.teams >= TB_RATING_BASE_MIN && Object.values(snap.cal).some(Boolean)) {
+    try { localStorage.setItem(TB_RATING_BASE_KEY, JSON.stringify({ cal: snap.cal, teams: snap.teams, year: snap.year, savedAt: Date.now() })); } catch (e) { /* 保存できなくても評価は続行 */ }
+  }
+  TB_RATING_CAL = snap.cal;
+  return TB_RATING_CAL;
+}
+// 画面表示用の基準情報 { label, teams } (未設定なら null)
+function tbRatingBaseInfo() {
+  const b = tbLoadRatingBase();
+  if (!b) return null;
+  return { label: (b.year && b.year !== 'none') ? `${b.year}年` : '年度指定なし', teams: b.teams || 0 };
 }
 // 素点 → 校正済み点数。アンカー: 中央値のチーム→70点(B下限) / 5番目に強いチーム→90点(S下限)。
-//   → 各項目で上位5チーム前後がS(90〜100)、中位はB、下位はC以下に分布する。
+//   → 基準年の各項目で上位5チーム前後がS(90〜100)、中位はB、下位はC以下に分布する。
+//   アンカーは基準年で固定されるため、他の年で編成し直すと、その強さに応じて点数が上下する(絶対評価)。
 //   分布が密集していても換算が暴れないよう分母(p5-med)は最低6を確保 (傾きの上限≈3.3)。
 //   クランプ: 通常チーム 15〜100 / オリジナル・年代不問オールスター 15〜120 (100超=SS)。
 function tbCalibratedScore(cat, raw, allowOver) {
-  if (!TB_RATING_CAL) TB_RATING_CAL = tbComputeRatingCal();
-  const c = TB_RATING_CAL[cat];
+  const c = tbRatingCal()[cat];
   let v = raw;
   if (c) v = 70 + (raw - c.med) * 20 / Math.max(c.p5 - c.med, 6);
   return Math.max(15, Math.min(allowOver ? 120 : 100, v));
 }
-// 現在オーダーの4カテゴリ評価 (全球団相対の校正済み)。
+// 現在オーダーの4カテゴリ評価 (基準年の30球団を物差しにした絶対評価)。
 //   オリジナルチーム or 年度フィルタ「指定なし」(=年代を問わないオールスター編成) は100超え(SS)を許可する。
 function tbTeamRatings() {
   const raw = tbRawRatings((TB_STATE && TB_STATE.batters) || {}, (TB_STATE && TB_STATE.pitchers) || {});
-  const allowOver = !!(TB_STATE && (TB_STATE.team === 'original' || TB_STATE.year == null));
+  const allowOver = !!(TB_STATE && (isOriginalTeam(TB_STATE.team) || TB_STATE.year == null));
   return {
     pitching: tbCalibratedScore('pitching', raw.pitching, allowOver),
     offense:  tbCalibratedScore('offense',  raw.offense, allowOver),
@@ -1796,13 +1902,67 @@ function tbAutoFillAllOrders() {
   renderTeamBuild();
 }
 
+// 「全30」チェックの状態 (ダイヤモンドは再描画でHTMLごと作り直されるため、状態はここで保持する)
+let TB_ALL30 = false;
+
+// 「全30」+「全change」: ア・リーグ15球団 + ナ・リーグ15球団 の計30球団すべてを、
+//   画面の年度設定に従って オーダー1〜3の野手(控え込み) + 投手陣 まで自動編成し、各チームに保存する。
+//   ・保存済みのチームも作り直す (「全30」を選んだ時点で全球団の組み直しが目的のため)。
+//   ・seasonEnsureBuild と同じヘッドレス方式 (renderTeamBuild を一時的に無効化) で、
+//     30球団×3オーダー分の再描画を止めて高速に回す。最後に元のチームへ戻して1回だけ描画する。
+function tbAutoFillAllTeams() {
+  const teams = MLB_DIVISIONS.reduce((a, d) => a.concat(d.teams.map(t => t[0])), []);
+  const backTeam  = (TB_STATE && TB_STATE.team) || null;
+  const backOrder = (TB_STATE && TB_STATE.currentOrder) || 0;
+  const year      = TB_STATE ? TB_STATE.year : null;   // 年度は画面の設定を全球団に適用する
+  const _render = renderTeamBuild;
+  const _last   = localStorage.getItem(TB_LAST_TEAM_KEY);
+  const done = [], failed = [];
+  try {
+    renderTeamBuild = function () {};          // ヘッドレス化 (DOM非依存)
+    for (const t of teams) {
+      try {
+        TB_STATE = blankTeamState(t);          // 既存の保存は使わず、まっさらから組み直す
+        TB_STATE.year = year;
+        TB_STATE.currentOrder = 0;
+        tbAliasCurrentOrder();
+        tbAutoFillAllOrders();                 // オーダー1〜3の野手(控え込み) + 投手陣
+        if (saveTeamBuild()) done.push(t); else failed.push(t);
+      } catch (e) { console.error('tbAutoFillAllTeams', t, e); failed.push(t); }
+    }
+  } finally {
+    renderTeamBuild = _render;
+    if (backTeam) loadTeamBuild(backTeam);     // 元表示していたチームへ戻す
+    if (TB_STATE) { TB_STATE.currentOrder = backOrder; tbAliasCurrentOrder(); }
+    if (_last != null) localStorage.setItem(TB_LAST_TEAM_KEY, _last);
+    renderTeamBuild();
+  }
+  return { done, failed };
+}
+
+// 「全30」チェック時の全changeボタン処理 (確認 → 編成中表示 → 一括編成 → 結果通知)
+function tbRunAllTeamsChange(btn) {
+  const yLabel = (TB_STATE && TB_STATE.year != null) ? (TB_STATE.year + '年') : '年度指定なし';
+  if (!confirm('全30球団(ア・リーグ15＋ナ・リーグ15)のオーダー1・2・3の野手(控え込み)と投手陣を、\n「' + yLabel + '」の設定で自動編成し、各チームに保存します。\n\n保存済みの編成もすべて上書きされます。よろしいですか？')) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ 全30球団を編成中…';
+  // 「編成中」の表示をブラウザに描画させてから、重い一括処理に入る
+  setTimeout(() => {
+    const r = tbAutoFillAllTeams();   // 完了時に再描画されるためボタンの復帰は不要
+    alert(r.failed.length
+      ? (r.done.length + '球団を編成・保存しました。\n保存できなかったチーム: ' + r.failed.join(', ')
+         + '\n(ブラウザの保存容量超過の可能性があります)')
+      : ('全' + r.done.length + '球団の編成が完了しました。'));
+  }, 30);
+}
+
 function blankTeamState(team) {
   const orders = [];
   for (let i = 0; i < TB_ORDER_COUNT; i++) orders.push(blankOrder());
   const st = {
     team: team || 'LAD',
     // 年度フィルタ: null=指定なし。オリジナルは指定なし、その他チームは既定2025年。
-    year: (team === 'original' || !team) ? null : 2025,
+    year: (isOriginalTeam(team) || !team) ? null : 2025,
     orders,
     currentOrder: 0,
     pitchers: {
@@ -1903,7 +2063,7 @@ function tbSetYear(val) {
 function tbBatterPool() {
   let pool = getBatters();
   if (!TB_STATE) return pool;
-  if (!(TB_STATE.team === 'original' || !TB_STATE.team)) {
+  if (!(isOriginalTeam(TB_STATE.team) || !TB_STATE.team)) {
     pool = pool.filter(p => isAllTeamPlayer(p) || normalizeTeam(p.team) === normalizeTeam(TB_STATE.team));
   }
   return pool.filter(tbYearAllowed);
@@ -1911,7 +2071,7 @@ function tbBatterPool() {
 function tbPitcherPool() {
   let pool = getPitchers();
   if (!TB_STATE) return pool;
-  if (!(TB_STATE.team === 'original' || !TB_STATE.team)) {
+  if (!(isOriginalTeam(TB_STATE.team) || !TB_STATE.team)) {
     pool = pool.filter(p => isAllTeamPlayer(p) || normalizeTeam(p.team) === normalizeTeam(TB_STATE.team));
   }
   return pool.filter(tbYearAllowed);
@@ -2352,9 +2512,17 @@ function renderTbDiamond() {
   const rRows = [['投手力', ratings.pitching], ['攻撃力', ratings.offense], ['守備力', ratings.defense], ['機動力', ratings.mobility]]
     .map(([lbl, v]) => { const disp = Math.round(v); const g = tbGradeOf(disp); return `<div class="tbr-row"><span class="tbr-label">${lbl}</span><span class="tbr-score">${disp}</span><span class="tbr-grade g-${g.toLowerCase()}">${g}</span></div>`; })
     .join('');
-  html += `<div class="tb-team-ratings" title="現在のオーダーの戦力評価 (S:90〜100 A:80〜89 B:70〜79 C:60〜69 D:50〜59 E:40〜49 F:30〜39 G:〜29。100超SSはオリジナル/年代不問のオールスターのみ)">${rRows}</div>`;
-  // ダイヤモンド下中央 (捕手枠の下・凡例の上): 全changeボタン
-  html += `<button type="button" class="btn tb-allchange" title="オーダー1〜3の野手(控え込み)と投手陣を、年度設定に従ってすべて自動編成し直します">🔄 全change</button>`;
+  // 評価は「基準年の30球団」を物差しにした絶対評価。どの年の編成かが分かるよう基準を併記し、押せば取り直せる。
+  const rBase = tbRatingBaseInfo();
+  const rBaseTip = rBase
+    ? `評価の基準: ${rBase.label}の編成 (${rBase.teams}球団)\n他の年で組み直しても、この基準と比べた点数になります。\n押すと、いま保存されている全球団の編成を新しい基準にします。`
+    : '評価の基準がまだ決まっていません (20球団以上を保存すると自動で決まります)。\n押すと、いま保存されている全球団の編成を基準にします。';
+  html += `<div class="tb-team-ratings" title="現在のオーダーの戦力評価 (S:90〜100 A:80〜89 B:70〜79 C:60〜69 D:50〜59 E:40〜49 F:30〜39 G:〜29。100超SSはオリジナル/年代不問のオールスターのみ)">${rRows}<button type="button" class="tbr-base" title="${rBaseTip}">基準 ${rBase ? rBase.label : '未設定'}</button></div>`;
+  // ダイヤモンド下中央 (捕手枠の下・凡例の上): 「全30」チェック + 全changeボタン
+  html += `<div class="tb-allchange-wrap">
+    <label class="tb-all30" title="チェックを入れて全changeを押すと、ア・リーグ15球団＋ナ・リーグ15球団の全30球団を、現在の年度設定で一括自動編成して保存します"><input type="checkbox" class="tb-all30-chk"${TB_ALL30 ? ' checked' : ''}>全30</label>
+    <button type="button" class="btn tb-allchange" title="オーダー1〜3の野手(控え込み)と投手陣を、年度設定に従ってすべて自動編成し直します">🔄 全change</button>
+  </div>`;
   // ここまでが守備フィールド本体 (SVG + 9枠 + 総合力 + オーダー/年度 + 戦力評価 + 全change)。
   //   凡例と人数はフィールドの「下」(枠外) に置き、DH枠などと重ならないようにする。
   html = `<div class="tb-field">${html}</div>`;
@@ -2375,8 +2543,26 @@ function renderTbDiamond() {
     btn.addEventListener('click', () => tbSwitchOrder(parseInt(btn.dataset.order, 10)));
   });
   // 全change: オーダー1〜3の野手・控え + 投手陣を年度設定に従い全自動編成
+  // 「基準」ボタン: いま保存されている全球団の編成を、戦力評価の物差しとして固定し直す
+  const rBaseBtn = root.querySelector('.tbr-base');
+  if (rBaseBtn) rBaseBtn.addEventListener('click', () => {
+    const cur = tbRatingBaseInfo();
+    const yl = (TB_STATE && TB_STATE.year != null) ? `${TB_STATE.year}年` : '年度指定なし';
+    if (!confirm('いま保存されている全球団の編成を、戦力評価の「基準」にします。\n' +
+      (cur ? `現在の基準: ${cur.label}の編成 (${cur.teams}球団)\n` : '現在の基準: 未設定\n') +
+      `画面の年度設定は「${yl}」です。基準にしたい年の編成が保存されている状態で実行してください。\n\n` +
+      '以後、他の年で組み直しても、この基準と比べた点数(絶対評価)になります。よろしいですか？')) return;
+    const b = tbCaptureRatingBase();
+    if (!b) { alert('基準にできませんでした。\n保存済みの球団編成が少なすぎます (8球団以上必要です)。'); return; }
+    renderTeamBuild();
+    alert(`${(b.year && b.year !== 'none') ? b.year + '年' : '年度指定なし'}の編成 (${b.teams}球団) を評価の基準にしました。`);
+  });
+  // 「全30」チェック: 再描画でHTMLが作り直されるため、状態は TB_ALL30 に保持する
+  const all30 = root.querySelector('.tb-all30-chk');
+  if (all30) all30.addEventListener('change', () => { TB_ALL30 = !!all30.checked; });
   const allChg = root.querySelector('.tb-allchange');
   if (allChg) allChg.addEventListener('click', () => {
+    if (TB_ALL30) { tbRunAllTeamsChange(allChg); return; }   // 全30球団まとめて編成
     if (!confirm('オーダー1・2・3の野手(控え込み)と投手陣を、すべて自動編成で上書きします。\nよろしいですか？')) return;
     tbAutoFillAllOrders();
   });
@@ -3181,6 +3367,35 @@ function newPitcherLog(pitcher, side, inning, top) {
     earnedRuns: 0,
   };
 }
+// ============== 残スタミナ表示の据え置き (動画演出用) ==============
+// 動画演出では「結果動画が始まった瞬間」に打席結果が分かる。一方スタミナの減算は投球確定時に
+//   済んでいるため、そのまま描画すると結果が分かる前にスタミナだけ先に減って見えてしまう。
+//   そこで結果が判明するまでは投球前の残量を表示し続ける (ゲーム内部の数値は減算済みのまま)。
+let _staminaHold = null;      // { side, idx, value } 表示だけ据え置く対象
+function holdStaminaDisplay() {
+  if (!G._preStamina) return;
+  _staminaHold = G._preStamina;
+  renderPitcherCardOnly();
+}
+function releaseStaminaDisplay() {
+  if (!_staminaHold) return;
+  _staminaHold = null;
+  renderPitcherCardOnly();
+}
+// 投手カードだけを描き直す (据え置き/解除の切り替えを画面へ反映する)
+function renderPitcherCardOnly() {
+  try {
+    const el = document.querySelector('#card-pitcher');
+    if (el && G.currentPitcher) el.innerHTML = renderPitcherCard(G.currentPitcher);
+  } catch (e) { /* 表示演出のため失敗しても進行に影響させない */ }
+}
+// 表示用の残スタミナ。据え置き中で、かつ対象が今カードに出ている投手なら投球前の値を返す。
+function displayStaminaOf(info) {
+  if (_staminaHold && info && _staminaHold.side === info.side && _staminaHold.idx === info.idx) {
+    return _staminaHold.value;
+  }
+  return info.stamina;
+}
 // 現役投手と そのスタミナを取得
 function getActivePitcherInfo() {
   const ds = defenseSide();
@@ -3366,12 +3581,12 @@ function renderBroadcastComment() {
   //   (優勝やシリーズ突破が懸かる大一番なら、実際のMLB中継さながらにその重みを伝える)
   if (!res && G.pitchHistory && G.pitchHistory.length === 1) {
     el.hidden = false;
-    let opening = 'さあプレイボールだ。両先発投手の立ち上がりに注目したい。';
+    let opening = 'さあプレイボールです。両先発投手の立ち上がりに注目したい。';
     const ci = bcClinchInfo();
     if (ci) {
       const kindTxt = { ws: 'ワールドシリーズ制覇', pennant: 'リーグ優勝、そしてワールドシリーズ進出', division: '地区優勝', series: 'シリーズ突破' }[ci.kind];
       const who = (ci.away && ci.home) ? '両チームとも' : `${labelTeamJp(ci.away ? 'away' : 'home')}は`;
-      opening = `いよいよプレイボール。${who}この試合に勝てば${kindTxt}が決まる大一番…球場は試合前から異様な熱気に包まれている！`;
+      opening = `いよいよプレイボール。${who}この試合に勝てば${kindTxt}が決まる大一番…球場は試合前から異様な熱気に包まれています！`;
     }
     txtEl.textContent = opening;
     speakComment(opening);
@@ -3546,14 +3761,16 @@ function renderPitcherCard(p) {
   let staminaHtml = '';
   const info = getActivePitcherInfo();
   if (info && info.pitcher === p && !G.ended) {
+    // 動画演出中は打席結果が判明するまで投球前の残量を表示する (displayStaminaOf)
+    const shown = displayStaminaOf(info);
     // スタミナは負値もあり得るので 0..1 にクランプ
-    const ratio = info.maxStamina > 0 ? Math.max(0, info.stamina / info.maxStamina) : 0;
-    const cls = info.stamina <= 0 ? 'crit' : (info.stamina <= 15 ? 'low' : '');
+    const ratio = info.maxStamina > 0 ? Math.max(0, shown / info.maxStamina) : 0;
+    const cls = shown <= 0 ? 'crit' : (shown <= 15 ? 'low' : '');
     staminaHtml = `
       <div class="card-stamina">
         <span class="cs-lbl">スタミナ</span>
         <div class="cs-bar"><div class="cs-fill ${cls}" style="width:${(ratio*100).toFixed(1)}%"></div></div>
-        <span class="cs-num">${info.stamina}/${info.maxStamina}</span>
+        <span class="cs-num">${shown}/${info.maxStamina}</span>
       </div>
     `;
   }
@@ -4041,22 +4258,30 @@ function updateHRSummary() {
 // ============== 打席シミュレーション(1球完結) ==============
 // 球種を選択 → 1球で打席結果が決まる(ボール/ストライクカウントなし)
 // 守備が下手な選手(マイナスDRS)の エラー / 拙守。
-// 対象は野手が捕る打球のアウト (内野ゴロ/外野フライ/ライナー)。三振や犠飛は対象外。守備DRSが0以上の選手は対象外。
+// 対象は野手が捕る打球のアウト (内野ゴロ/外野フライ/ライナー)。三振や犠飛は対象外。
 // 「本来アウトになる打球がその野手に飛んだ場合」に、|DRS| に比例した確率で:
 //   ・エラー (失策で出塁/得点は非自責) = |DRS| × 0.375%  (DRS-8 → 3.0%、上限 12%)
 //   ・拙守   (本来アウト→安打扱い/得点は自責) = |DRS| × 0.125%  (DRS-8 → 1.0%、上限 4%)
 // 失策＋拙守の合計は |DRS| × 0.5% (DRS-8 → 4.0%、上限 16%) で従来どおり。
 //   内訳をエラー寄り(エラー:拙守 = 3:1)に変更 (エラー×1.5 / 拙守×0.5)。
+// DRSが0以上(好守備)の選手も、稀にエラー・拙守が起こるよう下駄を用意する。
+//   DRSが高いほど5刻みで半減し底なしに続く: エラー=0.5%×2^(-DRS/5) (DRS0→0.5%,+5→0.25%,+10→0.125%,+15→0.0625%,+20→0.03125%)
+//                                     拙守=0.2%×2^(-DRS/5) (DRS0→0.2%,+5→0.1%, +10→0.05%, +15→0.025%, +20→0.0125%)
 function maybeFieldingError(res) {
   if (!res) return;
   const FIELDED_OUTS = new Set(['GO', 'GO_SLOW', 'FO', 'LO']);
   if (!FIELDED_OUTS.has(res.outcome)) return;
   if (res.fielderIsDH || !res.fielder) return;
   const drs = res.fielderDrs || 0;
-  if (drs >= 0) return;                                       // 守備DRSがマイナスの選手のみ
-  const ad = Math.abs(drs);
-  const errProb    = Math.min(0.12, ad * 0.00375);            // エラー: |DRS|×0.375% (DRS-8 → 3.0%)
-  const clumsyProb = Math.min(0.04, ad * 0.00125);            // 拙守:   |DRS|×0.125% (DRS-8 → 1.0%)
+  let errProb, clumsyProb;
+  if (drs < 0) {
+    const ad = Math.abs(drs);
+    errProb    = Math.min(0.12, ad * 0.00375);            // エラー: |DRS|×0.375% (DRS-8 → 3.0%)
+    clumsyProb = Math.min(0.04, ad * 0.00125);            // 拙守:   |DRS|×0.125% (DRS-8 → 1.0%)
+  } else {
+    errProb    = 0.005 * Math.pow(2, -drs / 5);           // 好守備選手の下駄 (エラー)
+    clumsyProb = 0.002 * Math.pow(2, -drs / 5);           // 好守備選手の下駄 (拙守)
+  }
   const r = Math.random();
   const name = res.fielder.fullNameTop || res.fielder.nameJa || '守備陣';
   if (r < errProb) {
@@ -4079,6 +4304,16 @@ function maybeFieldingError(res) {
   // それ以外は通常アウトのまま
 }
 
+// ファインプレー判定 (ヒット性の打球をアウトに変える)。
+//   通常ルート: 乱数(0-249)+DRS×2.5 が245を超え、かつ60%の追加抽選を通過 (好DRSほど高確率)。
+//   下駄: DRSがマイナスの選手も、稀にファインプレーが起こるよう独立の小確率を追加で判定する。
+//     0.4%×2^(DRS/5) (DRSが低いほど5刻みで半減し底なしに続く: -5→0.2%, -10→0.1%, -15→0.05%)
+function checkFineplay(syubiPt01, drs) {
+  if (syubiPt01 > 245 && Math.random() < 0.6) return true;
+  if (drs < 0 && Math.random() < 0.004 * Math.pow(2, drs / 5)) return true;
+  return false;
+}
+
 // 手動で球種を選んだ際、打席結果に応じた動画(MLB/douga 配下)をゲーム左側に重ねて再生する。
 //   ・ヒット/三振/四球/エラー/ファインプレー(前回指定分) → 単独動画(イントロ無し)
 //   ・各種アウト(ゴロ/フライ/DP/ライナー/ポップ/ファール/深い飛球 等) → defopit_tou(イントロ)→結果動画
@@ -4093,6 +4328,313 @@ const STEAL_NG_VIDEOS      = ['defobat_throw', 'defobat_throw1', 'defobat_throw2
 const pickVideo = list => list[(Math.random() * list.length) | 0];
 // 動画ON/OFF (セットアップのトグルで切替。OFFなら動画を一切再生せず、自動再生バーも出さない)。
 let VIDEO_ON = true;
+// ============== バックグラウンドミュージック (BGM) ==============
+// MLB/aiuta 配下の楽曲をランダムに1曲ずつ流す。実況の読み上げに被らないよう音量は小さめ(既定12%)。
+//   1曲終わると次の曲へ自動で切替。ブラウザの自動再生制限のため、最初のユーザー操作で再生を開始する。
+//   設定はlocalStorageに保存。
+// 再生方式は2段構え:
+//   (1) Web Audio 方式(標準): MLB/aiuta_js/bgm_N.js (曲データをbase64化したJS。ツールで生成) を
+//       <script>で読み込み、曲全体をメモリに展開してから専用の音声スレッドで鳴らす。
+//       再生中のファイル読み込みが無いため、動画・実況・ディスク負荷に関係なく雑音や音飛びが起きない。
+//       (file:// では fetch で音声ファイルを直接読めないため、<script>で読める形式にしている)
+//   (2) <audio>ストリーミング方式(フォールバック): aiuta_js が無い環境(プレビューサーバ等)で使用。
+const BGM_TRACKS = [
+  '01 ＬＯＶＥ　ＬＯＶＥ　ＬＯＶＥ',
+  '01 LOVERS ROCREW　かたち　あるもの',
+  '01 LOVERS ROCREW-ハナミズキ',
+  '01 決意の朝に',
+  '02 LOVERS ROCREW　おかえり',
+  '02 LOVERS ROCREW-三日月',
+  '02 みんな空の下',
+  '02 恋におちたら',
+  '03 LOVERS ROCREW　hands',
+  '03 LOVERS ROCREW-桜',
+  '03 ここにしか咲かない花',
+  '03 ミルク',
+  '04 LOVERS ROCREW　たしかなこと',
+  '04 LOVERS ROCREW-fragile',
+  '04 赤い糸',
+  '04 楓',
+  '05 feel my soul',
+  '05 LOVERS ROCREW　等身大のラブソング',
+  '05 LOVERS ROCREW-キスして抱きしめて',
+  '05 粉雪',
+  '06 LOVERS ROCREW　Lovers Again',
+  '06 LOVERS ROCREW-ツバサ',
+  '06 Ｓｑｕａｌｌ',
+  '06 夜空のムコウ',
+  '07 ＦＩＮＡＬ　ＤＩＳＴＡＮＣＥ',
+  '07 LOVERS ROCREW　空も飛べるはず',
+  '07 LOVERS ROCREW-桜坂',
+  '07 milk tea',
+  '08 LOVERS ROCREW　キセキ',
+  '08 LOVERS ROCREW-ひと恋めぐり',
+  '08 最愛',
+  '08 瞳をとじて',
+  '09 LOVERS ROCREW- 3月9日',
+  '09 LOVERS ROCREW　蕾',
+  '09 思いがかさなるその前に…',
+  '09 長い間',
+  '10 ＥＮＤＬＥＳＳ　ＳＴＯＲＹ',
+  '10 LOVERS ROCREW-STORY',
+  '10 遥か',
+];
+const BGM_VOLUME = 0.12;    // 実況を邪魔しない小さめの音量
+const BGM_DATA_VER = 2;     // 曲データ(aiuta_js)の版。作り直したら +1 して古いキャッシュを無効にする
+let BGM_ON = (() => { try { return localStorage.getItem('mlb_bgm_on') !== '0'; } catch (e) { return true; } })();
+let _bgmMode = 'webaudio';  // 'webaudio'(標準) | 'element'(aiuta_jsが無い環境のフォールバック)
+let _bgmCtx = null;         // AudioContext (Web Audio 方式)
+let _bgmGain = null;        // 音量ノード
+let _bgmSrcNode = null;     // 再生中の AudioBufferSourceNode
+let _bgmLoading = false;    // 曲データの読込/デコード中 (多重開始防止)
+let _bgmToken = 0;          // 世代番号 (OFF切替で読込待ちの古い再生を無効化)
+let _bgmAudio = null;       // フォールバック再生用の<audio>要素(単一。使い回す)
+let _bgmLastIdx = -1;       // 直前に再生した曲(連続で同じ曲を避ける)
+let _bgmStarted = false;    // ユーザー操作後に一度でも再生開始したか
+let _bgmErr = 0;            // 連続読込エラー数(ファイルが無い環境で無限リトライを防ぐ)
+let _bgmPlayTimer = null;   // バッファ待ちの保険タイマー
+let _bgmPendingStart = null; // バッファ待ちの再生ハンドラ(曲送り時に古いリスナーを解除するため保持)
+let _bgmNextIdx = -1;       // 先読み中/済みの次曲
+let _bgmNextBuf = null;     // 先読み済みのデコード結果 (曲の切れ目で読込待ちを起こさないため)
+let _bgmPreloading = false;
+// ファイル名は日本語・全角・スペースを含むため URL エンコードして参照する
+function _bgmSrc(name) { return '../aiuta/' + encodeURIComponent(name) + '.mp3'; }
+// === Web Audio 方式 (標準) ===
+// 楽曲は全曲 44100Hz。音声処理も同じ 44100Hz で作ることで、レート変換を一切発生させない。
+//   端末既定(48000Hz等)のままだと変換処理が挟まり、環境によっては再生が約9%速くなり
+//   「キュルキュル」という歪みが出る。変換を無くすことでこれを根本的に防ぐ。
+const BGM_SAMPLE_RATE = 44100;   // 楽曲のレート (全曲44.1kHz)
+let _bgmRateInfo = '';      // 実際のレート (ボタンのツールチップに表示して確認できるようにする)
+function _bgmOfflineCtor() { return window.OfflineAudioContext || window.webkitOfflineAudioContext; }
+function ensureBgmCtx() {
+  if (_bgmCtx) return _bgmCtx;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) { _bgmMode = 'element'; return null; }   // Web Audio 非対応ブラウザはフォールバック
+  // 「再生中のレート変換をゼロにする」のが狙い。
+  //   ・事前変換(OfflineAudioContext)が使える → 音声処理は端末そのままのレートで作り、
+  //     曲データ側を鳴らす前に同じレートへ変換しておく。これで出力段の変換も消え、変換完全ゼロ。
+  //   ・使えない → 音声処理を楽曲(44.1kHz)に合わせ、少なくとも速度ズレは確実に防ぐ。
+  if (_bgmOfflineCtor()) {
+    _bgmCtx = new AC();
+  } else {
+    try { _bgmCtx = new AC({ sampleRate: BGM_SAMPLE_RATE }); }
+    catch (e) { _bgmCtx = new AC(); }               // レート指定が使えない古いブラウザは既定で作る
+  }
+  _bgmGain = _bgmCtx.createGain();
+  _bgmGain.gain.value = BGM_VOLUME;
+  _bgmGain.connect(_bgmCtx.destination);
+  return _bgmCtx;
+}
+// base64 → ArrayBuffer (デコーダに渡す生バイト列へ復元)。
+//   1曲5MB前後あり一括変換すると数百ミリ秒固まるため、1MBずつ小分けにして間で処理を譲る。
+//   (処理が長く止まると、その間に音の供給が間に合わず「プツッ」というノイズの原因になる)
+function _bgmB64ToBufAsync(b64, onOk, onErr) {
+  let bin;
+  try { bin = atob(b64); } catch (e) { onErr(); return; }
+  const u8 = new Uint8Array(bin.length);
+  const CHUNK = 1 << 20;
+  let p = 0;
+  const step = () => {
+    const end = Math.min(p + CHUNK, bin.length);
+    for (; p < end; p++) u8[p] = bin.charCodeAt(p);
+    if (p < bin.length) setTimeout(step, 0); else onOk(u8.buffer);
+  };
+  step();
+}
+// 曲データを再生レートへ「鳴らす前に」変換しておく。
+//   再生中の変換をゼロにするのが目的 (実時間の変換は雑音・音飛びの原因になりうる)。
+//   変換器が使えない/失敗した場合は元のまま返し、再生自体は継続する。
+function _bgmResampleTo(buf, rate, onDone) {
+  const OAC = _bgmOfflineCtor();
+  if (!OAC || !buf || buf.sampleRate === rate) { onDone(buf); return; }
+  try {
+    const off = new OAC(buf.numberOfChannels, Math.max(1, Math.ceil(buf.duration * rate)), rate);
+    const s = off.createBufferSource();
+    s.buffer = buf;
+    s.connect(off.destination);
+    s.start();
+    off.startRendering().then((out) => onDone(out || buf)).catch(() => onDone(buf));
+  } catch (e) { onDone(buf); }
+}
+// 曲データJS (aiuta_js/bgm_i.js) を <script> で読み込み、window.__BGM_DATA を受け取る。
+//   曲を入れ替えて作り直した際に古い内容がキャッシュから読まれないよう、版番号を付ける
+//   (aiuta_js を作り直したら BGM_DATA_VER を上げる)。
+function _bgmLoadData(i, onOk, onErr) {
+  const s = document.createElement('script');
+  s.src = '../aiuta_js/bgm_' + i + '.js?v=' + BGM_DATA_VER;
+  s.onload = () => {
+    const d = window.__BGM_DATA;
+    window.__BGM_DATA = null;
+    s.remove();
+    if (d && d.i === i && d.b64) onOk(d); else onErr();
+  };
+  s.onerror = () => { s.remove(); onErr(); };
+  document.head.appendChild(s);
+}
+// 1曲分を読み込み→全体デコードして返す。
+//   onMissing = 曲データJSが無い (aiuta_js 未生成の環境) / onBad = データが壊れている
+function _bgmFetchDecoded(i, onOk, onMissing, onBad) {
+  _bgmLoadData(i, (d) => {
+    _bgmB64ToBufAsync(d.b64, (buf) => {
+      _bgmCtx.decodeAudioData(buf)
+        .then((audioBuf) => _bgmResampleTo(audioBuf, _bgmCtx.sampleRate, onOk))   // 鳴らす前にレートを揃える
+        .catch(onBad);
+    }, onBad);
+  }, onMissing);
+}
+// 次に流す曲を裏で先読みしておく (曲の切れ目で読込・デコード待ちを発生させないため)。
+function _bgmPreloadNext() {
+  if (_bgmPreloading || _bgmNextBuf || !BGM_ON || _bgmMode !== 'webaudio' || !_bgmCtx) return;
+  const i = _bgmPickNext();   // _bgmLastIdx(再生中の曲)とは別の曲が選ばれる
+  const token = _bgmToken;
+  _bgmPreloading = true;
+  _bgmNextIdx = i;
+  _bgmFetchDecoded(i,
+    (audioBuf) => { _bgmPreloading = false; if (BGM_ON && token === _bgmToken) _bgmNextBuf = audioBuf; },
+    () => { _bgmPreloading = false; _bgmNextIdx = -1; },     // 先読み失敗は無視 (本再生側で処理)
+    () => { _bgmPreloading = false; _bgmNextIdx = -1; });
+}
+// 次の曲を再生する。先読み済みなら即座に、無ければ読み込み→全体デコード後に鳴らす。
+//   デコードが終わるまでは一切鳴らさないので、読み込み由来の音飛びは発生しない。
+function _bgmWebPlayNext() {
+  if (!BGM_ON || _bgmLoading || _bgmMode !== 'webaudio') return;
+  if (!ensureBgmCtx()) { startBgm(); return; }   // Web Audio不可 → フォールバック方式で開始し直す
+  if (_bgmNextBuf) {                              // 先読み済み → 待ち時間ゼロで再生
+    const buf = _bgmNextBuf;
+    _bgmNextBuf = null;
+    _bgmLastIdx = _bgmNextIdx;
+    _bgmNextIdx = -1;
+    _bgmStartBuffer(buf);
+    _bgmPreloadNext();
+    return;
+  }
+  const i = _bgmPickNext();
+  _bgmLastIdx = i;
+  const token = ++_bgmToken;
+  _bgmLoading = true;
+  _bgmFetchDecoded(i,
+    (audioBuf) => {
+      _bgmLoading = false;
+      if (!BGM_ON || token !== _bgmToken) return;   // デコード待ちの間にOFFにされた → 破棄
+      _bgmStartBuffer(audioBuf);
+      _bgmPreloadNext();
+    },
+    () => {
+      // 曲データJSが無い環境 (aiuta_js 未生成/プレビューサーバ等) → 従来の<audio>ストリーミングへ切替。
+      //   この方式は再生しながら読むため音飛びが起きうる。ボタン表示で判別できるようにする。
+      _bgmLoading = false;
+      _bgmMode = 'element';
+      updateBgmToggleBtn();
+      startBgm();
+    },
+    () => { _bgmLoading = false; _bgmWebNextOrGiveUp(); });
+}
+function _bgmWebNextOrGiveUp() {   // 壊れた曲データはスキップ (5曲連続失敗で諦める)
+  _bgmErr++;
+  if (BGM_ON && _bgmErr < 5) setTimeout(_bgmWebPlayNext, 600);
+}
+function _bgmStartBuffer(audioBuf) {
+  if (_bgmSrcNode) { try { _bgmSrcNode.onended = null; _bgmSrcNode.stop(); } catch (e) {} }
+  const node = _bgmCtx.createBufferSource();
+  node.buffer = audioBuf;
+  node.connect(_bgmGain);
+  node.onended = () => { if (node === _bgmSrcNode) { _bgmSrcNode = null; if (BGM_ON) _bgmWebPlayNext(); } };
+  _bgmSrcNode = node;
+  _bgmErr = 0;
+  // 実際のレートを記録 (曲と音声処理が一致していれば変換なし = 速度も音質も正常)
+  _bgmRateInfo = `曲${audioBuf.sampleRate}Hz / 再生${_bgmCtx.sampleRate}Hz`
+    + (audioBuf.sampleRate === _bgmCtx.sampleRate ? ' 一致(変換なし)' : ' ※不一致');
+  node.start();
+  updateBgmToggleBtn();   // メモリ再生で鳴っていることをボタン表示に反映
+}
+// === <audio>ストリーミング方式 (フォールバック) ===
+function _bgmPickNext() {
+  if (BGM_TRACKS.length <= 1) return 0;
+  let i;
+  do { i = (Math.random() * BGM_TRACKS.length) | 0; } while (i === _bgmLastIdx);
+  return i;
+}
+// 次の曲へ。音飛び防止のため、十分にバッファ(canplaythrough)できてから再生を開始する。
+//   動画デコードや実況読み上げと出力デバイスを奪い合う環境でも、事前バッファで途切れにくくする。
+//   遅い環境でも固まらないよう、保険タイマー(5秒)が来たら強制的に再生する。
+function _bgmPlayNext() {
+  if (!_bgmAudio || !BGM_ON) return;
+  const i = _bgmPickNext();
+  _bgmLastIdx = i;
+  // 前回のバッファ待ち(canplaythroughリスナー/保険タイマー)が残っていれば解除して二重発火を防ぐ
+  if (_bgmPendingStart) { _bgmAudio.removeEventListener('canplaythrough', _bgmPendingStart); _bgmPendingStart = null; }
+  if (_bgmPlayTimer) { clearTimeout(_bgmPlayTimer); _bgmPlayTimer = null; }
+  let started = false;
+  const startPlay = () => {
+    if (started) return;
+    started = true;
+    _bgmAudio.removeEventListener('canplaythrough', startPlay);
+    _bgmPendingStart = null;
+    if (_bgmPlayTimer) { clearTimeout(_bgmPlayTimer); _bgmPlayTimer = null; }
+    const p = _bgmAudio.play();
+    if (p && p.catch) p.catch(() => {});   // 自動再生制限や読込失敗は無視(次のユーザー操作で再挑戦)
+  };
+  _bgmPendingStart = startPlay;
+  _bgmAudio.addEventListener('canplaythrough', startPlay);   // 最後までバッファできた合図で再生
+  _bgmAudio.src = _bgmSrc(BGM_TRACKS[i]);
+  _bgmAudio.load();
+  _bgmPlayTimer = setTimeout(startPlay, 5000);               // 保険: バッファ完了通知が来なくても5秒で開始
+}
+function ensureBgm() {
+  if (_bgmAudio) return _bgmAudio;
+  _bgmAudio = new Audio();
+  _bgmAudio.volume = BGM_VOLUME;
+  _bgmAudio.loop = false;
+  _bgmAudio.preload = 'auto';   // 事前に多めにバッファさせて音飛びを防ぐ
+  _bgmAudio.addEventListener('playing', () => { _bgmErr = 0; });          // 再生できたらエラー計数をリセット
+  _bgmAudio.addEventListener('ended', _bgmPlayNext);                       // 1曲終わったら次の曲へ
+  _bgmAudio.addEventListener('error', () => {                              // 読込失敗時は少し待って次の曲へ
+    _bgmErr++;
+    if (BGM_ON && _bgmErr < 5) setTimeout(_bgmPlayNext, 600);              // 5曲連続失敗(ファイル無し環境)なら諦める
+  });
+  return _bgmAudio;
+}
+// === 入口 (再生方式で振り分け) ===
+function startBgm() {
+  if (!BGM_ON) return;
+  _bgmStarted = true;
+  _bgmErr = 0;
+  if (_bgmMode === 'webaudio') {
+    if (!ensureBgmCtx()) { startBgm(); return; }   // 非対応 → element モードに切替済みなので再入
+    if (_bgmCtx.state === 'suspended') { const p = _bgmCtx.resume(); if (p && p.catch) p.catch(() => {}); }
+    if (!_bgmSrcNode && !_bgmLoading) _bgmWebPlayNext();
+    return;
+  }
+  ensureBgm();
+  if (_bgmAudio.paused) {
+    if (!_bgmAudio.src) _bgmPlayNext();
+    else { const p = _bgmAudio.play(); if (p && p.catch) p.catch(() => {}); }
+  }
+}
+function stopBgm() {
+  if (_bgmMode === 'webaudio') {
+    _bgmToken++;   // 読込/デコード待ちの再生・先読みを無効化
+    _bgmNextBuf = null; _bgmNextIdx = -1;   // 先読み済みバッファを解放 (メモリを抱え込まない)
+    if (_bgmSrcNode) { try { _bgmSrcNode.onended = null; _bgmSrcNode.stop(); } catch (e) {} _bgmSrcNode = null; }
+    if (_bgmCtx) { const p = _bgmCtx.suspend(); if (p && p.catch) p.catch(() => {}); }
+    return;
+  }
+  if (_bgmAudio) { try { _bgmAudio.pause(); } catch (e) {} }
+}
+// ボタン表示。再生方式が分かるようにする:
+//   「BGM ON」        = メモリ再生 (音飛びしない正常な方式)
+//   「BGM ON(簡易)」  = <audio>ストリーミング (aiuta_js が読めず音飛びしうる状態)
+function updateBgmToggleBtn() {
+  const btn = document.querySelector('#bgmToggle');
+  if (!btn) return;
+  const fallback = (_bgmMode === 'element');
+  btn.textContent = BGM_ON ? (fallback ? 'BGM ON(簡易)' : 'BGM ON') : 'BGM OFF';
+  btn.title = fallback
+    ? '簡易再生中: 曲データ(aiuta_js)が読めないため、再生しながら読み込む方式です。音飛びが起きることがあります。'
+    : 'メモリ再生: 曲全体を読み込んでから鳴らすため、音飛びしません。' + (_bgmRateInfo ? '\n' + _bgmRateInfo : '');
+  btn.classList.toggle('video-on', BGM_ON);
+  btn.classList.toggle('video-off', !BGM_ON);
+}
 // ============== 実況アナウンス (音声合成) ==============
 // ONの間は試合動画をミュートし、実況テロップの文章をブラウザの日本語音声で読み上げる。
 //   Web Speech API (OS付属の音声) を使うため、外部サービスやAPIキーは不要。設定はlocalStorageに保存。
@@ -4165,6 +4707,13 @@ const SPEECH_WORD_READ = {
   '打ち頃': 'うちごろ',
   '上手く': 'うまく',
   '際どい球': 'きわどいたま',
+  '甘い球': 'あまいたま',        // 「球」を「たま」と読ませる (「きゅう」の誤読回避)
+  '嫌な入り': 'いやなはいり',    // 「入り」を「はいり」と読ませる (「いり」の誤読回避)
+  '一振り': 'ひとふり',          // 「いっしん」等の誤読回避
+  '狙い球': 'ねらいだま',        // 「球」を「たま」と読ませる (「きゅう」の誤読回避)
+  '大勢': 'たいせい',            // 「おおぜい」の誤読回避 (ここでは「試合の趨勢」の意味)
+  '紙一重': 'かみひとえ',
+  '不規則に揺れる': 'ふきそくにゆれる',
   '弾き返した': 'はじきかえした',
   '好守備': 'こうしゅび',
   '好位置': 'こういち',
@@ -4178,6 +4727,29 @@ const SPEECH_WORD_READ = {
 };
 // 小数部を1桁ずつ読む (17 → 「いちなな」。「じゅうなな」と読ませない)
 const _digitsReading = d => String(d).split('').map(x => _SPEECH_DIGIT[+x] || x).join('');
+// 整数の位取りを完全にひらがなで読む (例: 125 → 「ひゃくにじゅうご」)。
+//   合成音声は3桁以上の数字を桁通りに読まないことがあるため、打点等の集計数値は明示的に読みを与える。
+//   百/千の音便(三百→さんびゃく 等)のみ適用。助数詞側の音便(一勝→いっしょう 等)は
+//   語ごとに例外が多く誤変換のリスクがあるため対象外(必要な語があれば個別に辞書へ追加する)。
+function _kanjiNumReading(n) {
+  n = Math.floor(Math.abs(n));
+  if (n === 0) return _SPEECH_DIGIT[0];
+  const man = Math.floor(n / 10000); n %= 10000;
+  const sen = Math.floor(n / 1000); n %= 1000;
+  const hyaku = Math.floor(n / 100); n %= 100;
+  const juu = Math.floor(n / 10); n %= 10;
+  const ichi = n;
+  let s = '';
+  if (man)   s += (man === 1 ? '' : _SPEECH_DIGIT[man]) + 'まん';
+  if (sen)   s += (sen === 1 ? 'せん' : sen === 3 ? 'さんぜん' : sen === 8 ? 'はっせん' : _SPEECH_DIGIT[sen] + 'せん');
+  if (hyaku) s += (hyaku === 1 ? 'ひゃく' : hyaku === 3 ? 'さんびゃく' : hyaku === 6 ? 'ろっぴゃく' : hyaku === 8 ? 'はっぴゃく' : _SPEECH_DIGIT[hyaku] + 'ひゃく');
+  if (juu)   s += (juu === 1 ? 'じゅう' : _SPEECH_DIGIT[juu] + 'じゅう');
+  if (ichi)  s += _SPEECH_DIGIT[ichi];
+  return s;
+}
+// 集計数値+助数詞の組み合わせ(例: 125打点/33本塁打/8勝)を _kanjiNumReading で読み上げる対象の助数詞。
+const _STAT_COUNTER_WORDS = ['打点', '本塁打', '盗塁', '勝', '敗', 'セーブ', 'ホールド', '奪三振', '安打', '打数', '打席', '号'];
+const _STAT_COUNTER_RE = new RegExp(`(\\d+)(${_STAT_COUNTER_WORDS.join('|')})`, 'g');
 // 打率の読み: .311 → 「さんわりいちぶいちりん」 / .297 → 「にわりくぶななりん」。
 //   「3割1分1厘」と漢字で渡すと合成音声が「分」を「ふん」と誤読するため、ひらがなで読みを与える。
 //   「9分」は「九分九厘(くぶくりん)」等の慣用と同じく「きゅうぶ」でなく「くぶ」と読む。
@@ -4212,6 +4784,7 @@ function speechText(text) {
     .replace(/(\d+)\s*km\/h/gi, '$1キロ')
     .replace(/打率\s*(?:0?\.)(\d)(\d)(\d)/g, (m, a, b, c) => '打率' + _avgReading(a, b, c))
     .replace(/防御率\s*(\d+)\.(\d+)/g, (m, i, d) => `防御率${i}点${_digitsReading(d)}`)
+    .replace(_STAT_COUNTER_RE, (m, num, word) => _kanjiNumReading(+num) + word)   // 125打点→ひゃくにじゅうごだてん 等
     .replace(/(\d)巡目/g, (m, d) => `${_SPEECH_DIGIT[+d]}じゅんめ`)   // 打順の巡目 (例: 3巡目→さんじゅんめ)
     .replace(/[1一]死/g, 'いっし').replace(/[2二]死/g, 'にし').replace(/無死/g, 'むし')   // 「いちし」等の誤読防止
     // 残った小数(OPS等)も1桁ずつ読ませる: .848/0.848 → れいてんはちよんはち、2.17 → 2点いちなな
@@ -4333,38 +4906,13 @@ function effectiveFielderPos(res) {
   if (outcome === 'LO' && pos === 'C') { const opts = ['SS', '2B', '3B', '1B']; pos = opts[Math.min(opts.length - 1, Math.floor(rnd * opts.length))]; }
   return pos;
 }
-// 選手別動画: 打者カードの fullNameTop (例 "Aaジャッジ") → 動画ファイル接頭辞。
-//   対応が無い選手/カテゴリは従来通り defobat_ 系にフォールバックする。格納先は同じ MLB/douga/。
-const PLAYER_VIDEO_PREFIX = {
-  'Aaジャッジ': 'judge',
-  'Jaチゾム': 'chisholm',
-  'Trグリシャム': 'grisham',
-  'Coベリンジャー': 'bellinger',
-  'Anボルピー': 'volpe',
-};
-// 選手別動画のカテゴリ毎バリエーション数 (1=固定で毎回同じ、2以上=ランダム choice)。
-//   box=打者登場 / hr,2b,if1b,rbi,1b,fb,miss=打席結果 / ste,throw=盗塁成功/失敗。
-//   カテゴリが無い(0扱い)場合は defobat_ にフォールバックする。
-const PLAYER_VIDEO_VARIANTS = {
-  judge:     { box: 1, hr: 2, '2b': 1, if1b: 1, rbi: 1, '1b': 2, fb: 2 },
-  chisholm:  { box: 1, hr: 2, '2b': 1, if1b: 1, rbi: 1, '1b': 2, fb: 1 },
-  grisham:   { box: 1, hr: 2, '2b': 1, if1b: 1, rbi: 1, '1b': 2, fb: 1 },
-  bellinger: { box: 1, hr: 2, '2b': 1, if1b: 1, rbi: 1, '1b': 2, fb: 1 },
-  volpe:     { box: 2, hr: 2, '2b': 1, if1b: 1, rbi: 1, '1b': 2, fb: 1, ste: 1 },
-};
-// 投手別動画: 投手カードの fullNameTop (例 "Maフリード") → 動画ファイル接頭辞。
-//   対応が無い投手は従来通り defopit_ 系にフォールバックする。格納先は同じ MLB/douga/。
-const PITCHER_VIDEO_PREFIX = {
-  'Maフリード': 'fried',
-  'Caロドン': 'rodon',
-};
-// 投手別動画のカテゴリ毎バリエーション数 (1=固定で毎回同じ、2以上=ランダム choice)。
-//   sta=登板(マウンドへ) / tou=投球イントロ / str=三振 / nice=ファインプレー /
-//   miss=エラー(該当野手動画が無いため投手ががっかりする動画で代用)。
-const PITCHER_VIDEO_VARIANTS = {
-  fried: { sta: 1, tou: 3, str: 3, nice: 1, miss: 1 },
-  rodon: { sta: 1, tou: 3, str: 3, nice: 1, miss: 1 },
-};
+// 選手別動画テーブルは player_videos.js (window.PLAYER_VIDEOS) に切り出した。
+//   試合中の再生(game.js)と、選手カードの「動画」ボタン(card_view.js)で共有する。
+//   「動画変換リスト」更新時は player_videos.js 側を編集する。
+const PLAYER_VIDEO_PREFIX    = window.PLAYER_VIDEOS.batterPrefix;     // 打者: fullNameTop → 接頭辞
+const PLAYER_VIDEO_VARIANTS  = window.PLAYER_VIDEOS.batterVariants;   // 打者: 接頭辞 → カテゴリ毎の本数
+const PITCHER_VIDEO_PREFIX   = window.PLAYER_VIDEOS.pitcherPrefix;    // 投手: fullNameTop → 接頭辞
+const PITCHER_VIDEO_VARIANTS = window.PLAYER_VIDEOS.pitcherVariants;  // 投手: 接頭辞 → カテゴリ毎の本数
 // 選手(打者/投手)とカテゴリから動画候補リストを返す共通ヘルパー。
 //   専用動画が無ければ fallback (defobat_/defopit_系配列) をそのまま返す。
 function resolvePlayerVideoClip(player, category, fallback, prefixMap, variantMap) {
@@ -4410,7 +4958,11 @@ function batResultClip(res, runs) {
     case 'E': return { intro: false, videos: pitcherVideoClip(res.pitcher, 'miss', ['defopit_miss', 'defopit_miss1']) };            // エラー(投手ががっかりする動画)
     case 'K': return { intro: false, videos: pitcherStrikeoutClip(res.pitcher, fl, ['defopit_str', 'defopit_str1', 'defopit_str2']) }; // 三振
   }
-  if (res.fineplay) return { intro: false, videos: pitcherVideoClip(res.pitcher, 'nice', ['defopit_nice', 'defopit_nice1']) };      // ファインプレーアウト
+  if (res.fineplay) {   // ファインプレーアウト: 好守した野手本人の fp 動画があればそれを優先、無ければ投手の nice 動画にフォールバック
+    const niceFallback = pitcherVideoClip(res.pitcher, 'nice', ['defopit_nice', 'defopit_nice1']);
+    const fpFielder = res.fielderIsDH ? null : res.fielder;   // DH起用時は実際の守備者ではないため対象外(従来通り投手扱い)
+    return { intro: false, videos: playerVideoClip(fpFielder, 'fp', niceFallback) };
+  }
   // === defopit_tou(イントロ) → 結果動画 (各種アウト) ===
   //   各種アウト動画は守備側チーム(打球を処理した野手のチーム)に応じた接頭辞を使う (既定は laa_)。
   const pfx = outVideoPrefix(res);
@@ -4468,7 +5020,8 @@ function playVideoOverlay(seq, onDone) {
     const onResize = () => { freeze(); place(); };   // ウィンドウリサイズ時のみ位置を取り直す
     window.addEventListener('resize', onResize);
     let removed = false, safety = null;
-    const cleanup = () => { if (removed) return; removed = true; window.removeEventListener('resize', onResize); if (safety) clearTimeout(safety); ov.remove(); G._videoActive = false; if (onDone) onDone(); else onVideoSequenceComplete(); };
+    // 保険: 結果動画が再生できなかった場合でもスタミナ表示の据え置きを必ず解除する
+    const cleanup = () => { if (removed) return; removed = true; window.removeEventListener('resize', onResize); if (safety) clearTimeout(safety); ov.remove(); G._videoActive = false; releaseStaminaDisplay(); if (onDone) onDone(); else onVideoSequenceComplete(); };
     // 1本のクリップを再生し、終了/失敗/保険タイマーのいずれかで onClipEnd を一度だけ呼ぶ。
     //   seq の要素は ファイル名文字列 または { file, onStart } (onStart=そのクリップの再生開始時に呼ぶ
     //   コールバック。打者登場動画に合わせた実況テロップの切替などに使う)。
@@ -4517,14 +5070,20 @@ function playPitchVideo(before, opts) {
     const game = document.querySelector('#game');
     if (!game || game.classList.contains('hidden')) return;   // ゲーム画面表示中のみ
     const seq = [];
+    let resultClipQueued = false;   // 打席結果を映す動画を流すか (スタミナ表示の据え置き判定に使う)
     // 1) 打席結果の動画 (対象外なら無し)。noResult=盗塁死3アウト等で投球が無かった場合はスキップ。
     if (!(opts && opts.noResult)) {
       const clip = batResultClip(G.lastPitchResult, G.lastPitchRuns);
       if (clip && clip.videos && clip.videos.length) {
         if (clip.intro) seq.push(pickVideo(pitcherVideoClip(G.lastPitchResult && G.lastPitchResult.pitcher, 'tou', PITCH_VIDEOS)));   // アウトは投球イントロ→結果
-        seq.push(pickVideo(clip.videos));
+        // 結果動画の再生開始 = 打席結果が判明した瞬間。据え置いていたスタミナ表示をここで反映する。
+        seq.push({ file: pickVideo(clip.videos), onStart: releaseStaminaDisplay });
+        resultClipQueued = true;
       }
     }
+    // 結果動画が始まるまでは投球前の残スタミナを表示する (結果より先にスタミナだけ減って見えるのを防ぐ)。
+    //   結果動画を流さない場合(動画OFF/該当動画なし)は待つ意味がないので最新値をそのまま表示する。
+    if (VIDEO_ON && resultClipQueued) holdStaminaDisplay(); else releaseStaminaDisplay();
     // 2) 次打者への繋ぎ (試合継続中のみ)
     if (before && !G.ended) {
       if (!G._lastIntroPitcher) G._lastIntroPitcher = { home: null, away: null };
@@ -4596,6 +5155,7 @@ function autoVideoThrowNext() {
   const p = autoPick();
   if (!p) return;
   const before = { top: G.top, inning: G.inning, pitcher: G.currentPitcher };
+  G._deferRenderForVideo = true;   // 盗塁等の投球前演出があれば pitchOne 内の即時描画を止め、動画再生後に描画させる
   pitchOne(p, true);
   const events = G._prePitchEvents || [];
   G._prePitchEvents = [];
@@ -4623,8 +5183,14 @@ function playPrePitchEvents(events, i, before, noResult) {
   const next = () => playPrePitchEvents(events, i + 1, before, noResult);
   if (ev.type === 'steal') {
     renderStealFrame(ev);
-    // 盗塁動画(defobat_ste=成功/defobat_throw=失敗)の再生開始で、成否に応じた実況を出す。
-    playVideoOverlay([{ file: pickVideo(playerVideoClip(ev.runnerPlayer, ev.success ? 'ste' : 'throw', ev.success ? STEAL_OK_VIDEOS : STEAL_NG_VIDEOS)), onStart: () => showStealComment(ev) }], next);
+    // 盗塁動画の再生開始で、成否に応じた実況を出す。
+    //   成功(ste) = 走者本人が盗塁を決める映像 → 走者で探す。
+    //   失敗(throw) = 捕手が送球で走者を刺す「盗塁阻止」の映像 → 走者ではなく守備側の捕手で探す。
+    //   該当する専用動画が無ければ従来どおり共通動画(defobat_ste / defobat_throw)にフォールバックする。
+    const stealClip = ev.success
+      ? playerVideoClip(ev.runnerPlayer,  'ste',   STEAL_OK_VIDEOS)
+      : playerVideoClip(ev.catcherPlayer, 'throw', STEAL_NG_VIDEOS);
+    playVideoOverlay([{ file: pickVideo(stealClip), onStart: () => showStealComment(ev) }], next);
   } else {
     next();
   }
@@ -4704,32 +5270,50 @@ function pitchOne(pitch, isAuto) {
       G._prePitchEvents.push(Object.assign({
         type: 'steal', success: steal.success, thirdOut: steal.thirdOut,
         runnerName: steal.runnerName, catcherName: steal.catcherName, runnerPlayer: steal.runnerPlayer,
+        catcherPlayer: steal.catcherPlayer,   // 盗塁阻止(throw)動画は捕手本人で探すため
         runnerGameSB: steal.runnerGameSB,
       }, snapPrePitch()));
     }
     if (steal && steal.thirdOut) {
       switchInning();
       checkEnd();
-      renderAll();
+      // 動画再生モードで盗塁の投球前演出がこの後に控えている場合、ここで即描画すると
+      //   次打者の実況が盗塁動画より先に流れてしまう。その場合は描画を playPrePitchEvents 側に委ねる。
+      const deferForVideo = G._deferRenderForVideo && VIDEO_ON && G._prePitchEvents && G._prePitchEvents.length > 0;
+      G._deferRenderForVideo = false;
+      if (!deferForVideo) renderAll();
       G.infoNew = false;   // 表示済み → 次打席でクリア
       return;
     }
   }
   const P = G.currentPitcher, B = G.currentBatter;
+  // この投球を投げた投手を、結果を反映する前に控える。
+  //   3アウト目は applyOutcome の中で攻守交替まで進むため、その後に守備側を取り直すと
+  //   相手チームの投手になってしまう (スタミナが誤って相手投手から減る)。
+  const thrower = getActivePitcherInfo();
+  const throwerRef = thrower ? { side: thrower.side, idx: thrower.idx, stamina: thrower.stamina } : null;
   const res = decidePitchOutcome(pitch, P, B, isAuto);
   maybeFieldingError(res);  // 守備DRSがマイナスの野手: アウト→失策(出塁) を一定確率で
   G.lastPitchResult = res;  // applyOutcome / formatPlayByPlay から参照
   G.lastPitchRuns = 0;      // applyOutcome がこの打席の失点を上書き
   applyOutcome(res.outcome, pitch, isAuto);
+  // 動画演出用に投球前の残スタミナを控える (結果動画が始まるまで表示を据え置くため)。
+  //   前の打席の据え置きが残っていればここで解除する。
+  releaseStaminaDisplay();
+  G._preStamina = throwerRef ? { side: throwerRef.side, idx: throwerRef.idx, value: throwerRef.stamina } : null;
   // スタミナ調整: 球種・役別の基礎消費 + 失点 × 2 (ファインプレー時は +2 回復)
-  applyPitchStaminaDelta(res, pitch);
+  applyPitchStaminaDelta(res, pitch, throwerRef);
   applyStarterStaminaBonus();   // 低スタミナ先発の好投ボーナス (継投判断の前に反映して延命させる)
   checkRelief();
   // この打席で出た全通知(継投/代打/守備固め等、switchInning/checkRelief後に確定)を履歴へ保存。
   if (G.pitchHistory && G.pitchHistory.length) {
     G.pitchHistory[G.pitchHistory.length - 1].info = G.lastInfo || '';
   }
-  renderAll();
+  // 動画再生モードでこの打席に盗塁の投球前演出がある場合、ここで即描画すると
+  //   打席結果の実況が盗塁動画より先に流れてしまう。その場合は描画を playPrePitchEvents 側に委ねる。
+  const deferForVideo = G._deferRenderForVideo && VIDEO_ON && G._prePitchEvents && G._prePitchEvents.length > 0;
+  G._deferRenderForVideo = false;
+  if (!deferForVideo) renderAll();
   G.infoNew = false;   // 表示済み → 次打席開始時にクリア(その打者限り1ターン)
 }
 
@@ -4951,7 +5535,7 @@ function decidePitchOutcome(pitch, P, B, isAuto) {
 
   // (c) 内野安打ルート
   if (naiAn > 0) {
-    if (syubiPt01 > 245 && Math.random() < 0.6) {   // ファインプレーは発生確率を3/5に抑制
+    if (checkFineplay(syubiPt01, fp_pt)) {
       // ファインプレー (バッターアウト)
       const name = fielderIsDH ? P.fullNameTop : (fielder ? fielder.fullNameTop : '守備陣');
       return { ...baseRes, outcome: 'GO', flavor: `${name}のファインプレー！アウト`, fineplay: true, staminaDelta: +2 };
@@ -4977,7 +5561,7 @@ function decidePitchOutcome(pitch, P, B, isAuto) {
 
   // (e) hitPt >= 0 ヒット枠
   if (hitPt >= 0) {
-    if (syubiPt01 > 245 && Math.random() < 0.6) {   // ファインプレーは発生確率を3/5に抑制
+    if (checkFineplay(syubiPt01, fp_pt)) {
       const name = fielderIsDH ? P.fullNameTop : (fielder ? fielder.fullNameTop : '守備陣');
       return { ...baseRes, outcome: 'FO', flavor: `${name}のファインプレー！アウト`, fineplay: true, staminaDelta: +2 };
     }
@@ -5062,8 +5646,11 @@ function getStaminaDrainPerPitch(pitchName, isStarter) {
 // 投球ごとのスタミナ反映
 //   - ファインプレー時は +2 で回復 (例外処理)
 //   - 通常時は 「球種・役割別の基礎消費 + 失点 × 2」を減算
-function applyPitchStaminaDelta(res, pitch) {
-  const info = getActivePitcherInfo();
+//   target = この投球を投げた投手 { side, idx }。3アウト目は打席結果の反映(applyOutcome)の中で
+//     攻守交替が済んでおり、この時点の「守備側の投手」は相手チームの投手になっている。
+//     そのため投球前に控えた投手を必ず指定して、投げた本人のスタミナを減らす。
+function applyPitchStaminaDelta(res, pitch, target) {
+  const info = target || getActivePitcherInfo();
   if (res && res.fineplay) {
     G.setup[info.side].pitcherStamina[info.idx] += 2;
     return;
@@ -5586,7 +6173,7 @@ function bcSmoothRetsuden(s) {
     return `${m[1]}年は${parts.join('、')}を記録`;
   }
   // 語り口調の締めだけを滑らかに置き換える (年が取れない場合など)
-  return s.replace(/という成績でシーズンを戦い抜いた$/, 'という成績を残している')
+  return s.replace(/という成績でシーズンを戦い抜いた$/, 'という成績を残しています')
           .replace(/シーズンを戦い抜いた$/, 'シーズンを送った');
 }
 // これから打席に入る場面の緊迫度を一言にする (満塁/一打サヨナラ/一打同点・逆転/2死得点圏)。該当なしは ''。
@@ -5604,19 +6191,19 @@ function bcBatterSituation() {
     const outsTxt = ['無死', '1死', '2死'][G.outs] || '';
     const hrRuns = rOn + 1;                        // 本塁打が出た場合の得点
     if (!G.top && finalFrame) {                    // 最終回以降の裏 = サヨナラ機会
-      if (deficit === 0 && rispCount > 0) return '一打サヨナラの場面だ。';
-      if (deficit > 0 && hrRuns > deficit) return '一発が出ればサヨナラ…しびれる場面だ。';
+      if (deficit === 0 && rispCount > 0) return '一打サヨナラの場面です。';
+      if (deficit > 0 && hrRuns > deficit) return '一発が出ればサヨナラ…しびれる場面です。';
     }
     if (rOn === 3) return `${outsTxt}満塁、絶好の場面で打席が回ってきた。`;
     // 相手投手陣に無安打に抑えられている終盤 → 阻止への一打席
     if (G.inning >= 7) {
       const nh = noHitBidInfo(side);
-      if (nh) return nh.perfect ? 'チームはいまだ走者すら出せていない。完全試合阻止へ、重い一打席だ。' : 'ここまでチームはノーヒット。何とか意地の一本が欲しい。';
+      if (nh) return nh.perfect ? 'チームはいまだ走者すら出せていない。完全試合阻止へ、重い一打席です。' : 'ここまでチームはノーヒット。何とか意地の一本が欲しい。';
     }
-    if (late && deficit > 0 && rispCount >= deficit) return '一打同点のチャンスだ。';
-    if (late && deficit > 0 && hrRuns === deficit) return '一発が出れば同点という場面だ。';
-    if (late && deficit > 0 && hrRuns > deficit) return '一発が出れば逆転という場面だ。';
-    if (G.outs === 2 && rispCount > 0 && Math.abs(deficit) <= 2) return '2死ながら走者は得点圏。勝負どころだ。';
+    if (late && deficit > 0 && rispCount >= deficit) return '一打同点のチャンスです。';
+    if (late && deficit > 0 && hrRuns === deficit) return '一発が出れば同点という場面です。';
+    if (late && deficit > 0 && hrRuns > deficit) return '一発が出れば逆転という場面です。';
+    if (G.outs === 2 && rispCount > 0 && Math.abs(deficit) <= 2) return '2死ながら走者は得点圏。勝負どころです。';
     return '';
   } catch (e) { return ''; }
 }
@@ -5630,11 +6217,11 @@ function bcMatchupLine(b) {
     const pn = P.fullNameTop;
     const hits = arr.filter(o => o === '1B' || o === '2B' || o === '3B' || o === 'HR').length;
     const ks = arr.filter(o => o === 'K').length;
-    if (arr.includes('HR')) return `今日はすでに${pn}から一発を放っている。バッテリーは慎重になるはずだ。`;
-    if (hits >= 2) return `今日は${pn}との対戦${arr.length}打席で${hits}安打。完全に打者のペースだ。`;
-    if (hits === 1) return `今日はこの対戦でヒットが出ている。相性は悪くない。`;
-    if (ks >= 2) return `今日は${pn}に2度三振を喫している。何とか修正したい打席だ。`;
-    if (arr.length >= 2 && !arr.includes('BB')) return `${pn}との対戦は今日${arr.length + 1}度目。そろそろ捉えたいところだ。`;
+    if (arr.includes('HR')) return `今日はすでに${pn}から一発を放っています。バッテリーは慎重になるはずです。`;
+    if (hits >= 2) return `今日は${pn}との対戦${arr.length}打席で${hits}安打。完全に打者のペースです。`;
+    if (hits === 1) return `今日はこの対戦でヒットが出ています。相性は悪くない。`;
+    if (ks >= 2) return `今日は${pn}に2度三振を喫しています。何とか修正したい打席です。`;
+    if (arr.length >= 2 && !arr.includes('BB')) return `${pn}との対戦は今日${arr.length + 1}度目。そろそろ捉えたいところです。`;
     return '';
   } catch (e) { return ''; }
 }
@@ -5653,7 +6240,7 @@ function bcSeasonLine(b) {
   if (!bits.length && ops != null && ops >= 0.85) bits.push(`OPS ${ops}`);
   if (!bits.length) return '';
   const yr = Number.isFinite(b.year) ? `${b.year}年は` : '今季は';   // カード成績は年度を明示
-  return `${yr}${bits.slice(0, 2).join('・')}の成績を残している。`;
+  return `${yr}${bits.slice(0, 2).join('・')}の成績を残しています。`;
 }
 // ============== シーズン成績を踏まえた実況 (レギュラーシーズン/ポストシーズンの手動試合のみ) ==============
 // シーズン(手動)試合の種別: 'regular' | 'postseason' | null (シーズン外・自動進行は対象外)
@@ -5770,14 +6357,14 @@ function bcSeasonBatterIntroLine(b) {
     if (kind === 'postseason') {
       // ポストシーズン: PS成績(この試合の打席分も合算)が溜まっていればそれを、序盤はレギュラーシーズンの実績を添える
       const ps = bcBatLive(b, bcPostBat(b)), rs = bcSeasonBat(b);
-      if (ps && (ps.HR || 0) >= 2) return `ポストシーズンここまで${ps.HR}本塁打と当たっている。`;
+      if (ps && (ps.HR || 0) >= 2) return `ポストシーズンここまで${ps.HR}本塁打と当たっています。`;
       if (ps && (ps.AB || 0) >= 8) {
         const avg = avgOf(ps.H, ps.AB);
-        if (avg >= 0.3) return `ポストシーズン打率${fmt3(avg)}と勝負強さを発揮している。`;
-        if (avg <= 0.15) return `ポストシーズンは打率${fmt3(avg)}と苦しんでいる。ここで一本欲しい。`;
+        if (avg >= 0.3) return `ポストシーズン打率${fmt3(avg)}と勝負強さを発揮しています。`;
+        if (avg <= 0.15) return `ポストシーズンは打率${fmt3(avg)}と苦しんでいます。ここで一本欲しい。`;
       }
-      if (rs && (rs.HR || 0) >= 20) return `レギュラーシーズン${rs.HR}本塁打の主砲。短期決戦でも怖い存在だ。`;
-      if (rs && (rs.AB || 0) >= 100 && avgOf(rs.H, rs.AB) >= 0.3) return `レギュラーシーズン打率${fmt3(avgOf(rs.H, rs.AB))}の好打者だ。`;
+      if (rs && (rs.HR || 0) >= 20) return `レギュラーシーズン${rs.HR}本塁打の主砲。短期決戦でも怖い存在です。`;
+      if (rs && (rs.AB || 0) >= 100 && avgOf(rs.H, rs.AB) >= 0.3) return `レギュラーシーズン打率${fmt3(avgOf(rs.H, rs.AB))}の好打者です。`;
       return '';
     }
     // レギュラーシーズン: 今シーズンの数字 + カード本来の実力とのペース対比。
@@ -5792,9 +6379,9 @@ function bcSeasonBatterIntroLine(b) {
     const cardHR = b.record ? pf(b.record['本塁打']) : null;
     const cardAvg = b.record ? pf(b.record['打率']) : null;
     if (prog < 0.25) {
-      if (g >= 10 && hr >= 5 && (hr / g) * 162 >= 40) return `ここまで${g}試合で早くも${hr}本のホームランを放っている。`;
-      if ((s.AB || 0) >= 25 && avg >= 0.34) return `開幕から打率${fmt3(avg)}と絶好のスタートを切っている。`;
-      if ((s.SB || 0) >= 8) return `ここまで早くも${s.SB}盗塁。相手バッテリーの脅威になっている。`;
+      if (g >= 10 && hr >= 5 && (hr / g) * 162 >= 40) return `ここまで${g}試合で早くも${hr}本のホームランを放っています。`;
+      if ((s.AB || 0) >= 25 && avg >= 0.34) return `開幕から打率${fmt3(avg)}と絶好のスタートを切っています。`;
+      if ((s.SB || 0) >= 8) return `ここまで早くも${s.SB}盗塁。相手バッテリーの脅威になっています。`;
       return '';
     }
     // 50試合以降: タイトル圏内 (リーグ上位) の順位を実況候補に加える (打率/HR/打点/盗塁/OPS 各10位以内)
@@ -5803,27 +6390,27 @@ function bcSeasonBatterIntroLine(b) {
       const sRaw = bcSeasonBat(b) || {};
       const cands = [];
       const rkAvg = bcSeasonBatRank(b, 'avg');
-      if (rkAvg >= 1 && rkAvg <= 10 && avg >= 0.27) cands.push(`今シーズン打率${fmt3(avg)}はリーグ${rkAvg}位${rkAvg <= 3 ? '。首位打者争いの中心にいる' : 'につけている'}。`);
+      if (rkAvg >= 1 && rkAvg <= 10 && avg >= 0.27) cands.push(`今シーズン打率${fmt3(avg)}はリーグ${rkAvg}位${rkAvg <= 3 ? '。首位打者争いの中心にいます' : 'につけています'}。`);
       const rkHR = bcSeasonBatRank(b, 'HR', hr - (sRaw.HR || 0));
-      if (rkHR >= 1 && rkHR <= 10 && hr >= 5) cands.push(`${hr}本塁打はリーグ${rkHR}位${rkHR <= 3 ? '。本塁打王争いを演じている' : 'につけている'}。`);
+      if (rkHR >= 1 && rkHR <= 10 && hr >= 5) cands.push(`${hr}本塁打はリーグ${rkHR}位${rkHR <= 3 ? '。本塁打王争いを演じています' : 'につけています'}。`);
       const rkRBI = bcSeasonBatRank(b, 'RBI', (s.RBI || 0) - (sRaw.RBI || 0));
       if (rkRBI >= 1 && rkRBI <= 10 && (s.RBI || 0) >= 20) cands.push(`${s.RBI}打点はリーグ${rkRBI}位。勝負強さが光る。`);
       const rkSB = bcSeasonBatRank(b, 'SB', (s.SB || 0) - (sRaw.SB || 0));
-      if (rkSB >= 1 && rkSB <= 10 && (s.SB || 0) >= 10) cands.push(`${s.SB}盗塁でリーグ${rkSB}位につける俊足だ。`);
+      if (rkSB >= 1 && rkSB <= 10 && (s.SB || 0) >= 10) cands.push(`${s.SB}盗塁でリーグ${rkSB}位につける俊足です。`);
       const rkOps = bcSeasonBatRank(b, 'ops');
-      if (rkOps >= 1 && rkOps <= 10 && bcSeasonOps(s) >= 0.75) cands.push(`OPSはリーグ${rkOps}位。攻撃力はリーグ屈指だ。`);
+      if (rkOps >= 1 && rkOps <= 10 && bcSeasonOps(s) >= 0.75) cands.push(`OPSはリーグ${rkOps}位。攻撃力はリーグ屈指です。`);
       if (cands.length && Math.random() < 0.7) return pickRand(cands);
     }
     if (hr >= 10 && cardHR != null && cardHR > 0) {
       const pace = Math.round(hr / Math.max(1, g) * 162);   // 162試合換算ペース
-      if (pace > cardHR + 5) return `今シーズン${g}試合で${hr}本塁打。本来の実力(${cardHR}本)を上回るペースで量産中だ。`;
+      if (pace > cardHR + 5) return `今シーズン${g}試合で${hr}本塁打。本来の実力(${cardHR}本)を上回るペースで量産中です。`;
       if (pace < cardHR - 10) return `今シーズンここまで${hr}本塁打。${cardHR}本を放った本来の姿からするとやや物足りない。`;
-      return `今シーズン${g}試合で${hr}本塁打と実力通りの数字だ。`;
+      return `今シーズン${g}試合で${hr}本塁打と実力通りの数字です。`;
     }
     if ((s.AB || 0) >= 30 && cardAvg != null) {
-      if (avg >= cardAvg + 0.03) return `今シーズンここまで打率${fmt3(avg)}。本来の実力を超える打棒を見せている。`;
+      if (avg >= cardAvg + 0.03) return `今シーズンここまで打率${fmt3(avg)}。本来の実力を超える打棒を見せています。`;
       if (avg <= cardAvg - 0.05) return `今シーズンここまで打率${fmt3(avg)}と本調子ではない。復調のきっかけを掴みたい。`;
-      if (avg >= 0.28) return `今シーズンここまで打率${fmt3(avg)}と安定した働きを見せている。`;
+      if (avg >= 0.28) return `今シーズンここまで打率${fmt3(avg)}と安定した働きを見せています。`;
     }
     return '';
   } catch (e) { return ''; }
@@ -5838,11 +6425,11 @@ function bcSeasonPitcherIntroLine(p) {
       const ps = bcPostPit(p), rs = bcSeasonPit(p);
       if (ps && (ps.outs || 0) >= 9) {
         const era = eraOf(ps.ER, ps.outs);
-        if (era <= 2) return `ポストシーズン防御率${fmt2(era)}と抜群の安定感だ。`;
+        if (era <= 2) return `ポストシーズン防御率${fmt2(era)}と抜群の安定感です。`;
         if ((ps.K || 0) >= 10) return `ポストシーズンすでに${ps.K}奪三振。三振の取れる投手は短期決戦で頼りになる。`;
       }
-      if (rs && (rs.W || 0) >= 12) return `レギュラーシーズン${rs.W}勝の実績を引っ提げての登板だ。`;
-      if (rs && (rs.K || 0) >= 150) return `レギュラーシーズン${rs.K}奪三振の本格派だ。`;
+      if (rs && (rs.W || 0) >= 12) return `レギュラーシーズン${rs.W}勝の実績を引っ提げての登板です。`;
+      if (rs && (rs.K || 0) >= 150) return `レギュラーシーズン${rs.K}奪三振の本格派です。`;
       return '';
     }
     // レギュラーシーズン: 序盤は好ペースの時だけ触れ、中盤以降はシーズン成績を主体にする (打者と同方針)。
@@ -5852,12 +6439,12 @@ function bcSeasonPitcherIntroLine(p) {
     const prog = bcSeasonProgress(team);
     const w = s.W || 0, sv = s.S || 0;
     // リーグトップ級の数字は時期を問わず伝える (ハーラーダービー/セーブ数)
-    if (w >= 4 && w >= bcSeasonMaxPit('W')) return `現在${w}勝で、ハーラーダービーのトップに立っている。`;
-    if (sv >= 8 && sv >= bcSeasonMaxPit('S')) return `ここまで${sv}セーブはリーグトップ。守護神として盤石の働きだ。`;
+    if (w >= 4 && w >= bcSeasonMaxPit('W')) return `現在${w}勝で、ハーラーダービーのトップに立っています。`;
+    if (sv >= 8 && sv >= bcSeasonMaxPit('S')) return `ここまで${sv}セーブはリーグトップ。守護神として盤石の働きです。`;
     if (prog < 0.25) {
-      if (sv >= 6) return `ここまで既に${sv}セーブ。守護神として見事な働きを続けている。`;
-      if (w >= 4) return `開幕から早くも${w}勝を挙げる好スタートだ。`;
-      if ((s.outs || 0) >= 12 && eraOf(s.ER, s.outs) <= 1.5) return `ここまで防御率${fmt2(eraOf(s.ER, s.outs))}と圧巻の投球が続いている。`;
+      if (sv >= 6) return `ここまで既に${sv}セーブ。守護神として見事な働きを続けています。`;
+      if (w >= 4) return `開幕から早くも${w}勝を挙げる好スタートです。`;
+      if ((s.outs || 0) >= 12 && eraOf(s.ER, s.outs) <= 1.5) return `ここまで防御率${fmt2(eraOf(s.ER, s.outs))}と圧巻の投球が続いています。`;
       return '';
     }
     // 50試合以降: タイトル圏内 (リーグ上位) の順位を実況候補に加える
@@ -5869,23 +6456,23 @@ function bcSeasonPitcherIntroLine(p) {
       const rkK = bcSeasonPitRank(p, 'K');
       if (rkK >= 1 && rkK <= 10 && (s.K || 0) >= 30) cands.push(`${s.K}奪三振はリーグ${rkK}位${rkK <= 3 ? '。奪三振王争いの真っ只中だ' : 'につけている'}。`);
       const rkW = bcSeasonPitRank(p, 'W');
-      if (rkW >= 1 && rkW <= 5 && w >= 5) cands.push(`${w}勝はリーグ${rkW}位。ハーラーダービーの上位につけている。`);
+      if (rkW >= 1 && rkW <= 5 && w >= 5) cands.push(`${w}勝はリーグ${rkW}位。ハーラーダービーの上位につけています。`);
       const rkS = bcSeasonPitRank(p, 'S');
-      if (rkS >= 1 && rkS <= 5 && sv >= 10) cands.push(`${sv}セーブはリーグ${rkS}位。守護神としての存在感は抜群だ。`);
+      if (rkS >= 1 && rkS <= 5 && sv >= 10) cands.push(`${sv}セーブはリーグ${rkS}位。守護神としての存在感は抜群です。`);
       const rkH = bcSeasonPitRank(p, 'HLD');
-      if (rkH >= 1 && rkH <= 10 && (s.HLD || 0) >= 10) cands.push(`${s.HLD}ホールドはリーグ${rkH}位。ブルペンの柱だ。`);
+      if (rkH >= 1 && rkH <= 10 && (s.HLD || 0) >= 10) cands.push(`${s.HLD}ホールドはリーグ${rkH}位。ブルペンの柱です。`);
       if (cands.length && Math.random() < 0.7) return pickRand(cands);
     }
     if ((s.outs || 0) < 15) return '';
     const era = eraOf(s.ER, s.outs);
     const cardEra = p.record ? pf(p.record['防御率']) : null;
     if (cardEra != null && cardEra > 0) {
-      if (era <= cardEra - 0.5) return `今シーズンここまで防御率${fmt2(era)}。本来の実力以上の安定感を見せている。`;
-      if (era >= cardEra + 1.5) return `今シーズンここまで防御率${fmt2(era)}と本調子ではない。今日は立て直したいところだ。`;
+      if (era <= cardEra - 0.5) return `今シーズンここまで防御率${fmt2(era)}。本来の実力以上の安定感を見せています。`;
+      if (era >= cardEra + 1.5) return `今シーズンここまで防御率${fmt2(era)}と本調子ではない。今日は立て直したいところです。`;
     }
-    if (sv >= 15) return `今シーズンここまで${sv}セーブを積み上げている。`;
-    if ((s.K || 0) >= 60) return `今シーズンここまで${s.K}個の三振を積み重ねている。`;
-    if (w >= 8) return `今シーズンすでに${w}勝をマークしている。`;
+    if (sv >= 15) return `今シーズンここまで${sv}セーブを積み上げています。`;
+    if ((s.K || 0) >= 60) return `今シーズンここまで${s.K}個の三振を積み重ねています。`;
+    if (w >= 8) return `今シーズンすでに${w}勝をマークしています。`;
     return '';
   } catch (e) { return ''; }
 }
@@ -5899,8 +6486,8 @@ function bcSeasonHrNote(B, bStat) {
     if (kind === 'postseason') {
       const num = (((bcPostBat(B) || {}).HR) || 0) + ((bStat && bStat.HR) || 0);
       const rsHR = ((bcSeasonBat(B) || {}).HR) || 0;
-      if (num >= 2 && rsHR >= 20) return `ポストシーズンこれで${num}本目のホームラン！レギュラーシーズン${rsHR}本の好調さをそのまま持ち込んでいる！`;
-      if (num >= 2) return `これでポストシーズン${num}本目のホームランだ！`;
+      if (num >= 2 && rsHR >= 20) return `ポストシーズンこれで${num}本目のホームラン！レギュラーシーズン${rsHR}本の好調さをそのまま持ち込んでいます！`;
+      if (num >= 2) return `これでポストシーズン${num}本目のホームランです！`;
       if (rsHR >= 20) return `レギュラーシーズン${rsHR}本塁打の実力を短期決戦でも見せつけた！`;
       return '';
     }
@@ -5912,13 +6499,13 @@ function bcSeasonHrNote(B, bStat) {
     const team = G.seasonCtx ? (G.top ? G.seasonCtx.away : G.seasonCtx.home) : null;
     if (team && seasonTeamGames(team) >= 50 && num >= 10) {
       const rk = bcSeasonBatRank(B, 'HR', (bStat && bStat.HR) || 0);
-      if (rk >= 1 && rk <= 3) return `これで今シーズン${num}号！リーグ${rk}位、本塁打王争いに堂々名乗りを上げる一発だ！`;
-      if (rk >= 4 && rk <= 10) return `これで今シーズン${num}号！本塁打ランキングでリーグ${rk}位につけている！`;
+      if (rk >= 1 && rk <= 3) return `これで今シーズン${num}号！リーグ${rk}位、本塁打王争いに堂々名乗りを上げる一発です！`;
+      if (rk >= 4 && rk <= 10) return `これで今シーズン${num}号！本塁打ランキングでリーグ${rk}位につけています！`;
     }
     if (num >= 10 && cardHR != null && cardHR > 0 && Math.round(num / games * 162) > cardHR + 5)
-      return `今シーズン${games}試合でこれが${num}号！本来の実力(${cardHR}本)を上回るペースだ！`;
-    if (num >= 30) return `今シーズン${num}本塁打に到達！強打者の面目躍如だ！`;
-    if (num >= 10) return `これで今シーズン${num}号だ。`;
+      return `今シーズン${games}試合でこれが${num}号！本来の実力(${cardHR}本)を上回るペースです！`;
+    if (num >= 30) return `今シーズン${num}本塁打に到達！強打者の面目躍如です！`;
+    if (num >= 10) return `これで今シーズン${num}号です。`;
     return '';
   } catch (e) { return ''; }
 }
@@ -5933,8 +6520,8 @@ function bcSeasonKNote(P, pStat) {
       const num = (((bcPostPit(P) || {}).K) || 0) + ((pStat && pStat.K) || 0);
       const rsK = ((bcSeasonPit(P) || {}).K) || 0;
       if (num >= 5 && Math.random() < 0.5) {
-        if (rsK >= 150) return `これでポストシーズン通算${num}奪三振！レギュラーシーズン${rsK}奪三振の実力を存分に見せつけている！`;
-        return `これでポストシーズン通算${num}奪三振だ！`;
+        if (rsK >= 150) return `これでポストシーズン通算${num}奪三振！レギュラーシーズン${rsK}奪三振の実力を存分に見せつけています！`;
+        return `これでポストシーズン通算${num}奪三振です！`;
       }
       return '';
     }
@@ -5944,8 +6531,8 @@ function bcSeasonKNote(P, pStat) {
       const team = G.seasonCtx ? (G.top ? G.seasonCtx.home : G.seasonCtx.away) : null;   // 守備側チーム
       const played = team ? seasonTeamGames(team) : 0;   // この試合の前までの消化試合数
       if (cardK != null && cardK > 0 && played > 0 && num > cardK * (played / 162))
-        return `これで今シーズン通算${num}奪三振！${P.year ? P.year + '年シーズン' : '本来の実力'}を上回るペースで三振を積み重ねている！`;
-      return `これで今シーズン通算${num}奪三振に到達だ！`;
+        return `これで今シーズン通算${num}奪三振！${P.year ? P.year + '年シーズン' : '本来の実力'}を上回るペースで三振を積み重ねています！`;
+      return `これで今シーズン通算${num}奪三振に到達です！`;
     }
     return '';
   } catch (e) { return ''; }
@@ -5961,7 +6548,7 @@ function bcSeasonResultRankNote(outcome, runs, B, bStat) {
     if (outcome === '1B' || outcome === '2B' || outcome === '3B') {
       const sb = bcBatLive(B, bcSeasonBat(B));   // 順位が上位でも成績自体が水準以下なら褒めない (この試合分も合算して判定)
       const rkAvg = bcSeasonBatRank(B, 'avg');
-      if (rkAvg >= 1 && rkAvg <= 10 && sb && avgOf(sb.H, sb.AB) >= 0.27) cands.push(`今シーズン打率リーグ${rkAvg}位…確実性の高さが光る一本だ。`);
+      if (rkAvg >= 1 && rkAvg <= 10 && sb && avgOf(sb.H, sb.AB) >= 0.27) cands.push(`今シーズン打率リーグ${rkAvg}位…確実性の高さが光る一本です。`);
       const rkOps = bcSeasonBatRank(B, 'ops');
       if (rkOps >= 1 && rkOps <= 10 && sb && bcSeasonOps(sb) >= 0.75) cands.push(`OPSリーグ${rkOps}位の打棒がまた結果を出した。`);
     }
@@ -5969,7 +6556,7 @@ function bcSeasonResultRankNote(outcome, runs, B, bStat) {
       const rkRBI = bcSeasonBatRank(B, 'RBI', (bStat && bStat.RBI) || 0);
       if (rkRBI >= 1 && rkRBI <= 10) {
         const total = (((bcSeasonBat(B) || {}).RBI) || 0) + ((bStat && bStat.RBI) || 0);
-        cands.push(`これで今シーズン${total}打点。リーグ${rkRBI}位${rkRBI <= 3 ? '、打点王争いを引っ張る' : 'につける'}勝負強さだ。`);
+        cands.push(`これで今シーズン${total}打点。リーグ${rkRBI}位${rkRBI <= 3 ? '、打点王争いを引っ張る' : 'につける'}勝負強さです。`);
       }
     }
     return cands.length ? pickRand(cands) : '';
@@ -6051,7 +6638,7 @@ function specialPitchIntroLine(p) {
   try {
     for (const pt of (p && p.pitches) || []) {
       const sp = specialPitchInfo(pt.name);
-      if (sp) return `${sp.desc || '代名詞とも言える'}${sp.kind || '変化球'}『${sp.alias}』の使い手だ。`;
+      if (sp) return `${sp.desc || '代名詞とも言える'}${sp.kind || '変化球'}『${sp.alias}』の使い手です。`;
     }
     return '';
   } catch (e) { return ''; }
@@ -6079,10 +6666,10 @@ function knucklePickLine(p, pool) {
 function knuckleIntroLine(p) {
   if (!isKnuckleballer(p)) return '';
   return knucklePickLine(p, [
-    '現代野球では絶滅危惧種とも呼ばれる、貴重なナックルボーラーだ。',
-    '揺れて落ちる魔球ナックルの使い手…メジャー全体でも常時ひと握りしかいない希少な存在だ。',
+    '現代野球では絶滅危惧種とも呼ばれる、貴重なナックルボーラーです。',
+    '揺れて落ちる魔球ナックルの使い手…メジャー全体でも常時ひと握りしかいない希少な存在です。',
     'ナックルボーラーは肩肘への負担が少なく息が長い。名手ニークロは48歳まで投げて318勝を挙げた。',
-    '名手ウェイクフィールドやサイ・ヤング賞のR.A.ディッキーに連なる、貴重なナックルボーラーだ。',
+    '名手ウェイクフィールドやサイ・ヤング賞のR.A.ディッキーに連なる、貴重なナックルボーラーです。',
   ]);
 }
 // 打席に入る打者の紹介文。st=その打者の今日の成績 (代打などで無い/未確定なら null)。
@@ -6094,9 +6681,9 @@ function batterIntroText(b, st, isPinch) {
   let today = '';
   if (st) {
     const h = st.H || 0, ab = st.AB || 0, hr = st.HR || 0, bb = st.BB || 0;
-    if (hr >= 1 && h >= 2)      today = `今日は${h}安打${hr}本塁打。絶好調だ。`;
-    else if (hr >= 1)           today = `今日すでに一発が出ている。`;
-    else if (h >= 2)            today = `今日${h}安打。当たっている。`;
+    if (hr >= 1 && h >= 2)      today = `今日は${h}安打${hr}本塁打。絶好調です。`;
+    else if (hr >= 1)           today = `今日すでに一発が出ています。`;
+    else if (h >= 2)            today = `今日${h}安打。当たっています。`;
     else if (h === 1)           today = `今日はヒットが1本。`;
     else if (ab >= 2)           today = `今日は${ab}打数ノーヒット。一本欲しい。`;
     else if (ab === 0 && bb >= 1) today = `今日は四球のみ。バットで結果が欲しい。`;
@@ -6114,14 +6701,14 @@ function batterIntroText(b, st, isPinch) {
   if (isPinch) {
     const tail = situation || today || (seasonLive && Math.random() < seasonProb ? seasonLive : '')
       || (retsu && Math.random() < 0.5 ? retsu + '。' : '')
-      || pickRand(['監督の勝負手だ。', 'ここで代打の切り札。', '一打席に懸ける起用だ。']);
+      || pickRand(['監督の勝負手です。', 'ここで代打の切り札。', '一打席に懸ける起用です。']);
     return `代打、${who}。${tail}`;
   }
   const tail = situation || today || bcMatchupLine(b)
     || (seasonLive && Math.random() < seasonProb ? seasonLive : '')
     || (retsu && Math.random() < 0.45 ? retsu + '。' : '')
     || (!inSeason && Math.random() < 0.5 ? bcSeasonLine(b) : '')
-    || pickRand(['さあ、どんな打撃を見せるか。', 'この打席に注目だ。', 'どう攻めるか。']);
+    || pickRand(['さあ、どんな打撃を見せるか。', 'この打席に注目です。', 'どう攻めるか。']);
   return `打席には${who}。${tail}`;
 }
 // 打者紹介を実況テロップに表示する。b/st 省略時は「これから打席に入る打者」(G.currentBatter) を紹介。
@@ -6182,10 +6769,10 @@ function pitcherIntroText(p, roleKey) {
   const title = bcPitcherTitle(p);
   const who = title ? `${title}の${name}` : name;
   const tailPool = {
-    starter: ['先発だ。立ち上がりに注目。', 'さあ、試合が動き出す。'],
-    closer:  ['守護神登場。試合を託された。', 'ここは抑えの出番だ。'],
-    setup:   ['セットアッパー登板。勝ちパターンだ。', '試合終盤、重要な繋ぎだ。'],
-  }[roleKey] || ['ここからの投球に注目だ。', 'リリーフ登板。流れを渡さない継投だ。'];
+    starter: ['先発です。立ち上がりに注目。', 'さあ、試合が動き出す。'],
+    closer:  ['守護神登場。試合を託された。', 'ここは抑えの出番です。'],
+    setup:   ['セットアッパー登板。勝ちパターンです。', '試合終盤、重要な繋ぎです。'],
+  }[roleKey] || ['ここからの投球に注目です。', 'リリーフ登板。流れを渡さない継投です。'];
   // 添える一言: 「走者を背負った火消し登板(状況) > 特殊球(魔球) > ナックルボーラー > シーズン成績 > 列伝(人物評) > 役割別の定型」の優先度で1つ。
   const runnersOn = (G.bases || []).filter(Boolean).length;
   const retsu = bcRetsudenLine(p);
@@ -6195,7 +6782,7 @@ function pitcherIntroText(p, roleKey) {
   let tail;
   if (runnersOn > 0) tail = pickRand([
     `走者${runnersOn}人を背負っての火消し登板。真価が問われる。`,
-    `ピンチの火消しだ。ここを断ち切れるか。`,
+    `ピンチの火消しです。ここを断ち切れるか。`,
   ]);
   else if (spIntro && Math.random() < 0.4) tail = spIntro;
   else if (knuckleIntro && Math.random() < 0.4) tail = knuckleIntro;
@@ -6235,8 +6822,8 @@ function stealResultComment(ev) {
   if (ev.success) {
     let text = pickRand([
       `走った、セーフ！${runner}、スタートが冴えた！`,
-      `見事なスタート！${runner}、この足は武器だ。`,
-      `盗塁成功！タイミングはばっちりだ。`,
+      `見事なスタート！${runner}、この足は武器です。`,
+      `盗塁成功！タイミングはばっちりです。`,
     ]);
     // シーズン(手動)試合: 通算何個目の盗塁かを添える (50試合以降・10位以内ならリーグ順位も)
     try {
@@ -6245,20 +6832,20 @@ function stealResultComment(ev) {
         const gameSB = ev.runnerGameSB || 1;
         if (kind === 'postseason') {
           const n = (((bcPostBat(ev.runnerPlayer) || {}).SB) || 0) + gameSB;
-          text += n === 1 ? `　ポストシーズン初盗塁だ。` : `　これでポストシーズン${n}個目の盗塁だ。`;
+          text += n === 1 ? `　ポストシーズン初盗塁です。` : `　これでポストシーズン${n}個目の盗塁です。`;
         } else {
           const n = (((bcSeasonBat(ev.runnerPlayer) || {}).SB) || 0) + gameSB;
           const team = G.seasonCtx ? (G.top ? G.seasonCtx.away : G.seasonCtx.home) : null;   // 攻撃側チーム
           const rk = (team && seasonTeamGames(team) >= 50 && n >= 10) ? bcSeasonBatRank(ev.runnerPlayer, 'SB', gameSB) : 0;
-          if (rk >= 1 && rk <= 10) text += `　これで今シーズン${n}個目の盗塁。リーグ${rk}位${rk <= 3 ? '、盗塁王争いを走る俊足だ' : 'につけている'}。`;
-          else text += n === 1 ? `　今シーズン初盗塁だ。` : `　これで今シーズン${n}個目の盗塁だ。`;
+          if (rk >= 1 && rk <= 10) text += `　これで今シーズン${n}個目の盗塁。リーグ${rk}位${rk <= 3 ? '、盗塁王争いを走る俊足です' : 'につけています'}。`;
+          else text += n === 1 ? `　今シーズン初盗塁です。` : `　これで今シーズン${n}個目の盗塁です。`;
         }
       }
     } catch (e) { /* 実況は補助演出 */ }
     return text;
   }
   return pickRand([
-    `送った、アウト！${catcher}の好返球だ！`,
+    `送った、アウト！${catcher}の好返球です！`,
     `完璧な送球！${catcher}、走者を刺した。`,
     `${runner}、スタートが遅れた。${catcher}の肩が勝った。`,
   ]);
@@ -6286,7 +6873,7 @@ function gameEndCommentText() {
   const awayName = labelTeamJp('away'), homeName = labelTeamJp('home');   // 実況はコードでなく日本語チーム名で呼ぶ
   if (aSum === hSum) {
     return pickRand([
-      `試合終了！${aSum}対${hSum}、引き分けだ。`,
+      `試合終了！${aSum}対${hSum}、引き分けです。`,
       `決着つかず。${aSum}対${hSum}で試合終了。`,
     ]);
   }
@@ -6301,28 +6888,28 @@ function gameEndCommentText() {
     const ci = bcClinchInfo();
     const clinched = (ci && (winSide === 'away' ? ci.away : ci.home)) ? ci.kind : null;
     const clinchTxt = clinched ? {
-      ws: `${winTeam}がワールドシリーズ制覇、世界一だ！`,
+      ws: `${winTeam}がワールドシリーズ制覇、世界一です！`,
       pennant: `${winTeam}がリーグ優勝！ワールドシリーズ進出を決めた！`,
       division: `${winTeam}が地区優勝を決めた！`,
       series: `${winTeam}がシリーズ突破を決めた！`,
     }[clinched] : '';
-    if (nh && clinchTxt) return `なんという結末だ！${nh.perfect ? '完全試合' : 'ノーヒットノーラン'}で${clinchTxt}最高の幕切れだ！`;
+    if (nh && clinchTxt) return `なんという結末です！${nh.perfect ? '完全試合' : 'ノーヒットノーラン'}で${clinchTxt}最高の幕切れです！`;
     if (nh) {
       if (nh.perfect) return pickRand([
-        `完全試合達成！MLB史上24人だけの偉業だ！`,
+        `完全試合達成！MLB史上24人だけの偉業です！`,
         `27人を完璧に抑えた、パーフェクトゲーム！歴史に名を刻んだ！`,
       ]);
       return nh.combined
-        ? `継投でノーヒットノーラン達成！ブルペン総出の快挙だ！`
+        ? `継投でノーヒットノーラン達成！ブルペン総出の快挙です！`
         : pickRand([
-            `ノーヒットノーラン達成！マウンドに歓喜の輪だ！`,
-            `無安打無得点！捕手が駆け寄る、歓喜の瞬間だ！`,
+            `ノーヒットノーラン達成！マウンドに歓喜の輪です！`,
+            `無安打無得点！捕手が駆け寄る、歓喜の瞬間です！`,
           ]);
     }
     if (clinchTxt) {
       const tail = {
-        ws: pickRand(['コミッショナーズトロフィーは彼らのものだ！', 'ロッカーではシャンパンファイトが待っている！']),
-        pennant: pickRand(['クラブハウスはシャンパンの雨だ！', '頂点まであと一つ。最高の舞台へ！']),
+        ws: pickRand(['コミッショナーズトロフィーは彼らのものです！', 'ロッカーではシャンパンファイトが待っています！']),
+        pennant: pickRand(['クラブハウスはシャンパンの雨です！', '頂点まであと一つ。最高の舞台へ！']),
         division: pickRand(['シャンパンファイトの準備は整った！', '長いペナントレースを制した！']),
         series: pickRand(['次のラウンドへ駒を進めた！', '崖っぷちの相手を振り切った！']),
       }[clinched];
@@ -6331,25 +6918,25 @@ function gameEndCommentText() {
   }
   if (G.homeWalkoffIdx != null) {
     return pickRand([
-      `サヨナラ！${homeName}、劇的な幕切れだ！`,
+      `サヨナラ！${homeName}、劇的な幕切れです！`,
       `${homeName}、土壇場で勝利をもぎ取った！`,
     ]);
   }
   if (G.inning > G.innings) {
     return pickRand([
-      `延長${G.inning}回。長い戦いを制したのは${winTeam}だ。`,
+      `延長${G.inning}回。長い戦いを制したのは${winTeam}です。`,
       `${G.inning}回までもつれた。${winTeam}が制した。`,
     ]);
   }
   if (diff >= 6) {
     return pickRand([
-      `${winTeam}の圧勝！${winScore}対${loseScore}、危なげない勝利だ。`,
+      `${winTeam}の圧勝！${winScore}対${loseScore}、危なげない勝利です。`,
       `完勝の${winTeam}。最初から最後まで主導権を握った。`,
     ]);
   }
   return pickRand([
-    `${winTeam}が${winScore}対${loseScore}で勝利した。締まったゲームだった。`,
-    `見応えのある試合だった。最後は${winTeam}に軍配が上がった。`,
+    `${winTeam}が${winScore}対${loseScore}で勝利した。締まったゲームでした。`,
+    `見応えのある試合でした。最後は${winTeam}に軍配が上がった。`,
   ]);
 }
 // 試合終了コメントを実況テロップに表示し、3秒後に消して 戻る/進む バーの表示に切り替える。
@@ -6372,7 +6959,7 @@ function showGameEndComment() {
   } catch (e) { /* 演出は補助機能。失敗してもゲームは継続 */ }
 }
 
-// 3アウト成立時の「チェンジ + 途中経過」の実況 (例:「スリーアウトチェンジ。4回裏終了、2対1でヤンキースのリードだ。」)。
+// 3アウト成立時の「チェンジ + 途中経過」の実況 (例:「スリーアウトチェンジ。4回裏終了、2対1でヤンキースのリードです。」)。
 //   スコアはリードしている側から読む (実際の中継の読み方)。両チーム無得点/同点はその旨を伝える。
 //   この3アウトで試合が決着する場合 (最終回で勝敗確定) は、試合終了コメントに任せるためここでは出さない。
 function bcInningEndLine(aSum, hSum) {
@@ -6387,7 +6974,7 @@ function bcInningEndLine(aSum, hSum) {
     else if (aSum === hSum) scoreTxt = `${aSum}対${hSum}の同点`;
     else if (aSum > hSum) scoreTxt = `${aSum}対${hSum}で${labelTeamJp('away')}のリード`;
     else scoreTxt = `${hSum}対${aSum}で${labelTeamJp('home')}のリード`;
-    return `スリーアウトチェンジ。${G.inning}回${half}終了、${scoreTxt}だ。`;
+    return `スリーアウトチェンジ。${G.inning}回${half}終了、${scoreTxt}です。`;
   } catch (e) { return ''; }
 }
 
@@ -6460,7 +7047,7 @@ function broadcasterComment(outcome, runs, ctx) {
     const multiHit  = isHit && bStat && bStat.H >= 2;                              // 本日2安打目以降
     const multiK    = (outcome === 'K') && pStat && pStat.K >= 2;                   // この登板で2つ目以降の奪三振
     // 猛打賞: 本日3安打目に到達した瞬間だけ称える (4安打目以降は通常の複数安打コメントに任せる)
-    const moudashoNote = (isHit && bStat && bStat.H === 3) ? `${batter}、これで三安打！猛打賞の活躍だ！` : '';
+    const moudashoNote = (isHit && bStat && bStat.H === 3) ? `${batter}、これで三安打！猛打賞の活躍です！` : '';
     // ノーヒットノーラン/完全試合の継続: 回が深まるほど強い実況で盛り上げる (史実の記録・逸話を引用)
     let nhLine = '';
     const nhBid = !isHit ? noHitBidInfo(side) : null;
@@ -6470,17 +7057,17 @@ function broadcasterComment(outcome, runs, ctx) {
       const isPS = !!(G.seasonCtx && G.seasonCtx.postseason);
       if (outsLeft <= 3) {           // 最終盤: あとアウト◯つ (必ず言及)
         nhLine = nhBid.perfect
-          ? `${pitcher}、完全試合まであとアウト${outsLeft}つ！MLB史上24人しか成し遂げていない大記録が目前だ！`
-          : `${kindTxt}達成まであとアウト${outsLeft}つ！球場全体が固唾を呑んで見守っている！`;
-        if (isPS && nhBid.perfect) nhLine += '　達成なら1956年ドン・ラーセン以来のポストシーズン完全試合だ！';
+          ? `${pitcher}、完全試合まであとアウト${outsLeft}つ！MLB史上24人しか成し遂げていない大記録が目前です！`
+          : `${kindTxt}達成まであとアウト${outsLeft}つ！球場全体が固唾を呑んで見守っています！`;
+        if (isPS && nhBid.perfect) nhLine += '　達成なら1956年ドン・ラーセン以来のポストシーズン完全試合です！';
       } else if (G.inning >= 7 && Math.random() < 0.8) {   // 7〜8回: ほぼ毎打席言及
-        if (nhBid.combined) nhLine = `継投での${kindTxt}が続いている！2022年にはアストロズがワールドシリーズで継投ノーノーを達成した…快挙なるか。`;
+        if (nhBid.combined) nhLine = `継投での${kindTxt}が続いています！2022年にはアストロズがワールドシリーズで継投ノーノーを達成した…快挙なるか。`;
         else nhLine = pickRand(nhBid.perfect ? [
-          `${G.inning}回、いまだ完全試合ペース！ベンチは誰も${pitcher}に話しかけない…球界に伝わるジンクスだ。`,
+          `${G.inning}回、いまだ完全試合ペース！ベンチは誰も${pitcher}に話しかけない…球界に伝わるジンクスです。`,
           `${pitcher}、走者を一人も許していない。パーフェクトへ、一球ごとに球場の緊張が高まっていく。`,
         ] : [
-          `${G.inning}回までノーヒッター継続中！ベンチは誰も${pitcher}に話しかけない…球界に伝わるジンクスだ。`,
-          `無安打投球が続く${pitcher}。ノーラン・ライアンは通算7度のノーノーを達成した…快挙へ視界は良好だ。`,
+          `${G.inning}回までノーヒッター継続中！ベンチは誰も${pitcher}に話しかけない…球界に伝わるジンクスです。`,
+          `無安打投球が続く${pitcher}。ノーラン・ライアンは通算7度のノーノーを達成した…快挙へ視界は良好です。`,
         ]);
       } else if (Math.random() < 0.4) {                    // 5〜6回: 予感を漂わせる
         nhLine = `${pitcher}、ここまで無安打投球。静かに${kindTxt}の予感が漂い始めた。`;
@@ -6496,7 +7083,7 @@ function broadcasterComment(outcome, runs, ctx) {
         const oppClinch = side === 'away' ? ci.home : ci.away;
         const kindTxt = { ws: 'ワールドシリーズ制覇', pennant: 'リーグ優勝・ワールドシリーズ進出', division: '地区優勝', series: 'シリーズ突破' }[ci.kind];
         if ((myClinch && myAft > opAft) || (oppClinch && opAft > myAft)) {
-          clinchLine = `勝てば${kindTxt}という大一番、リードして終盤へ…球場のボルテージは最高潮だ！`;
+          clinchLine = `勝てば${kindTxt}という大一番、リードして終盤へ…球場のボルテージは最高潮です！`;
         }
       }
     }
@@ -6518,14 +7105,14 @@ function broadcasterComment(outcome, runs, ctx) {
     const spPitch = specialPitchInfo(pitch && pitch.name);
     let spNote = '';
     if (spPitch && outcome !== 'K' && outcome !== 'HR' && outcome !== 'BB' && outcome !== 'E') {
-      spNote = isHit ? `魔球${spPitch.alias}を見事に捉えた！素晴らしい対応だ。`
+      spNote = isHit ? `魔球${spPitch.alias}を見事に捉えた！素晴らしい対応です。`
                      : `魔球${spPitch.alias}の前に、芯で捉えることができなかった。`;
     }
     // ナックルボール: この打席で投げていれば史実の逸話を交えて言及 (通称付き特殊球の実況を優先)
     const knucklePitch = isKnucklePitchName(pitch && pitch.name);
     let knuckleNote = '';
     if (knucklePitch && !spPitch && outcome !== 'K' && outcome !== 'HR' && outcome !== 'BB' && outcome !== 'E') {
-      knuckleNote = isHit ? `揺れの少なかったナックルは打ち頃になる…紙一重の怖さが出た一本だ。`
+      knuckleNote = isHit ? `揺れの少なかったナックルは打ち頃になる…紙一重の怖さが出た一本です。`
                           : `不規則に揺れるナックルに、最後までタイミングが合わなかった。`;
     }
 
@@ -6542,14 +7129,14 @@ function broadcasterComment(outcome, runs, ctx) {
         ]);
         else if (comeback) base = pickRand([
           `逆転ホームラン！一振りでひっくり返した！`,
-          `これは大きい、逆転だ！流れは完全にこちらへ。`,
+          `これは大きい、逆転です！流れは完全にこちらへ。`,
         ]);
         else if (firstScore) base = pickRand([
           `先制のホームラン！${batter}、均衡を破った！`,
-          `${pitcher}、いきなり浴びた。痛い一発だ。`,
+          `${pitcher}、いきなり浴びた。痛い一発です。`,
         ]);
         else if (goAhead) base = pickRand([
-          `勝ち越しホームラン！値千金の一発だ！`,
+          `勝ち越しホームラン！値千金の一発です！`,
           `勝ち越した！${pitcher}、重い一発を浴びた。`,
         ]);
         else if (tiedGame) base = pickRand([
@@ -6561,7 +7148,7 @@ function broadcasterComment(outcome, runs, ctx) {
           `大勢は決まったか。${pitcher}、割り切るしかない。`,
         ]);
         else if (runs >= 3) base = pickRand([
-          `これは大きい！一気に${runs}点だ！`,
+          `これは大きい！一気に${runs}点です！`,
           `${batter}、完璧に捉えた！${pitcher}、悪夢の一球。`,
         ]);
         else if (multiHit) base = pickRand([
@@ -6572,82 +7159,145 @@ function broadcasterComment(outcome, runs, ctx) {
         else if (hrAbility >= 15) base = pickRand([
           `${batter}、看板通りのパワー！止められない！`,
           `これぞ長距離砲！${pitcher}、なす術なし。`,
-          `分かっていても打てない。さすがの一発だ。`,
+          `分かっていても打てない。さすがの一発です。`,
         ]);
         else if (hrAbility <= -5) base = pickRand([
           `驚きの一発！${batter}にこの長打力！`,
-          `らしくない一発、しかしこれも1点だ。`,
+          `らしくない一発、しかしこれも1点です。`,
           `まさかの本塁打！${pitcher}、意表を突かれた。`,
         ]);
         else base = pickRand([
           `打った、大きい、入った！${batter}、豪快な一発！`,
           `完璧に捉えた！${pitcher}、痛恨の一球。`,
-          `会心のスイング！ベンチも沸いている。`,
+          `会心のスイング！ベンチも沸いています。`,
           `詰まりながら運んだ！${batter}、勝負強い。`,
-          `甘い球を見逃さない。プロの一発だ。`,
+          `甘い球を見逃さない。プロの一発です。`,
         ]);
         // シーズン(手動)試合: 「今シーズン◯号」「PS◯本目 + レギュラーシーズン対比」を続けて添える。
         //   シーズンの話題が無ければ、猛打賞(本日3安打目) → 特殊球(魔球)を打ち砕いた一発 の順で言及する。
         const seasonHrNote = bcSeasonHrNote(B, bStat);
         if (seasonHrNote) base += `　${seasonHrNote}`;
         else if (moudashoNote) base += `　${moudashoNote}`;
-        else if (spPitch) base += `　魔球${spPitch.alias}を完璧に打ち砕いた一発だ。`;
-        else if (isKnucklePitchName(pitch && pitch.name)) base += `　揺れの甘いナックルは打ち頃の球になる…紙一重の怖さが出た一発だ。`;
+        else if (spPitch) base += `　魔球${spPitch.alias}を完璧に打ち砕いた一発です。`;
+        else if (isKnucklePitchName(pitch && pitch.name)) base += `　揺れの甘いナックルは打ち頃の球になる…紙一重の怖さが出た一発です。`;
         break;
       }
       case '3B':
       case '2B': {
         const kind = outcome === '3B' ? '3ベースヒット' : '2ベースヒット';
         base = (runs > 0) ? pickRand([
-          `${kind}！走者還った！${batter}、値千金の一打だ。`,
+          `${kind}！走者還った！${batter}、値千金の一打です。`,
           `打った、走者は還る！絶妙なコースを破った。`,
-          `逆方向へ弾き返した！狙い澄ました一打だ。`,
+          `逆方向へ弾き返した！狙い澄ました一打です。`,
         ]) : pickRand([
-          `${kind}！チャンス拡大だ。`,
+          `${kind}！チャンス拡大です。`,
           `鋭い当たり！得点圏に走者が進んだ。`,
           `ギャップを破った！守備陣、反応できず。`,
         ]);
         break;
       }
       case '1B': {
+        // 内野安打は「内野を抜けていない当たり」。流し打ち・きれいなヒット・内野の頭を越えた 等の
+        //   打球の質や方向を語る表現とは噛み合わないため、内野安打専用の実況を先に分岐させる。
+        //   flavor は '俊足を生かして内野安打！' / 'ボテボテのあたりで内野安打！' の2種類。
+        if (/内野安打/.test(flavorStr)) {
+          if (risp && runs > 0) base = pickRand([
+            `内野安打の間に走者が還った！泥臭く1点をもぎ取りました。`,
+            `記録は内野安打、しかしこれは値千金の1点です！`,
+            `内野を抜けない当たり、それでも1点が入った！記録は内野安打です。`,
+          ]);
+          else if (risp) base = pickRand([
+            `内野安打！${batter}、諦めずに走り抜けました。`,
+            `内野安打でチャンスがさらに広がる。`,
+          ]);
+          else if (leadoff) base = pickRand([
+            `先頭打者が内野安打で出塁。${pitcher}、嫌な形です。`,
+            `内野安打で無死の走者。小さな一本が大きくなるかもしれない。`,
+          ]);
+          else if (multiHit) { statNoteUsed = true; base = pickRand([
+            `内野安打で今日${bStat.H}安打目！${batter}、しぶとい。`,
+            `これも内野安打。${batter}、どんな形でも塁に出ます。`,
+          ]); }
+          // 足で稼いだ内野安打 と、詰まった当たりが転がった幸運な内野安打 で受け止め方を変える
+          else if (/俊足/.test(flavorStr)) base = pickRand([
+            `内野安打！${batter}、足で作った一本です。`,
+            `際どいタイミング、セーフ！俊足が生んだ内野安打。`,
+            `内野は捕った、しかし送球が間に合わない！全力疾走が実った内野安打です。`,
+          ]);
+          else base = pickRand([
+            `打ち取った当たりが内野安打に。${pitcher}、ついていません。`,
+            `緩い当たりが内野で止まった。記録は内野安打です。`,
+            `内野安打。${batter}、転がしたもの勝ちの一本になりました。`,
+          ]);
+          break;
+        }
+        // 拙守による出塁は、本来アウトになる打球を野手がさばききれなかったもの。
+        //   記録上はヒットでも打者が打ち勝った一本ではないため、打撃を称える実況とは噛み合わない。
+        //   flavor は '○○の拙守で出塁' (maybeFieldingError)。
+        if (/拙守/.test(flavorStr)) {
+          if (risp && runs > 0) base = pickRand([
+            `守備がもたついた間に走者が還った！${pitcher}、防げたはずの1点です。`,
+            `${fielderName}、さばききれない！その隙に生還。記録はヒットですが痛い失点です。`,
+            `処理に手間取る間に1点。${pitcher}、これは悔やまれます。`,
+          ]);
+          else if (risp) base = pickRand([
+            `${fielderName}、さばききれず出塁を許した。ピンチが広がります。`,
+            `守備のもたつきで走者が増えた。${pitcher}、余計な走者です。`,
+          ]);
+          else if (leadoff) base = pickRand([
+            `先頭打者、守備のもたつきで出塁。${pitcher}、嫌な形です。`,
+            `${fielderName}が処理にもたついた。無死の走者、これは重い。`,
+          ]);
+          else if (multiHit) { statNoteUsed = true; base = pickRand([
+            `記録上は今日${bStat.H}安打目。ただしこれは守備のもたつきです。`,
+            `${batter}、これで${bStat.H}安打目。ただし${fielderName}の守備に助けられた形です。`,
+          ]); }
+          else base = pickRand([
+            `${fielderName}、さばききれない！アウトにできた打球でした。`,
+            `処理にもたついた。記録はヒットですが、${pitcher}にとっては不運な一本です。`,
+            `守備の乱れで出塁。${pitcher}、これは防げた走者です。`,
+          ]);
+          break;
+        }
         if (risp && runs > 0) base = pickRand([
-          `タイムリー！ここで欲しかった一本だ！`,
+          `タイムリー！ここで欲しかった一本です！`,
           `${batter}、しっかり還した！値千金の一打！`,
-          `狙い球を仕留めた！見事な一本だ。`,
+          `狙い球を仕留めた！見事な一本です。`,
         ]);
         else if (risp) base = pickRand([
           `ヒット！チャンスが広がる。`,
           `粘って一本。走者を進めた。`,
         ]);
         else if (leadoff) base = pickRand([
-          `先頭打者、出塁。${pitcher}、嫌な形だ。`,
+          `先頭打者、出塁。${pitcher}、嫌な形です。`,
           `無死の走者。これは大きくなるかもしれない。`,
         ]);
         else if (multiHit) { statNoteUsed = true; base = pickRand([
-          `${batter}、今日${bStat.H}安打目！バットが生きている。`,
+          `${batter}、今日${bStat.H}安打目！バットが生きています。`,
           `また打たれた。${pitcher}、この打者は苦手か。`,
         ]); }
         else base = pickRand([
-          `きれいなヒット！${batter}、良いスイングだ。`,
-          `軽打で出塁。効果的な一本だ。`,
-          `流し打ち！うまい対応だ。`,
-          `内野の頭を越えた！狙い通りだ。`,
+          `きれいなヒット！${batter}、良いスイングです。`,
+          `軽打で出塁。効果的な一本です。`,
+          `流し打ち！うまい対応です。`,
+          `内野の頭を越えた！狙い通りです。`,
         ]);
         break;
       }
       case 'BB': {
         if (runs > 0) base = pickRand([
           `押し出し！${pitcher}、これは痛い。`,
-          `制球が乱れた。押し出しで1点だ。`,
+          `制球が乱れた。押し出しで1点です。`,
         ]);
         else if (leadoff) base = pickRand([
-          `先頭打者に四球。${pitcher}、嫌な入りだ。`,
-          `無死の走者。立ち上がりに苦しんでいる。`,
+          `先頭打者に四球。${pitcher}、嫌な入りです。`,
+          // 「立ち上がり」は登板序盤の描写のため、試合序盤(2回まで)に限定して選択肢に含める
+          ...(G.inning <= 2 ? [`無死の走者。立ち上がりに苦しんでいます。`] : []),
         ]);
         else base = pickRand([
           `粘って四球。チャンスを広げる。`,
           `${pitcher}、慎重になりすぎたか。`,
-          `際どい球が続いた。バッテリーも慎重だ。`,
+          `際どい球が続いた。バッテリーも慎重です。`,
         ]);
         break;
       }
@@ -6655,39 +7305,39 @@ function broadcasterComment(outcome, runs, ctx) {
         // 見逃し/空振りで描写を分ける (実況ログのフレーバーと食い違う「見逃し」「空振り」の混用を防ぐ)
         const looking = /見逃し/.test(flavorStr);
         if (spPitch) base = pickRand([   // 特殊球(魔球)での三振は最優先で言及
-          `${spPitch.desc || '代名詞とも言える'}${spPitch.kind || '変化球'}、${spPitch.alias}！三振だ！`,
+          `${spPitch.desc || '代名詞とも言える'}${spPitch.kind || '変化球'}、${spPitch.alias}！三振です！`,
           `伝家の宝刀、${spPitch.alias}が炸裂！${batter}、手も足も出ない！`,
           `必殺の${spPitch.alias}！分かっていても打てない！`,
         ]);
         else if (knucklePitch) base = knucklePickLine(P, [   // ナックルでの三振は史実の逸話を交えて言及 (本人への言及は除外)
-          `揺れて消えるナックル、三振！打つ理論は2つあるが、どちらも役に立たない。まさに名言通りだ。`,
-          `不規則に舞うナックル！${batter}、なす術なし。サイ・ヤング賞のディッキーを思わせる一球だ。`,
+          `揺れて消えるナックル、三振！打つ理論は2つあるが、どちらも役に立たない。まさに名言通りです。`,
+          `不規則に舞うナックル！${batter}、なす術なし。サイ・ヤング賞のディッキーを思わせる一球です。`,
           `ナックルで翻弄した！ニークロの魔球は箸でゼリーを食べるようなもの、と恐れられた。`,
         ]);
         else if (twoOutJam) base = pickRand([
           `三振！${pitcher}、ピンチをしのいだ！`,
-          `絶体絶命で三振！エースの意地だ！`,
+          `絶体絶命で三振！エースの意地です！`,
         ]);
         else if (multiK) { statNoteUsed = true; base = pickRand([
-          `${pitcher}、これで${pStat.K}個目の三振を奪った！切れ味が増している。`,
-          `三振の山だ！${pitcher}、球威も制球も文句なし。`,
+          `${pitcher}、これで${pStat.K}個目の三振を奪った！切れ味が増しています。`,
+          `三振の山です！${pitcher}、球威も制球も文句なし。`,
         ]); }
         else if (looking) base = pickRand([
           `見逃し三振！際どいコースを突いた！`,
           `完璧なコース！${batter}、バットが出ない。`,
-          `${batter}、見送るしかない。配球の勝利だ。`,
+          `${batter}、見送るしかない。配球の勝利です。`,
         ]);
         else base = pickRand([
           `三振！${pitcher}、テンポがいい。`,
           `タイミングを外した！見事な一球。`,
-          `低めに手を出した。配球の勝利だ。`,
+          `低めに手を出した。配球の勝利です。`,
           `空振り三振！${pitcher}、球威で押し切った！`,
         ]);
         break;
       }
       case 'E': {
         base = pickRand([
-          `エラー！痛恨のミスだ。`,
+          `エラー！痛恨のミスです。`,
           `守備が乱れた。これは大きい。`,
           `何でもない打球が。この一つが響くかもしれない。`,
         ]);
@@ -6696,14 +7346,14 @@ function broadcasterComment(outcome, runs, ctx) {
       case 'SAC_FLY': {
         base = pickRand([
           `犠牲フライ！${batter}、しっかり還した。`,
-          `走者を還す一打。立派な仕事だ。`,
-          `深いフライで1点。狙い通りだ。`,
+          `走者を還す一打。立派な仕事です。`,
+          `深いフライで1点。狙い通りです。`,
         ]);
         break;
       }
       case 'GO_DP': {
         base = pickRand([
-          `ゲッツー！痛恨の併殺打だ。`,
+          `ゲッツー！痛恨の併殺打です。`,
           `併殺！チャンスが消えた。`,
           `完璧な併殺コンビ！${pitcher}、これで息をついた。`,
         ]);
@@ -6714,8 +7364,11 @@ function broadcasterComment(outcome, runs, ctx) {
         // 内野ゴロ。動画の打球感と食い違わないよう、表現は「強いゴロ/緩いゴロ/通常」の枠に留め、
         //   ワンバウンド等の具体的な打球描写はしない。
         // 2死・得点圏でのアウトは、走力次第でこの打球でも3塁走者が生還することがある。
-        //   無失点なら「無得点で切り抜けた」、実際に1点以上入っていれば「最少失点」が正しい。
-        if (twoOutJam) base = pickRand(runs > 0 ? [
+        //   この打席の得点(runs)だけで判定すると、このイニングで既に先制点等を許した後の
+        //   無得点の打席でも誤って「無得点で切り抜けた」と言ってしまう。イニング累計の失点
+        //   (この打席の得点を含む)で判定し、1点以上ならまとめて「最少失点」とする。
+        const inningRunsAllowed = G.score[side][G.inning - 1] || 0;
+        if (twoOutJam) base = pickRand(inningRunsAllowed > 0 ? [
           `大きなアウト！${pitcher}、最少失点で切り抜けた。`,
           `土壇場でしのいだ！流れは渡さない。`,
         ] : [
@@ -6723,19 +7376,19 @@ function broadcasterComment(outcome, runs, ctx) {
           `土壇場でしのいだ！流れは渡さない。`,
         ]);
         else if (weakGrounder) base = pickRand([
-          `力のない打球。${pitcher}、粘り勝ちだ。`,
+          `力のない打球。${pitcher}、粘り勝ちです。`,
           `弱い当たりで仕留めた。${batter}、合っていない。`,
-          `緩いゴロ。${pitcher}のペースだ。`,
+          `緩いゴロ。${pitcher}のペースです。`,
         ]);
         else if (strongGrounder) base = pickRand([
           `詰まった！芯を外した。`,
           `鋭いようで詰まった当たり。内角を上手く使った。`,
-          `手元で詰まらせた。力を吸収する投球だ。`,
+          `手元で詰まらせた。力を吸収する投球です。`,
         ]);
         else base = pickRand([
-          `内野ゴロ。手堅くアウトだ。`,
+          `内野ゴロ。手堅くアウトです。`,
           `打たせて取った。${pitcher}、ペースを崩さない。`,
-          `${pitcher}、狙い通りのゴロだ。`,
+          `${pitcher}、狙い通りのゴロです。`,
         ]);
         break;
       }
@@ -6745,9 +7398,9 @@ function broadcasterComment(outcome, runs, ctx) {
           `高く上がった、しのぎ切った！`,
           `フライアウト。ベンチも胸をなでおろす。`,
         ]) : pickRand([
-          `打ち上げた。${pitcher}、丁寧な投球だ。`,
+          `打ち上げた。${pitcher}、丁寧な投球です。`,
           `詰まった打球が高々と上がった。`,
-          `難なく処理。危なげない守備だ。`,
+          `難なく処理。危なげない守備です。`,
           `力んだスイング。打球が浮いた。`,
         ]);
         break;
@@ -6757,8 +7410,8 @@ function broadcasterComment(outcome, runs, ctx) {
         base = pickRand([
           `鋭い当たり、しかし正面！運がなかった。`,
           `強い打球！だが好位置の守備が捕った。`,
-          `ライナー！あと少しずれていればヒットだった。`,
-          `${batter}、当たりは良かったが真正面だ。`,
+          `ライナー！あと少しずれていればヒットでした。`,
+          `${batter}、当たりは良かったが真正面です。`,
         ]);
         break;
       }
@@ -6768,7 +7421,7 @@ function broadcasterComment(outcome, runs, ctx) {
           `土壇場で踏ん張った！流れは渡さない。`,
         ]) : pickRand([
           `${pitcher}、丁寧に打ち取った。`,
-          `無難にアウト。悪くない入りだ。`,
+          `無難にアウト。悪くない入りです。`,
         ]);
       }
     }
@@ -6777,9 +7430,9 @@ function broadcasterComment(outcome, runs, ctx) {
     if (!skipOverlay && fineplay) {
       const drs = Number.isFinite(fielderDrs) ? fielderDrs : 0;
       if (drs >= 15) base = pickRand([
-        `捕った！さすが${fielderName}、ゴールドグラブ級の守備だ！`,
+        `捕った！さすが${fielderName}、ゴールドグラブ級の守備です！`,
         `${fielderName}、この守備範囲！あの打球に追いつくとは。`,
-        `${fielderName}なら捕って当然。鉄壁の守備だ。`,
+        `${fielderName}なら捕って当然。鉄壁の守備です。`,
       ]);
       else if (drs >= 5) base = pickRand([
         `${fielderName}、堅実な守備でピンチを摘んだ！`,
@@ -6787,7 +7440,7 @@ function broadcasterComment(outcome, runs, ctx) {
       ]);
       else base = pickRand([
         `捕った！${fielderName}、まさかのファインプレー！`,
-        `${fielderName}、値千金の好プレーだ！`,
+        `${fielderName}、値千金の好プレーです！`,
         `会心の守備！${fielderName}、これぞプロの技。`,
       ]);
     }
@@ -6796,11 +7449,11 @@ function broadcasterComment(outcome, runs, ctx) {
 
     // 状況・成績オーバーレイ: 最も重要な話題を優先度順に一つだけ選んで一言付け足す
     let overlay = '';
-    if (walkoff) overlay = `サヨナラだ！${batter}、ヒーローだ！`;
-    else if (comeback) overlay = `逆転！流れは完全にこちらだ。`;
-    else if (firstScore) overlay = `先制点！${side === 'away' ? '先攻' : '後攻'}、幸先の良いスタートだ。`;
-    else if (goAhead) overlay = `勝ち越した！${pitcher}、厳しい展開だ。`;
-    else if (tiedGame) overlay = `同点だ！この試合、まだ分からない。`;
+    if (walkoff) overlay = `サヨナラです！${batter}、ヒーローです！`;
+    else if (comeback) overlay = `逆転！流れは完全にこちらです。`;
+    else if (firstScore) overlay = `先制点！${side === 'away' ? '先攻' : '後攻'}、幸先の良いスタートです。`;
+    else if (goAhead) overlay = `勝ち越した！${pitcher}、厳しい展開です。`;
+    else if (tiedGame) overlay = `同点です！この試合、まだ分からない。`;
     else if (blowoutExtend) overlay = `大勢は決まったか。`;
     else if (nhLine) overlay = nhLine;
     else if (clinchLine && Math.random() < 0.4) overlay = clinchLine;
@@ -6809,12 +7462,12 @@ function broadcasterComment(outcome, runs, ctx) {
     else if (spNote && Math.random() < 0.5) overlay = spNote;
     else if (knuckleNote && Math.random() < 0.5) overlay = knuckleNote;
     else if (seasonRankNote && Math.random() < 0.4) overlay = seasonRankNote;
-    else if (multiHit && !statNoteUsed) overlay = `${batter}、今日${bStat.H}安打目。絶好調だ。`;
+    else if (multiHit && !statNoteUsed) overlay = `${batter}、今日${bStat.H}安打目。絶好調です。`;
     else if (multiK && !statNoteUsed) overlay = `${pitcher}、これで${pStat.K}個目の三振。`;
     else if (pitcherTired && (isHit || outcome === 'BB') && Math.random() < 0.6) overlay = `${pitcher}、疲れが見える。そろそろ継投かもしれない。`;
-    else if (isHit && timesThrough >= 3 && Math.random() < 0.45) overlay = `打順は${timesThrough}巡目。目が慣れてくる頃だ。`;
-    else if (outcome === 'K' && platoonLL && Math.random() < 0.4) overlay = `左対左。セオリー通り、投手に軍配だ。`;
-    else if (isHit && runs > 0 && seasonRbi != null && seasonRbi >= 90 && Math.random() < 0.5) overlay = `${(B && Number.isFinite(B.year)) ? B.year + '年' : '今季'}${seasonRbi}打点。この勝負強さは数字が証明している。`;
+    else if (isHit && timesThrough >= 3 && Math.random() < 0.45) overlay = `打順は${timesThrough}巡目。目が慣れてくる頃です。`;
+    else if (outcome === 'K' && platoonLL && Math.random() < 0.4) overlay = `左対左。セオリー通り、投手に軍配です。`;
+    else if (isHit && runs > 0 && seasonRbi != null && seasonRbi >= 90 && Math.random() < 0.5) overlay = `${(B && Number.isFinite(B.year)) ? B.year + '年' : '今季'}${seasonRbi}打点。この勝負強さは数字が証明しています。`;
     else if (closeLate && Math.random() < 0.5) overlay = `一点を争う展開。目が離せない。`;
 
     // アウトが増えた打席には「ワンアウトです。」「ツーアウトです。」を、ヒットの場合はアウトカウント+
@@ -6830,6 +7483,25 @@ function broadcasterComment(outcome, runs, ctx) {
   }
 }
 
+// サヨナラ時の得点調整 (公認野球規則5.08): 最終回(延長含む)の裏では、決勝点となる走者が
+//   ホームインした瞬間に試合終了となり、後続走者の生還は記録されない。
+//   生還者リスト(先頭走者から順)を「同点までの点 + 決勝点1」までに切り詰め、
+//   あふれた後続走者は塁上(空いている高い塁)へ戻す (直後に試合終了するため表示用)。
+//   サヨナラ本塁打は例外として全員の得点が認められる (本塁打は本関数を通らないため対象外)。
+function capWalkoffRuns(scored) {
+  try {
+    if (!scored || scored.length <= 1) return scored;
+    if (G.top || G.inning < G.innings) return scored;      // 対象は最終回以降の裏のみ
+    const sA = G.score.away.reduce((a, b) => a + b, 0);
+    const sH = G.score.home.reduce((a, b) => a + b, 0);    // この打席の得点を加える前の値
+    const needed = (sA - sH) + 1;                          // 同点までの点 + 決勝点
+    if (needed < 1 || scored.length <= needed) return scored;
+    for (const r of scored.slice(needed)) {                // 生還が認められない後続走者は塁へ戻す
+      for (const b of [2, 1, 0]) { if (!G.bases[b]) { G.bases[b] = r; break; } }
+    }
+    return scored.slice(0, needed);
+  } catch (e) { return scored; }
+}
 // 走者を by 塁進める。ホームインした走者の {side, slotIdx} 配列を返す
 function pushRunners(by) {
   const scoredRunners = [];
@@ -6845,7 +7517,7 @@ function pushRunners(by) {
       }
     }
   }
-  return scoredRunners;
+  return capWalkoffRuns(scoredRunners);
 }
 
 // 安打時の走者進塁。基本は by 塁進むが、走力(スピード＋盗塁能を少し加味)に応じて
@@ -6877,7 +7549,7 @@ function advanceRunnersOnHit(by) {
     if (dest >= 3) { scoredRunners.push(ref); leadStop = 4; } // 生還(本塁は空くので後続も本塁可)
     else { G.bases[dest] = ref; leadStop = dest; }
   }
-  return scoredRunners;
+  return capWalkoffRuns(scoredRunners);
 }
 
 // 走者のスピード(0〜100)。不明なら60。
@@ -6909,7 +7581,7 @@ function tagUpAdvance(depth) {
   if (G.bases[1] && !G.bases[2] && Math.random() < prob(runnerSpeed(G.bases[1]), false)) {
     G.bases[2] = G.bases[1]; G.bases[1] = null;          // 2塁走者 タッチアップで3塁へ
   }
-  return scored;
+  return capWalkoffRuns(scored);
 }
 // ゴロ(非併殺)での走者進塁。weak=ボテボテ(緩)ゴロか。打者は1塁でアウト前提。
 //   野球規則のフォース(封塁)を反映: 打者が一塁へ走ることで押し出される走者は必ず1つ進塁する。
@@ -6946,7 +7618,7 @@ function advanceRunnersOnGrounder(weak) {
     else nb[0] = r0;   // 通常起こらない安全策 (前位の走者が残った場合は1塁残留)
   }
   G.bases = nb;
-  return scored;
+  return capWalkoffRuns(scored);
 }
 
 // 実況フォーマッタ: 打席結果を詳細にナレーションする
@@ -7474,7 +8146,7 @@ function executeSteal(side) {
     const st = G.batterStats && G.batterStats[ref.side] && G.batterStats[ref.side][ref.slotIdx];
     if (st) st.SB = (st.SB || 0) + 1;
     logLine(`🏃💨 ${rn} 二盗成功！`, 'event-hit');
-    return { attempted: true, success: true, thirdOut: false, runnerName: rn, runnerPlayer, catcherName, souru, touru,
+    return { attempted: true, success: true, thirdOut: false, runnerName: rn, runnerPlayer, catcherName, catcherPlayer: catcher, souru, touru,
              runnerGameSB: st ? st.SB : 1 };   // この試合の盗塁数 (シーズン通算の実況用)
   }
   // 失敗 (盗塁死)
@@ -7488,7 +8160,7 @@ function executeSteal(side) {
   if (pStat) pStat.outs = (pStat.outs || 0) + 1;  // イニング消化 (投手の投球回に計上)
   const thirdOut = G.outs >= 3;
   logLine(`🏃❌ ${rn} 盗塁失敗、二塁でタッチアウト！${thirdOut ? ' スリーアウトチェンジ！！' : ''}`, 'event-out');
-  return { attempted: true, success: false, thirdOut, runnerName: rn, runnerPlayer, catcherName, arm };
+  return { attempted: true, success: false, thirdOut, runnerName: rn, runnerPlayer, catcherName, catcherPlayer: catcher, arm };
 }
 
 // 手動盗塁ダイアログ: 能力値と目安成功率を開示し、実行可否を確認
@@ -7541,13 +8213,22 @@ function maybeAutoSteal(side) {
     (souru + touru     - arm - 100 - taoTou > 0 && rand19 > 10);    // 45%画策
   if (!attempt) return null;
   // 盗塁機能(スピード+盗塁能)が高い選手ほど企画数を削減し、シーズン盗塁数のバランスを取る
+  //   (上位2段階はシーズン盗塁王クラスが60〜50個に届きすぎたため強化: 上位5名を10個程度削減。
+  //    中位以下(<110)は据え置きで、中盤・下位メンバーの盗塁数は変えない)
   const sbFunc = souru + touru;
   let cut = 0;
-  if      (sbFunc >= 120) cut = 0.40;   // 40%減
-  else if (sbFunc >= 110) cut = 0.30;   // 30%減
+  if      (sbFunc >= 120) cut = 0.52;   // 52%減 (旧40%: 通過率0.60→0.48 ≒ 盗塁数0.8倍)
+  else if (sbFunc >= 110) cut = 0.42;   // 42%減 (旧30%: 通過率0.70→0.58 ≒ 盗塁数0.83倍)
   else if (sbFunc >= 100) cut = 0.20;   // 20%減
   else if (sbFunc >= 90)  cut = 0.10;   // 10%減
   else if (sbFunc >= 80)  cut = 0.05;   // 5%減
+  // 盗塁能特化型の追加削減: 画策条件(55%/75%ゲート)は盗塁能を×3で加重するため、
+  //   スピードが平凡でも盗塁能が突出した走者(例: 走58+盗50)は単純合計では中位扱いのまま
+  //   画策過多になり、シーズン70盗塁超の暴走が起きる。同じ加重値で検出して強めに間引く
+  //   (走58+盗50=加重208 → 見送り60%: 通過率0.80→0.40 ≒ 盗塁数73→36前後)。
+  const sbFunc3 = souru + touru * 3;
+  if      (sbFunc3 >= 195) cut = Math.max(cut, 0.60);   // 60%減 (特化型・超上位)
+  else if (sbFunc3 >= 175) cut = Math.max(cut, 0.45);   // 45%減 (特化型・上位)
   if (cut > 0 && Math.random() < cut) return null;   // 今回は企画を見送る
   return executeSteal(side);
 }
@@ -9532,7 +10213,7 @@ function applySeasonStamina() {
 //   TB_STATE と描画関数を一時退避し、autoFillTeamBuild をヘッドレス実行 → saveTeamBuild。
 function seasonEnsureBuild(teamCode) {
   const t = normalizeTeam(teamCode);
-  if (!t || t === 'original') return;
+  if (!t || isOriginalTeam(t)) return;   // オリジナル系(original/RCP)はシーズン30球団の対象外
   if (localStorage.getItem(TB_STORAGE_PREFIX + t)) return;   // 既に保存済み → 触れない
   const _tb = TB_STATE, _render = renderTeamBuild, _last = localStorage.getItem(TB_LAST_TEAM_KEY);
   try {
@@ -10032,7 +10713,7 @@ function seasonAutoHtml() {
     </div>`;
   }
   const remain = SEASON.schedule.length - SEASON.cursor;
-  const opts = [1, 3, 9, 30, 100, 200, 400, remain].filter((v, i, a) => v <= remain && a.indexOf(v) === i)
+  const opts = [1, 3, 9, 30, 100, 200, 400, 800, 1200, remain].filter((v, i, a) => v <= remain && a.indexOf(v) === i)
     .map(v => `<option value="${v}">${v === remain ? '残り全部 (' + remain + ')' : v + ' 試合'}</option>`).join('');
   return `<div class="season-auto">
     ${seasonGameHeaderHtml()}
