@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -4279,14 +4279,17 @@ function awardToJa(award) {
   //     "Yankees Player of the Year"  → "ヤンキース年間最優秀選手賞"
   if (n.includes('pitcher of the year')) {
     const pfx = awardTeamJa || (lg || '');
+    if (!pfx) return null; // チーム名・リーグ名不明 → MVP誤認防止のためスキップ
     return `${pfx}年間最優秀投手賞`;
   }
   if (n.includes('player of the year') || n.includes('hitter of the year')) {
     const pfx = awardTeamJa || (lg || '');
+    if (!pfx) return null; // チーム名・リーグ名不明 → MVP誤認防止のためスキップ
     return `${pfx}年間最優秀選手賞`;
   }
   if (n.includes('reliever of the year') || n.includes('relief man')) {
     const pfx = awardTeamJa || (lg || '');
+    if (!pfx) return null; // チーム名・リーグ名不明 → スキップ
     return `${pfx}最優秀救援投手賞`;
   }
   if (n.includes('rookie of the year') && awardTeamJa) {
