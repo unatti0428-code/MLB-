@@ -2942,11 +2942,10 @@ function onExcelChange(input) {
         const yr  = r[1];
         const opt = document.createElement('option');
         opt.value = yr;
-        opt.textContent = yr + '年' + (String(yr) === String(g_peakYear) ? ' ★ピーク' : '');
-        if (String(yr) === String(g_peakYear)) opt.style.color = '#ffcc44';
         sel.appendChild(opt);
       });
       sel.value = g_peakYear;
+      labelYearOptions(sel);
 
       // 年代情報更新
       updateYearInfo(g_peakYear);
@@ -3423,8 +3422,9 @@ function applyWarManual() {
 function onYearChange() {
   const sel = document.getElementById('year-select');
   updateYearInfo(sel.value);
+  _colorYearSelect(sel);
   const q = document.getElementById('year-select-2');
-  if (q && q.options.length) q.value = sel.value;
+  if (q && q.options.length) { q.value = sel.value; _colorYearSelect(q); }
 }
 
 // カード下の年代選択：上部の年代選択と同じ選択肢・値にそろえる
@@ -3434,6 +3434,7 @@ function syncQuickYearOptions() {
   if (!main || !q) return;
   q.innerHTML = main.innerHTML;
   q.value = main.value;
+  _colorYearSelect(q);
 }
 
 function onQuickYearChange() {
@@ -3478,6 +3479,86 @@ function _rowIsCatcher(row) {
   return (parseFloat(row[28]) || 0) > 0; // C（捕手）守備イニング
 }
 
+// ── 総合力の計算（カード生成と年代選択の目安表示で共通） ──
+function _isCareerRow(r) { return !/^\d{4}$/.test(String(r[1] ?? '').trim()); }
+
+// 通算行のWAR：各年のWARを出場量（投手=イニング、野手=打数）で加重平均
+function _calcCareerWAR() {
+  if (!g_headers || !g_dataRows) return null;
+  const hdr = g_headers[0] || [];
+  const yr2r = {};
+  g_dataRows.filter(r => !_isCareerRow(r)).forEach(r => {
+    const yr = String(r[1] ?? '');
+    if (yr) { if (!yr2r[yr]) yr2r[yr] = []; yr2r[yr].push(r); }
+  });
+  const cRows = Object.values(yr2r).map(rows => {
+    const tot = rows.find(r => String(r[2] || '').toUpperCase() === 'TOT');
+    return tot || rows[0];
+  });
+  const getWt = r => {
+    if (g_isPitcher) return parseFloat(r[10]) || 0;
+    const ab = parseFloat(getFirstColVal(r, hdr, ['AB','打数','At Bats']));
+    return isNaN(ab) ? 0 : ab;
+  };
+  let wS = 0, wT = 0;
+  cRows.forEach(r => {
+    const raw = resolveWAR(r, hdr, g_isPitcher);
+    const num = parseFloat(String(raw ?? '').replace('~', ''));
+    const w   = getWt(r);
+    if (!isNaN(num) && w > 0) { wS += num * w; wT += w; }
+  });
+  return wT > 0 ? (wS / wT).toFixed(1) : null;
+}
+
+// 1行分の総合力（受賞などのタイトル加点前）。careerWar は通算行のときだけ渡す
+function _overallForRow(row, careerWar = null) {
+  const hdr = g_headers ? g_headers[0] : null;
+  const war = careerWar ?? (hdr ? resolveWAR(row, hdr, g_isPitcher) : '--');
+  if (g_isPitcher) {
+    const yr = String(row[1] ?? '');
+    const brF = /^\d{4}$/.test(yr) ? getBRefFIP(yr) : null;
+    const fip = brF !== null ? parseFloat(brF) : calcFIP(row);
+    return calcPitcherOverall(row, fip, war);
+  }
+  return calcHitterOverall(row, _rowIsCatcher(row), war);
+}
+
+function _starsForScore(s) {
+  return s > 99 ? 6 : s >= 90 ? 5 : s >= 80 ? 4 : s >= 70 ? 3 : s >= 60 ? 2 : s >= 50 ? 1 : 0;
+}
+
+// カードの枠色に合わせた文字色（Cランクは暗い背景で読めるよう明るめの灰色）
+const _RANK_BY_STARS = {
+  6: { rank: 'UR',  color: '#aabbff' }, 5: { rank: 'SSR', color: '#7fddff' },
+  4: { rank: 'SR',  color: '#f5c518' }, 3: { rank: 'RR',  color: '#e0e8f0' },
+  2: { rank: 'R',   color: '#cd7f32' }, 1: { rank: 'N',   color: '#ff4444' },
+  0: { rank: 'C',   color: '#9a9a9a' },
+};
+
+// 年代選択の各選択肢に「目安の総合力・ランク」をカード色で表示し、閉じた状態の文字色も選択中の年に合わせる
+function labelYearOptions(sel) {
+  if (!sel || !g_dataRows) return;
+  const careerWar = g_dataRows.some(_isCareerRow) ? _calcCareerWAR() : null;
+  Array.from(sel.options).forEach(opt => {
+    const row = g_dataRows.find(r => String(r[1]) === String(opt.value));
+    const yrLabel = /^\d{4}$/.test(opt.value) ? `${opt.value}年` : opt.value;
+    const pk = String(opt.value) === String(g_peakYear) ? ' ★ピーク' : '';
+    if (!row) { opt.textContent = yrLabel + pk; return; }
+    let score = null;
+    try { score = _overallForRow(row, _isCareerRow(row) ? careerWar : null); } catch (e) {}
+    if (score == null || isNaN(score)) { opt.textContent = yrLabel + pk; return; }
+    const rk = _RANK_BY_STARS[_starsForScore(score)];
+    opt.textContent = `${yrLabel}${pk}　総合力${Math.round(score)}（${rk.rank}）`;
+    opt.style.color = rk.color;
+  });
+  _colorYearSelect(sel);
+}
+
+function _colorYearSelect(sel) {
+  const o = sel && sel.options[sel.selectedIndex];
+  if (o && o.style.color) sel.style.color = o.style.color;
+}
+
 // ── ピーク年再計算：総合力（WAR込み）が最高の単年を g_peakYear にセット ──
 // BRef WARが取得済みであれば自動的に反映される
 function recalcPeakYear() {
@@ -3520,11 +3601,8 @@ function refreshPeakYear() {
   recalcPeakYear();
   const sel = document.getElementById('year-select');
   if (sel) {
-    Array.from(sel.options).forEach(opt => {
-      const isPk = String(opt.value) === String(g_peakYear);
-      opt.textContent = opt.value + '年' + (isPk ? ' ★ピーク' : '');
-      opt.style.color = isPk ? '#ffcc44' : '';
-    });
+    labelYearOptions(sel);
+    syncQuickYearOptions();
   }
   updateYearInfo(sel ? sel.value : g_peakYear);
 }
@@ -10310,34 +10388,7 @@ async function _doGenerate(photoInput) {
 
     // 通算行WARの事前計算（表面・裏面・総合力スコアで共有）
     {
-      const _isCareer = r => !/^\d{4}$/.test(String(r[1] ?? '').trim());
-      if (_isCareer(selectedRow) && g_headers && g_dataRows) {
-        const hdr = g_headers[0] || [];
-        const yr2r = {};
-        g_dataRows.filter(r => !_isCareer(r)).forEach(r => {
-          const yr = String(r[1] ?? '');
-          if (yr) { if (!yr2r[yr]) yr2r[yr] = []; yr2r[yr].push(r); }
-        });
-        const cRows = Object.values(yr2r).map(rows => {
-          const tot = rows.find(r => String(r[2] || '').toUpperCase() === 'TOT');
-          return tot || rows[0];
-        });
-        const getWt = r => {
-          if (g_isPitcher) return parseFloat(r[10]) || 0;
-          const ab = parseFloat(getFirstColVal(r, hdr, ['AB','打数','At Bats']));
-          return isNaN(ab) ? 0 : ab;
-        };
-        let wS = 0, wT = 0;
-        cRows.forEach(r => {
-          const raw = resolveWAR(r, hdr, g_isPitcher);
-          const num = parseFloat(String(raw ?? '').replace('~', ''));
-          const w   = getWt(r);
-          if (!isNaN(num) && w > 0) { wS += num * w; wT += w; }
-        });
-        g_careerWAR = wT > 0 ? (wS / wT).toFixed(1) : null;
-      } else {
-        g_careerWAR = null;
-      }
+      g_careerWAR = _isCareerRow(selectedRow) ? _calcCareerWAR() : null;
       // 通算行専用：キャリア最多試合チームを事前計算（表面・裏面で共有）
       // 通算行の所属が「ALL」(全球団集計)の場合はそのまま「ALL」を表示する。
       // それ以外は入力値を使わず、常にシーズンデータから自動計算する
@@ -10348,20 +10399,7 @@ async function _doGenerate(photoInput) {
     }
 
     // 総合力 → 星数 → テーマ（キャップなし・100超で6星ホログラム）
-    let overallScore;
-    if (g_isPitcher) {
-      const _fipOvr = (() => {
-        const yr = String(selectedRow[1] ?? '');
-        const brF = /^\d{4}$/.test(yr) ? getBRefFIP(yr) : null;
-        return brF !== null ? parseFloat(brF) : calcFIP(selectedRow);
-      })();
-      // WAR: 通算行は g_careerWAR（IP加重平均）を優先、単年は resolveWAR で取得
-      const realWarP = g_careerWAR ?? (g_headers ? resolveWAR(selectedRow, g_headers[0], true) : '--');
-      overallScore = calcPitcherOverall(selectedRow, _fipOvr, realWarP);
-    } else {
-      const realWarG = g_careerWAR ?? (g_headers ? resolveWAR(selectedRow, g_headers[0], false) : '--');
-      overallScore = calcHitterOverall(selectedRow, g_isCatcher, realWarG);
-    }
+    const overallScore = _overallForRow(selectedRow, g_careerWAR);
     g_baseOverallScore = overallScore; // タイトル加点前のスコアを保存
     g_genId++;          // 新カード生成を開始：古い非同期処理が誤って加点するのを防ぐ
     g_teamPhotoLocked  = false; // チーム別保存写真のロックをリセット（適用時に再セット）
@@ -10369,12 +10407,7 @@ async function _doGenerate(photoInput) {
     g_selectedRow      = selectedRow;
     g_isPeakRow        = isPeakRow;
 
-    const stars = overallScore > 99 ? 6
-                : overallScore >= 90 ? 5
-                : overallScore >= 80 ? 4
-                : overallScore >= 70 ? 3
-                : overallScore >= 60 ? 2
-                : overallScore >= 50 ? 1 : 0;
+    const stars = _starsForScore(overallScore);
     currentStars = stars;
     const theme  = getThemeVars(stars);
     g_currentTheme = theme; // 最新テーマを保持（保存時に参照）
@@ -10855,6 +10888,7 @@ window._injectTestData = function(rows, isPitcher, isCatcher, peakYear) {
       `<option value="${r[1]}">${r[1]}${r[1] == g_peakYear ? ' ★ピーク' : ''}</option>`
     ).join('');
     yearSel.value = String(g_peakYear);
+    labelYearOptions(yearSel);
   }
   document.getElementById('year-selector-section').style.display = 'block';
   clearError();
