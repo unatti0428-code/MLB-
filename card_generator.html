@@ -11,26 +11,25 @@
     min-height: 100vh;
     font-family: 'MS Gothic', 'Yu Gothic', 'Hiragino Kaku Gothic Pro', sans-serif;
     color: #fff;
-    padding: 12px 20px 40px;
+    padding: 4px 20px 40px;
   }
   .app-wrap { max-width: 920px; margin: 0 auto; }
   .app-title {
     text-align: center;
-    font-size: 21px;
+    font-size: 18px;
     font-weight: 900;
     color: #ffd700;
     text-shadow: 2px 2px 0 #000, 0 0 20px #ffd70066;
-    margin-bottom: 2px;
+    margin-bottom: 6px;
     letter-spacing: 4px;
   }
-  .app-sub { text-align: center; font-size: 11px; color: #8898b0; margin-bottom: 10px; letter-spacing: 1px; }
 
   /* ── メイン入力パネル ── */
   .input-panel {
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 12px;
-    padding: 12px 20px;
+    padding: 8px 20px;
     margin-bottom: 8px;
     display: flex;
     gap: 14px;
@@ -346,8 +345,7 @@
 </head>
 <body>
 <div class="app-wrap">
-  <h1 class="app-title">⚾ MLBカード生成ツール</h1>
-  <p class="app-sub">投手・野手・捕手のエクセルデータ＋選手写真を読み込み、データカードを自動生成</p>
+  <h1 class="app-title" title="投手・野手・捕手のエクセルデータ＋選手写真を読み込み、データカードを自動生成">⚾ MLBカード生成ツール</h1>
 
   <!-- メイン入力 -->
   <div class="input-panel">
@@ -10668,6 +10666,16 @@ function _buildEnrichPrompt(row, awardsLines) {
     `- 本文は${len.min}〜${len.max}字（カードの列伝欄 約${len.lines}行分）。${len.min}字未満は不可。エピソードを具体的に盛り込んで充実させる。${len.max}字を超えると末尾の文が削られるので超えないこと。`,
     '- 4〜6文。1文ごとに改行で区切る。',
     '- 最初の文はシーズン（または通算）成績の要約から始める。',
+    `- ${isCareer ? '経歴全体' : yearKey + '年'}の出来事を中心に書く。他の年に触れるときは必ず「◯◯年に」と年を明記し、1文以内にとどめる。`,
+    '- リーグ内の順位（「上位」「リーグ最多」「歴代◯位」など）は、情報源で数字を確認できた場合だけ書く。',
+    '',
+    '文章のルール（日本の野球ファン向けの自然な日本語で書く）:',
+    '- 英語記事の直訳調にしない。「それはやがて〜の起点だ」「〜を果たした左腕は〜される」のような翻訳調・倒置・体言止めは使わない。',
+    '- 「本大会」「同大会」「それ」「これ」など、何を指すか分かりにくい言葉を使わない。オールスターは「オールスターゲーム」、プレーオフは「ポストシーズン」と具体的に書く。',
+    '- 文末は「〜した。」「〜だった。」の過去形でそろえる。1文は60字程度までにし、情報を詰め込みすぎない。',
+    '- 数字の略語は日本語にする（ERA→防御率、SV→セーブ、K→奪三振）。WHIP・OPSはそのままでよい。',
+    '- 良い例：「2015年はオリオールズの抑えとして36セーブ、防御率1.92を記録した。」「沈む速球を武器に打者を圧倒し、初めてオールスターゲームに選ばれた。」',
+    '- 書き終えたら全文を読み直し、意味の通らない文や不自然な言い回しがあれば直してから出力する。',
     '',
     '出力は次のJSONだけにしてください（前後に説明文を付けない）:',
     '{"retsuden":"本文（文ごとに\\nで改行）","sources":["参照したURL"]}',
@@ -10738,7 +10746,7 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
       done(data.usage || usage, escapeHtml(msg));
       return;
     }
-    const text = String(data.retsuden).trim();
+    const text = String(data.retsuden).trim().replace(/\bERA\s?(?=\d)/g, '防御率');
     if (_enrichedTextHasUnverifiedAward(text, allAwards)) {
       console.warn('[AI列伝] 公式データにない受賞歴を含むため不採用:', text);
       done(data.usage, '⚠️ 公式データと合わない受賞歴が含まれたため、通常の列伝のままにしました');
