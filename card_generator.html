@@ -329,6 +329,8 @@
   .btn-save:hover { transform: translateY(-2px); box-shadow: 0 5px 20px #0066cc55; color: #ddeeff; }
   .btn-save:active { transform: translateY(0); }
   #save-msg { font-size: 12px; color: #77cc88; font-weight: 900; letter-spacing: 1px; }
+  #ai-status-mini { font-size: 12px; color: #ddd; max-width: 360px; }
+  #ai-status-mini b { color: #fff; }
 
   /* ── カードフリップ（機構のみ） ── */
   .card-flip-scene { perspective: 1400px; }
@@ -493,6 +495,7 @@
       <button class="btn-generate btn-quick-gen" onclick="generateCard()">カード生成</button>
     </div>
     <button class="btn-save" onclick="saveCardAsHTML()">💾 HTMLとして保存</button>
+    <span id="ai-status-mini"></span>
     <span id="save-msg"></span>
   </div>
 
@@ -10578,6 +10581,7 @@ function onAiEnrichSettingChange() {
     }));
   } catch (e) {}
   if (isAiEnrichOn()) refreshAiUsage();
+  else { const mini = document.getElementById('ai-status-mini'); if (mini) mini.innerHTML = ''; }
 }
 
 function _fmtTokens(n) {
@@ -10594,8 +10598,12 @@ function renderAiUsage(u, note) {
   const el = document.getElementById('ai-usage-status');
   if (!el) return;
   const official = '<a href="https://claude.ai/settings/usage" target="_blank" rel="noopener" style="color:#b9a4ff">公式の残り枠</a>';
+  // カード下（HTMLとして保存の右）にも状態・カウントダウンを表示（AI列伝強化ON時のみ）
+  const mini = document.getElementById('ai-status-mini');
+  const setMini = (html) => { if (mini) mini.innerHTML = isAiEnrichOn() ? html : ''; };
   if (!u) {
     el.innerHTML = `⚪ 中継サーバー未起動（<b>claude_bridge.bat</b> を起動してください）｜${official}`;
+    setMini('⚪ 中継サーバー未起動');
     return;
   }
   let head;
@@ -10606,6 +10614,7 @@ function renderAiUsage(u, note) {
     head = `🔴 プロプラン上限到達中${until}— 通常の列伝で生成します`;
   } else if (u.busy || g_aiEnrichBusy) head = '🟣 Claude がエピソードを調査中…';
   else head = '🟢 利用可能';
+  setMini(head);
   const s5 = u.last5h, td = u.today, w = u.last7d;
   el.innerHTML = `<div>${head}</div>` +
     `<div style="font-size:11px;color:#999;">直近5時間 <b>${s5.calls}</b>回（${_fmtTokens(s5.tokens)}トークン）` +
