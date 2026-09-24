@@ -175,7 +175,7 @@ async function enrich(body) {
     entry.durMs += Date.now() - p0;
     const pj = typeof pm.result === 'string' ? extractJson(pm.result) : null;
     const len = s => s.replace(/\s/g, '').length;
-    if (pr.code === 0 && !pm.is_error && pj && typeof pj.retsuden === 'string' && len(pj.retsuden) >= len(text) * 0.7) {
+    if (pr.code === 0 && !pm.is_error && pj && typeof pj.retsuden === 'string' && len(pj.retsuden) >= len(text) * 0.9) {
       text = pj.retsuden;
       entry.polished = true;
     }

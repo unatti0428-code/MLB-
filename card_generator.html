@@ -10629,13 +10629,15 @@ function _retsudenCapacity() {
   return lines > 0 && perLine > 0 ? { lines, perLine } : null;
 }
 
-// 列伝の目標字数：5〜7行（ただし欄に収まる行数を上限）。先頭の「【列伝】」ぶんを差し引く
+// 列伝の目標字数：7〜8行（ただし欄に収まる行数を上限）。先頭の「【列伝】」ぶんを差し引く
+// 下限は「上限より1行少ない分量」とし、短く終わらないようにする
 function _retsudenTargetLength() {
   const cap = _retsudenCapacity();
-  if (!cap) return { lines: 6, min: 260, max: 320 };
-  const lines = Math.min(7, cap.lines);
+  if (!cap) return { lines: 8, min: 260, max: 300 };
+  const lines = Math.min(8, cap.lines);
   const max = lines * cap.perLine - 6;
-  return { lines, min: Math.round(max * 0.85), max };
+  const min = Math.max(Math.round(max * 0.6), max - cap.perLine);
+  return { lines, min, max };
 }
 
 function _buildEnrichPrompt(row, awardsLines) {
@@ -10656,15 +10658,17 @@ function _buildEnrichPrompt(row, awardsLines) {
     `【MLB公式データで確認済みの受賞歴】${awardsLines.length ? '\n' + awardsLines.join('\n') : 'なし'}`,
     '',
     '手順:',
-    `1. Web検索（最大2回まで・ページを開くのも最大2ページまで）で Baseball-Reference、MLB.com、英語版Wikipedia など信頼できる情報源を調べ、この選手の${isCareer ? '経歴全体' : yearKey + '年'}の具体的なエピソード（印象的な試合や記録、転機、チーム内での役割、プレースタイルなど）を集める。`,
+    `1. Web検索（最大2回まで・ページを開くのは最大3ページまで）で Baseball-Reference、MLB.com、英語版Wikipedia など信頼できる情報源を調べ、この選手の${isCareer ? '経歴全体' : yearKey + '年'}の具体的なエピソード（印象的な試合や記録、転機、チーム内での役割、プレースタイルなど）を集める。`,
     '2. 信頼できる情報源で確認できた事実だけを使う。確認できないことは書かない。',
     '',
     '厳守事項:',
     '- 受賞歴・タイトルは【確認済みの受賞歴】と【確定成績】にあるものだけを書く。MVP投票の順位、ノミネート、候補、噂は書かない。',
     '- 成績の数字は【確定成績】と一致させる。',
     '- 選手や監督の発言（「」付きのセリフ）を創作しない。',
-    `- 本文は${len.min}〜${len.max}字（カードの列伝欄 約${len.lines}行分）。${len.min}字未満は不可。エピソードを具体的に盛り込んで充実させる。${len.max}字を超えると末尾の文が削られるので超えないこと。`,
-    '- 4〜6文。1文ごとに改行で区切る。',
+    `- 本文は${len.min}〜${len.max}字（カードの列伝欄 約${len.lines}行分）。${len.min}字未満は不可。${len.max}字を超えると末尾の文が削られるので超えないこと。`,
+    '- 成績の要約だけで終わらせず、具体的なエピソード（印象に残った試合・場面、記録の達成、転機、チームでの役割、人柄など）を2つ以上盛り込む。',
+    `- ${Math.max(4, len.lines - 2)}〜${len.lines}文。1文ごとに改行で区切る。`,
+    `- 書き上げたら字数を数え、${len.min}字に足りなければエピソードを1文加えてから出力する。`,
     '- 最初の文はシーズン（または通算）成績の要約から始める。',
     `- ${isCareer ? '経歴全体' : yearKey + '年'}の出来事を中心に書く。他の年に触れるときは必ず「◯◯年に」と年を明記し、1文以内にとどめる。`,
     '- リーグ内の順位（「上位」「リーグ最多」「歴代◯位」など）は、情報源で数字を確認できた場合だけ書く。',
@@ -10699,8 +10703,8 @@ function _buildPolishPrompt(row) {
     '- 球速のマイル・mph表記はkm/hに換算して整数で書く（1マイル＝約1.61km/h）。ERAは防御率にする。',
     `- 別の年の出来事を、${target}の活躍の結果のように結び付けている文は、事実だけを述べる形に直す。`,
     '- 文末は「〜した。」「〜だった。」でそろえる。1文は60字程度まで。長すぎる文は2文に分ける。',
-    '- 新しい事実は加えない。意味があいまいで直せない文は削ってよい。',
-    `- 全体で${len.min}〜${len.max}字、4〜6文、1文ごとに改行する。`,
+    '- 新しい事実は加えない。エピソードは削らず、分量をできるだけ減らさない（意味があいまいで直せない文だけは削ってよい）。',
+    `- 全体で${len.min}〜${len.max}字、${Math.max(4, len.lines - 2)}〜${len.lines}文、1文ごとに改行する。`,
     '',
     '出力は次のJSONだけにしてください（前後に説明文を付けない）:',
     '{"retsuden":"直した本文（文ごとに\\nで改行）"}',
