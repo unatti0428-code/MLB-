@@ -11,29 +11,29 @@
     min-height: 100vh;
     font-family: 'MS Gothic', 'Yu Gothic', 'Hiragino Kaku Gothic Pro', sans-serif;
     color: #fff;
-    padding: 40px 20px;
+    padding: 12px 20px 40px;
   }
   .app-wrap { max-width: 920px; margin: 0 auto; }
   .app-title {
     text-align: center;
-    font-size: 26px;
+    font-size: 21px;
     font-weight: 900;
     color: #ffd700;
     text-shadow: 2px 2px 0 #000, 0 0 20px #ffd70066;
-    margin-bottom: 6px;
+    margin-bottom: 2px;
     letter-spacing: 4px;
   }
-  .app-sub { text-align: center; font-size: 12px; color: #8898b0; margin-bottom: 28px; letter-spacing: 1px; }
+  .app-sub { text-align: center; font-size: 11px; color: #8898b0; margin-bottom: 10px; letter-spacing: 1px; }
 
   /* ── メイン入力パネル ── */
   .input-panel {
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 12px;
-    padding: 22px 26px;
-    margin-bottom: 12px;
+    padding: 12px 20px;
+    margin-bottom: 8px;
     display: flex;
-    gap: 18px;
+    gap: 14px;
     align-items: flex-end;
     flex-wrap: wrap;
   }
@@ -92,9 +92,9 @@
     background: rgba(140,90,255,0.08);
     border: 1px solid rgba(160,120,255,0.28);
     border-radius: 12px;
-    padding: 10px 18px;
-    margin-bottom: 12px;
-    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+    padding: 8px 16px;
+    margin-bottom: 8px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
     font-size: 13px;
   }
   #ai-enrich-bar .ai-title { font-weight: 900; color: #d9c8ff; }
@@ -127,8 +127,8 @@
     background: rgba(255,215,0,0.06);
     border: 1px solid rgba(255,215,0,0.20);
     border-radius: 12px;
-    padding: 16px 26px;
-    margin-bottom: 12px;
+    padding: 10px 20px;
+    margin-bottom: 8px;
     display: none;
     align-items: center;
     gap: 20px;
@@ -175,8 +175,8 @@
     background: rgba(0,80,160,0.10);
     border: 1px solid rgba(100,180,255,0.22);
     border-radius: 12px;
-    padding: 14px 22px 16px;
-    margin-bottom: 12px;
+    padding: 10px 18px 12px;
+    margin-bottom: 8px;
   }
   #mlb-search-section .input-label { color: #88bbee; }
   .mlb-search-row {
@@ -362,6 +362,18 @@
     <button class="btn-generate" onclick="generateCard()">カード生成</button>
   </div>
 
+  <!-- 年代選択パネル（Excel読込後に表示）: スクロールせずに選べるよう最上部に配置 -->
+  <div id="year-selector-section">
+    <div class="input-group">
+      <label class="input-label">📅 生成する年代</label>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:nowrap;">
+        <select id="year-select" onchange="onYearChange()" style="flex:0 0 auto;width:auto;"></select>
+        <button class="btn-generate" id="btn-gen-year" onclick="generateCard()" style="flex-shrink:0;margin:0;padding:10px 20px;font-size:13px;white-space:nowrap;">カード生成</button>
+      </div>
+    </div>
+    <div id="year-info"></div>
+  </div>
+
   <!-- AI列伝強化（Claude Code 連携）: ON のとき、プロプランの枠内で列伝のエピソードを充実させる -->
   <div id="ai-enrich-bar">
     <label class="ai-switch" title="AI列伝強化 ON/OFF">
@@ -468,18 +480,6 @@
         </details>
       </div>
     </div>
-  </div>
-
-  <!-- 年代選択パネル（Excel読込後に表示） -->
-  <div id="year-selector-section">
-    <div class="input-group">
-      <label class="input-label">📅 生成する年代</label>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:nowrap;">
-        <select id="year-select" onchange="onYearChange()" style="flex:0 0 auto;width:auto;"></select>
-        <button class="btn-generate" id="btn-gen-year" onclick="generateCard()" style="flex-shrink:0;margin:0;padding:10px 20px;font-size:13px;white-space:nowrap;">カード生成</button>
-      </div>
-    </div>
-    <div id="year-info"></div>
   </div>
 
   <div id="error-box"></div>
@@ -10614,7 +10614,34 @@ function _enrichedTextHasUnverifiedAward(text, allAwardsJa) {
   return false;
 }
 
+// カード上の列伝欄に収まる行数・1行の文字数を実測する（カードごとに欄の高さが異なるため）
+function _retsudenCapacity() {
+  const el = document.getElementById('retsuden-area');
+  if (!el || !el.clientHeight || !el.clientWidth) return null;
+  const cs = getComputedStyle(el);
+  const fs = parseFloat(cs.fontSize) || 11;
+  const lh = parseFloat(cs.lineHeight) || fs * 1.4;
+  const lines = Math.floor((el.clientHeight - (parseFloat(cs.paddingTop) || 0)) / lh);
+  // 実際のフォントで日本語の平均字幅を測る（折り返しの余裕として5%控えめにする）
+  const ctx = (_retsudenCapacity._c ||= document.createElement('canvas')).getContext('2d');
+  ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const sample = '年はチームの主力として活躍し、打率３割と２０本塁打を記録した。';
+  const charW = ctx.measureText(sample).width / sample.length || fs;
+  const perLine = Math.floor(el.clientWidth / charW * 0.95);
+  return lines > 0 && perLine > 0 ? { lines, perLine } : null;
+}
+
+// 列伝の目標字数：5〜7行（ただし欄に収まる行数を上限）。先頭の「【列伝】」ぶんを差し引く
+function _retsudenTargetLength() {
+  const cap = _retsudenCapacity();
+  if (!cap) return { lines: 6, min: 260, max: 320 };
+  const lines = Math.min(7, cap.lines);
+  const max = lines * cap.perLine - 6;
+  return { lines, min: Math.round(max * 0.85), max };
+}
+
 function _buildEnrichPrompt(row, awardsLines) {
+  const len = _retsudenTargetLength();
   const nameJa = String(row[0] || '');
   const nameEn = g_mlbNameEn || (g_brefId && _brefCache[g_brefId]?.nameEn) || '';
   const yearKey = String(row[1] || '');
@@ -10638,7 +10665,8 @@ function _buildEnrichPrompt(row, awardsLines) {
     '- 受賞歴・タイトルは【確認済みの受賞歴】と【確定成績】にあるものだけを書く。MVP投票の順位、ノミネート、候補、噂は書かない。',
     '- 成績の数字は【確定成績】と一致させる。',
     '- 選手や監督の発言（「」付きのセリフ）を創作しない。',
-    '- 3〜4文、合計180〜260字。1文ごとに改行で区切る。',
+    `- 本文は${len.min}〜${len.max}字（カードの列伝欄 約${len.lines}行分）。${len.min}字未満は不可。エピソードを具体的に盛り込んで充実させる。${len.max}字を超えると末尾の文が削られるので超えないこと。`,
+    '- 4〜6文。1文ごとに改行で区切る。',
     '- 最初の文はシーズン（または通算）成績の要約から始める。',
     '',
     '出力は次のJSONだけにしてください（前後に説明文を付けない）:',
