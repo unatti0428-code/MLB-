@@ -134,7 +134,7 @@
     flex-wrap: wrap;
   }
   #year-selector-section .input-group { flex: 0 0 auto; min-width: 160px; }
-  select#year-select {
+  select#year-select, select#year-select-2 {
     display: block;
     width: 100%;
     padding: 9px 12px;
@@ -148,7 +148,10 @@
     font-family: inherit;
     appearance: auto;
   }
-  select#year-select option { background: #1a1000; color: #fff; }
+  select#year-select option, select#year-select-2 option { background: #1a1000; color: #fff; }
+  .quick-regen { display: flex; gap: 8px; align-items: center; }
+  select#year-select-2 { width: auto; }
+  .btn-quick-gen { margin: 0; padding: 10px 20px; font-size: 13px; white-space: nowrap; }
   #year-info {
     flex: 1;
     font-size: 12px;
@@ -484,6 +487,11 @@
 
   <!-- 保存ボタン（カード生成後に表示） -->
   <div id="save-area">
+    <!-- カード表示位置のまま次の年度を生成できるよう、上部の年代選択と連動する選択欄を置く -->
+    <div class="quick-regen">
+      <select id="year-select-2" onfocus="syncQuickYearOptions()" onchange="onQuickYearChange()" title="生成する年代"></select>
+      <button class="btn-generate btn-quick-gen" onclick="generateCard()">カード生成</button>
+    </div>
     <button class="btn-save" onclick="saveCardAsHTML()">💾 HTMLとして保存</button>
     <span id="save-msg"></span>
   </div>
@@ -3412,6 +3420,23 @@ function applyWarManual() {
 function onYearChange() {
   const sel = document.getElementById('year-select');
   updateYearInfo(sel.value);
+  const q = document.getElementById('year-select-2');
+  if (q && q.options.length) q.value = sel.value;
+}
+
+// カード下の年代選択：上部の年代選択と同じ選択肢・値にそろえる
+function syncQuickYearOptions() {
+  const main = document.getElementById('year-select');
+  const q = document.getElementById('year-select-2');
+  if (!main || !q) return;
+  q.innerHTML = main.innerHTML;
+  q.value = main.value;
+}
+
+function onQuickYearChange() {
+  const main = document.getElementById('year-select');
+  main.value = document.getElementById('year-select-2').value;
+  onYearChange();
 }
 
 function updateYearInfo(selectedYear) {
@@ -10506,6 +10531,7 @@ async function _doGenerate(photoInput) {
       year      : selectedRow[1] || '0000',
     };
     document.getElementById('save-area').style.display = 'flex';
+    syncQuickYearOptions();
     document.getElementById('save-msg').textContent = '';
 
     area.scrollIntoView({ behavior: 'smooth', block: 'start' });
