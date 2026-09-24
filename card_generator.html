@@ -115,7 +115,7 @@
     background: #221638; color: #fff; border: 1px solid rgba(160,120,255,0.4);
     border-radius: 6px; padding: 4px 6px; font-size: 12px;
   }
-  #ai-usage-status { color: #bbb; font-size: 12px; flex: 1 1 260px; }
+  #ai-usage-status { color: #ddd; font-size: 12px; flex: 1 1 300px; line-height: 1.6; }
   #ai-usage-status b { color: #fff; }
   #ai-enrich-bar .ai-refresh {
     background: none; border: 1px solid rgba(160,120,255,0.4); color: #d9c8ff;
@@ -10514,12 +10514,14 @@ async function _doGenerate(photoInput) {
 
     // AI列伝生成（非同期）― JSON形式で retsuden / cardType / pitchNicknames / awardsJa を取得
     const _retGenId = g_genId;
-    fetchRetsudenFromAPI(selectedRow)
+    const _basePromise = fetchRetsudenFromAPI(selectedRow)
       .then(result => {
         updateRetsuden(result.retsuden || result);
         updateCardExtras(result.cardType || null, result.pitchNicknames || {}, result.awardsJa || [], !!result.isCareer);
-        if (isAiEnrichOn()) enrichRetsudenWithClaude(selectedRow, result.retsuden || result, _retGenId);
-      })
+      });
+    // AI列伝強化は通常の列伝と同時に依頼し、通常の列伝が表示された後で差し替える
+    if (isAiEnrichOn()) enrichRetsudenWithClaude(selectedRow, _retGenId, _basePromise.catch(() => {}));
+    _basePromise
       .catch(err => {
         console.warn('AI列伝エラー（統計テキストで代替）:', err.message);
         // エラー内容を画面に表示（原因特定のため）
@@ -10574,14 +10576,16 @@ function renderAiUsage(u, note) {
   }
   let head;
   if (note) head = note;
+  else if (u.authError) head = '🔑 Claude Code のログイン切れ（ターミナルで claude →「/login」）';
   else if (u.limitedNow) {
     const until = u.lastLimit && u.lastLimit.resetAt ? `（解除予定 ${_fmtTime(u.lastLimit.resetAt)}）` : '';
     head = `🔴 プロプラン上限到達中${until}— 通常の列伝で生成します`;
   } else if (u.busy || g_aiEnrichBusy) head = '🟣 Claude がエピソードを調査中…';
   else head = '🟢 利用可能';
   const s5 = u.last5h, td = u.today, w = u.last7d;
-  el.innerHTML = `${head}｜直近5時間 <b>${s5.calls}</b>回（${_fmtTokens(s5.tokens)}トークン）` +
-    `｜今日 <b>${td.calls}</b>回｜7日間 <b>${w.calls}</b>回（${_fmtTokens(w.tokens)}トークン）｜${official}`;
+  el.innerHTML = `<div>${head}</div>` +
+    `<div style="font-size:11px;color:#999;">直近5時間 <b>${s5.calls}</b>回（${_fmtTokens(s5.tokens)}トークン）` +
+    `｜今日 <b>${td.calls}</b>回｜7日間 <b>${w.calls}</b>回（${_fmtTokens(w.tokens)}トークン）｜${official}</div>`;
 }
 
 async function refreshAiUsage(note) {
@@ -10610,7 +10614,7 @@ function _enrichedTextHasUnverifiedAward(text, allAwardsJa) {
   return false;
 }
 
-function _buildEnrichPrompt(row, baseText, awardsLines) {
+function _buildEnrichPrompt(row, awardsLines) {
   const nameJa = String(row[0] || '');
   const nameEn = g_mlbNameEn || (g_brefId && _brefCache[g_brefId]?.nameEn) || '';
   const yearKey = String(row[1] || '');
@@ -10625,10 +10629,9 @@ function _buildEnrichPrompt(row, baseText, awardsLines) {
     `【対象】${target}`,
     `【確定成績】${statsLine || '（なし）'}`,
     `【MLB公式データで確認済みの受賞歴】${awardsLines.length ? '\n' + awardsLines.join('\n') : 'なし'}`,
-    `【現在の列伝（参考）】${String(baseText || '').replace(/\\n|\n/g, ' ')}`,
     '',
     '手順:',
-    `1. Web検索で Baseball-Reference、MLB.com、英語版Wikipedia など信頼できる情報源を調べ、この選手の${isCareer ? '経歴全体' : yearKey + '年'}の具体的なエピソード（印象的な試合や記録、転機、チーム内での役割、プレースタイルなど）を集める。`,
+    `1. Web検索（最大2回まで・ページを開くのも最大2ページまで）で Baseball-Reference、MLB.com、英語版Wikipedia など信頼できる情報源を調べ、この選手の${isCareer ? '経歴全体' : yearKey + '年'}の具体的なエピソード（印象的な試合や記録、転機、チーム内での役割、プレースタイルなど）を集める。`,
     '2. 信頼できる情報源で確認できた事実だけを使う。確認できないことは書かない。',
     '',
     '厳守事項:',
@@ -10643,9 +10646,37 @@ function _buildEnrichPrompt(row, baseText, awardsLines) {
   ].join('\n');
 }
 
-async function enrichRetsudenWithClaude(row, baseText, genId) {
+let g_aiCountdownTimer = null;
+
+// 目安時間からの残り秒数をバー付きで表示する（目安を超えたら経過秒数を表示）
+function _startAiCountdown(usage, modelLabel, estSec) {
+  clearInterval(g_aiCountdownTimer);
+  const started = Date.now();
+  const tick = () => {
+    const elapsed = Math.floor((Date.now() - started) / 1000);
+    const remain = estSec - elapsed;
+    const pct = Math.min(100, Math.round(elapsed / estSec * 100));
+    const bar = `<span style="display:inline-block;width:70px;height:6px;background:#3a2e55;border-radius:3px;vertical-align:middle;margin:0 4px;">` +
+      `<span style="display:block;width:${pct}%;height:100%;background:#a07cff;border-radius:3px;"></span></span>`;
+    const txt = remain > 0 ? `残り約 <b>${remain}</b>秒` : `もう少しお待ちください（経過 ${elapsed}秒）`;
+    renderAiUsage(usage, `🟣 Claude（${modelLabel}）調査中${bar}${txt}`);
+  };
+  tick();
+  g_aiCountdownTimer = setInterval(tick, 1000);
+}
+
+async function _requestEnrich(model, prompt, refresh) {
+  const res = await fetch(`${AI_BRIDGE_URL}/retsuden`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, prompt, refresh: !!refresh }),
+  });
+  return { res, data: await res.json() };
+}
+
+async function enrichRetsudenWithClaude(row, genId, baseShown) {
   const usage = await refreshAiUsage();
-  if (!usage || usage.limitedNow) return;
+  if (!usage || usage.limitedNow || usage.authError) return;
 
   // 通算・単年を問わず、全キャリアの公式受賞歴を事実確認用に渡す
   if (g_mlbId) await _fetchAndCacheAllAwards(g_mlbId);
@@ -10654,35 +10685,44 @@ async function enrichRetsudenWithClaude(row, baseText, genId) {
   const allAwards = awardYears.flatMap(y => _awardsJaByYear[y]);
 
   const model = document.getElementById('ai-enrich-model').value;
+  const modelLabel = model === 'opus' ? 'Opus' : 'Sonnet';
+  const prompt = _buildEnrichPrompt(row, awardsLines);
+  // 前の依頼が処理中なら、その分も待ち時間に含める
+  const est = ((usage.estSec && usage.estSec[model]) || 60) * (usage.busy ? 2 : 1);
+  const isCurrent = () => genId === g_genId;
   g_aiEnrichBusy = true;
-  renderAiUsage(usage, `🟣 Claude（${model === 'opus' ? 'Opus' : 'Sonnet'}）がエピソードを調査中…（1〜3分）`);
-  try {
-    const res = await fetch(`${AI_BRIDGE_URL}/retsuden`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt: _buildEnrichPrompt(row, baseText, awardsLines) }),
-    });
-    const data = await res.json();
+  _startAiCountdown(usage, modelLabel, est);
+  const done = (u, note) => {
+    if (!isCurrent()) return; // 新しいカードの表示を邪魔しない
+    clearInterval(g_aiCountdownTimer);
     g_aiEnrichBusy = false;
-    if (data.limited) { renderAiUsage(data.usage); return; }
+    renderAiUsage(u, note);
+  };
+  try {
+    let { res, data } = await _requestEnrich(model, prompt, false);
+    // 保存済みの結果が事実確認で不採用なら、1回だけ調べ直す
+    if (data.cached && data.retsuden && _enrichedTextHasUnverifiedAward(String(data.retsuden), allAwards)) {
+      ({ res, data } = await _requestEnrich(model, prompt, true));
+    }
+    if (data.limited) { done(data.usage); return; }
     if (!res.ok || !data.retsuden) {
       const msg = data.authError ? `🔑 ${data.error}` : `⚠️ AI列伝強化に失敗（通常の列伝のまま）: ${String(data.error || res.status).slice(0, 120)}`;
-      renderAiUsage(data.usage || usage, escapeHtml(msg));
+      done(data.usage || usage, escapeHtml(msg));
       return;
     }
-    if (genId !== g_genId) { renderAiUsage(data.usage); return; } // 別カード生成済み → 反映しない
     const text = String(data.retsuden).trim();
     if (_enrichedTextHasUnverifiedAward(text, allAwards)) {
       console.warn('[AI列伝] 公式データにない受賞歴を含むため不採用:', text);
-      renderAiUsage(data.usage, '⚠️ 公式データと合わない受賞歴が含まれたため、通常の列伝のままにしました');
+      done(data.usage, '⚠️ 公式データと合わない受賞歴が含まれたため、通常の列伝のままにしました');
       return;
     }
+    await baseShown; // 通常の列伝が表示されてから差し替える
+    if (!isCurrent()) return; // 別カード生成済み → 反映しない
     console.log('[AI列伝] 採用（参照元）:', data.sources);
     updateRetsuden(text);
-    renderAiUsage(data.usage, `✨ AI列伝を反映しました（${model === 'opus' ? 'Opus' : 'Sonnet'}）`);
+    done(data.usage, data.cached ? `⚡ 保存済みのAI列伝を反映しました（${modelLabel}・即時）` : `✨ AI列伝を反映しました（${modelLabel}）`);
   } catch (e) {
-    g_aiEnrichBusy = false;
-    renderAiUsage(null);
+    done(null);
   }
 }
 

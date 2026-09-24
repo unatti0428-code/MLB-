@@ -9,8 +9,18 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const PORT = 3950;
+const crypto = require('crypto');
 const USAGE_FILE = path.join(__dirname, 'claude_bridge_usage.json');
+const CACHE_FILE = path.join(__dirname, 'claude_bridge_cache.json');
 const MODELS = { opus: 'opus', sonnet: 'sonnet' };
+// ログイン情報ファイル（中身は読まず、更新日時だけで「ログインし直したか」を判定する）
+const CRED_FILE = path.join(os.homedir(), '.claude', '.credentials.json');
+function credMtime() {
+  try { return fs.statSync(CRED_FILE).mtimeMs; } catch { return 0; }
+}
+const AUTH_MSG = 'Claude Code のログインが切れています。ターミナルで「claude」を起動し「/login」でログインし直してください。';
+// 実績がまだ無いときの所要時間の目安（秒）
+const DEFAULT_EST_SEC = { opus: 75, sonnet: 50 };
 const TIMEOUT_MS = 240000;
 // 空の作業フォルダで実行し、プロジェクトのファイルや設定を読ませない
 const WORK_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-bridge-'));
@@ -36,6 +46,12 @@ function summarize(u) {
       costUsd: Math.round(cs.reduce((a, c) => a + (c.costUsd || 0), 0) * 100) / 100,
     };
   };
+  // 直近の成功5回の所要時間の中央値を目安にする
+  const estSec = {};
+  for (const m of Object.keys(MODELS)) {
+    const ds = u.calls.filter(c => c.ok && c.model === m && c.durMs).slice(-5).map(c => c.durMs).sort((a, b) => a - b);
+    estSec[m] = ds.length ? Math.round(ds[Math.floor(ds.length / 2)] / 1000) : DEFAULT_EST_SEC[m];
+  }
   const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
   const lim = u.lastLimit;
   const limitedNow = !!(lim && (lim.resetAt ? lim.resetAt > now : now - lim.at < 3600000));
@@ -45,8 +61,15 @@ function summarize(u) {
     last7d: sum(now - 7 * 86400000),
     lastLimit: lim,
     limitedNow,
+    authError: authErrorNow(u),
     busy,
+    estSec,
   };
+}
+
+// ログイン切れ後、ログイン情報が更新されていなければ即座に「ログイン切れ」と返す（3分待たせない）
+function authErrorNow(u) {
+  return !!(u.lastAuthError && u.lastAuthError.credMtime === credMtime());
 }
 
 // ── 上限到達の判定 ─────────────────────────────────────────
@@ -63,7 +86,9 @@ function runClaude(prompt, model) {
   return new Promise((resolve) => {
     const env = { ...process.env };
     for (const k of Object.keys(env)) if (k === 'CLAUDECODE' || k.startsWith('CLAUDE_CODE_')) delete env[k];
-    const args = ['-p', '--model', model, '--output-format', 'json', '--allowedTools', 'WebSearch,WebFetch'];
+    // 高速化: 思考は軽め・MCP/スキル/セッション保存は読み込まない
+    const args = ['-p', '--model', model, '--output-format', 'json', '--allowedTools', 'WebSearch,WebFetch',
+      '--effort', 'low', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence'];
     // Windows の claude は .cmd のため shell 経由で起動（引数は固定値のみ、プロンプトは標準入力で渡す）
     const child = spawn('claude', args, { cwd: WORK_DIR, env, shell: process.platform === 'win32', windowsHide: true });
     let out = '', err = '';
@@ -82,14 +107,29 @@ function extractJson(text) {
   try { return JSON.parse(text.slice(s, e + 1)); } catch { return null; }
 }
 
+// ── 結果の保存（同じ依頼は即時に返し、プロプラン枠を使わない） ──
+function cacheKey(model, prompt) {
+  return crypto.createHash('sha1').update(model + '\n' + prompt).digest('hex');
+}
+function loadCache() {
+  try { return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')); } catch { return {}; }
+}
+function saveCache(key, value) {
+  const c = loadCache();
+  c[key] = { ...value, savedAt: Date.now() };
+  fs.writeFileSync(CACHE_FILE, JSON.stringify(c, null, 1));
+}
+
 let busy = false;
 let queue = Promise.resolve();
 
 async function enrich(body) {
   const model = MODELS[body.model] || 'opus';
+  const prompt = String(body.prompt || '');
   const usage = loadUsage();
-  const r = await runClaude(String(body.prompt || ''), model);
-  const entry = { t: Date.now(), model, ok: false };
+  const started = Date.now();
+  const r = await runClaude(prompt, model);
+  const entry = { t: Date.now(), model, ok: false, durMs: Date.now() - started };
 
   if (r.spawnError) {
     return { status: 500, json: { error: 'Claude Code を起動できませんでした: ' + r.spawnError } };
@@ -112,18 +152,20 @@ async function enrich(body) {
   }
   if (r.code !== 0 || meta.is_error) {
     usage.calls.push(entry);
+    const isAuth = /authenticat|oauth|401|not logged in|\/login/i.test(`${resultText}\n${r.err}`);
+    if (isAuth) usage.lastAuthError = { at: Date.now(), credMtime: credMtime() };
     saveUsage(usage);
-    if (/authenticat|oauth|401|not logged in|\/login/i.test(`${resultText}\n${r.err}`)) {
-      return { status: 401, json: { authError: true, error: 'Claude Code のログインが切れています。ターミナルで「claude」を起動し「/login」でログインし直してください。', usage: summarize(usage) } };
-    }
+    if (isAuth) return { status: 401, json: { authError: true, error: AUTH_MSG, usage: summarize(usage) } };
     return { status: 502, json: { error: (resultText || r.err || 'unknown error').slice(0, 300), usage: summarize(usage) } };
   }
   const parsed = extractJson(resultText);
   entry.ok = !!(parsed && typeof parsed.retsuden === 'string');
   usage.calls.push(entry);
   if (usage.lastLimit && entry.ok) usage.lastLimit = null;
+  usage.lastAuthError = null;
   saveUsage(usage);
   if (!entry.ok) return { status: 502, json: { error: '回答の形式が不正でした', usage: summarize(usage) } };
+  saveCache(cacheKey(model, prompt), { retsuden: parsed.retsuden, sources: parsed.sources || [], model });
   return { status: 200, json: { retsuden: parsed.retsuden, sources: parsed.sources || [], model, usage: summarize(usage) } };
 }
 
@@ -159,6 +201,10 @@ http.createServer((req, res) => {
       try { body = JSON.parse(raw); } catch { send(400, { error: 'bad json' }); return; }
       const usage = loadUsage();
       const s = summarize(usage);
+      const model = MODELS[body.model] || 'opus';
+      const hit = !body.refresh && loadCache()[cacheKey(model, String(body.prompt || ''))];
+      if (hit) { send(200, { ...hit, cached: true, usage: s }); return; }
+      if (s.authError) { send(401, { authError: true, error: AUTH_MSG, usage: s }); return; }
       if (s.limitedNow) { send(429, { limited: true, message: usage.lastLimit.message, usage: s }); return; }
       queue = queue.then(async () => {
         busy = true;
