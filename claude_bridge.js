@@ -82,12 +82,13 @@ function detectLimit(text) {
 }
 
 // ── claude -p 実行 ──────────────────────────────────────────
-function runClaude(prompt, model) {
+function runClaude(prompt, model, allowWeb = true) {
   return new Promise((resolve) => {
     const env = { ...process.env };
     for (const k of Object.keys(env)) if (k === 'CLAUDECODE' || k.startsWith('CLAUDE_CODE_')) delete env[k];
-    // 高速化: 思考は軽め・MCP/スキル/セッション保存は読み込まない
-    const args = ['-p', '--model', model, '--output-format', 'json', '--allowedTools', 'WebSearch,WebFetch',
+    // 高速化: 思考は軽め・MCP/スキル/セッション保存は読み込まない（校正工程ではWebも使わない）
+    const args = ['-p', '--model', model, '--output-format', 'json',
+      ...(allowWeb ? ['--allowedTools', 'WebSearch,WebFetch'] : []),
       '--effort', 'low', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence'];
     // Windows の claude は .cmd のため shell 経由で起動（引数は固定値のみ、プロンプトは標準入力で渡す）
     const child = spawn('claude', args, { cwd: WORK_DIR, env, shell: process.platform === 'win32', windowsHide: true });
@@ -160,13 +161,34 @@ async function enrich(body) {
   }
   const parsed = extractJson(resultText);
   entry.ok = !!(parsed && typeof parsed.retsuden === 'string');
+  let text = entry.ok ? parsed.retsuden : '';
+
+  // 校正工程（依頼があるときのみ）：事実を変えずに日本語だけを整える。失敗したら下書きをそのまま使う
+  if (entry.ok && typeof body.polishPrompt === 'string' && body.polishPrompt.includes('{{TEXT}}')) {
+    const p0 = Date.now();
+    const pr = await runClaude(body.polishPrompt.replace('{{TEXT}}', text), model, false);
+    const pm = extractJson(pr.out || '') || {};
+    if (pm.usage) {
+      entry.inTok = (entry.inTok || 0) + (pm.usage.input_tokens || 0) + (pm.usage.cache_creation_input_tokens || 0) + (pm.usage.cache_read_input_tokens || 0);
+      entry.outTok = (entry.outTok || 0) + (pm.usage.output_tokens || 0);
+    }
+    entry.durMs += Date.now() - p0;
+    const pj = typeof pm.result === 'string' ? extractJson(pm.result) : null;
+    const len = s => s.replace(/\s/g, '').length;
+    if (pr.code === 0 && !pm.is_error && pj && typeof pj.retsuden === 'string' && len(pj.retsuden) >= len(text) * 0.7) {
+      text = pj.retsuden;
+      entry.polished = true;
+    }
+  }
+
   usage.calls.push(entry);
   if (usage.lastLimit && entry.ok) usage.lastLimit = null;
   usage.lastAuthError = null;
   saveUsage(usage);
   if (!entry.ok) return { status: 502, json: { error: '回答の形式が不正でした', usage: summarize(usage) } };
-  saveCache(cacheKey(model, prompt), { retsuden: parsed.retsuden, sources: parsed.sources || [], model });
-  return { status: 200, json: { retsuden: parsed.retsuden, sources: parsed.sources || [], model, usage: summarize(usage) } };
+  const result = { retsuden: text, sources: parsed.sources || [], model, polished: !!entry.polished };
+  saveCache(cacheKey(model, prompt), result);
+  return { status: 200, json: { ...result, usage: summarize(usage) } };
 }
 
 // ── HTTP ────────────────────────────────────────────────

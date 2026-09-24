@@ -10674,11 +10674,39 @@ function _buildEnrichPrompt(row, awardsLines) {
     '- 「本大会」「同大会」「それ」「これ」など、何を指すか分かりにくい言葉を使わない。オールスターは「オールスターゲーム」、プレーオフは「ポストシーズン」と具体的に書く。',
     '- 文末は「〜した。」「〜だった。」の過去形でそろえる。1文は60字程度までにし、情報を詰め込みすぎない。',
     '- 数字の略語は日本語にする（ERA→防御率、SV→セーブ、K→奪三振）。WHIP・OPSはそのままでよい。',
+    '- 球速はkm/hで書く（マイル・mphは使わない。1マイル＝約1.61km/hで換算して整数に）。',
+    '- 別の年の出来事を、対象年の活躍の結果のように結び付けない（例：翌年の受賞を「この年の活躍が称えられた」と書かない）。',
     '- 良い例：「2015年はオリオールズの抑えとして36セーブ、防御率1.92を記録した。」「沈む速球を武器に打者を圧倒し、初めてオールスターゲームに選ばれた。」',
     '- 書き終えたら全文を読み直し、意味の通らない文や不自然な言い回しがあれば直してから出力する。',
     '',
     '出力は次のJSONだけにしてください（前後に説明文を付けない）:',
     '{"retsuden":"本文（文ごとに\\nで改行）","sources":["参照したURL"]}',
+  ].join('\n');
+}
+
+// Sonnet 用の校正工程の指示（{{TEXT}} に下書きが入る）。事実は変えず日本語だけを整える
+function _buildPolishPrompt(row) {
+  const len = _retsudenTargetLength();
+  const yearKey = String(row[1] || '');
+  const target = /^\d{4}$/.test(yearKey) ? `${yearKey}年シーズン` : 'MLB通算';
+  return [
+    `あなたは日本の野球雑誌の校閲担当です。次は野球カードに載せる、${target}の選手紹介文の下書きです。`,
+    '事実・数字・年は一切変えずに、日本の野球ファンが自然に読める日本語に直してください。',
+    '',
+    '直す観点:',
+    '- 翻訳調や不自然な言い回しを、自然な表現に言い換える（例：「〜の起点をこの年につくった」「改めて称えられた」「〜を果たした左腕は〜される」）。',
+    '- 何を指すか分かりにくい言葉（本大会・本番・同大会・それ・この）を、具体的な言葉に直す（例：本番→オールスターゲーム）。',
+    '- 球速のマイル・mph表記はkm/hに換算して整数で書く（1マイル＝約1.61km/h）。ERAは防御率にする。',
+    `- 別の年の出来事を、${target}の活躍の結果のように結び付けている文は、事実だけを述べる形に直す。`,
+    '- 文末は「〜した。」「〜だった。」でそろえる。1文は60字程度まで。長すぎる文は2文に分ける。',
+    '- 新しい事実は加えない。意味があいまいで直せない文は削ってよい。',
+    `- 全体で${len.min}〜${len.max}字、4〜6文、1文ごとに改行する。`,
+    '',
+    '出力は次のJSONだけにしてください（前後に説明文を付けない）:',
+    '{"retsuden":"直した本文（文ごとに\\nで改行）"}',
+    '',
+    '下書き:',
+    '{{TEXT}}',
   ].join('\n');
 }
 
@@ -10701,11 +10729,11 @@ function _startAiCountdown(usage, modelLabel, estSec) {
   g_aiCountdownTimer = setInterval(tick, 1000);
 }
 
-async function _requestEnrich(model, prompt, refresh) {
+async function _requestEnrich(model, prompt, refresh, polishPrompt) {
   const res = await fetch(`${AI_BRIDGE_URL}/retsuden`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, prompt, refresh: !!refresh }),
+    body: JSON.stringify({ model, prompt, refresh: !!refresh, polishPrompt: polishPrompt || undefined }),
   });
   return { res, data: await res.json() };
 }
@@ -10723,6 +10751,8 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
   const model = document.getElementById('ai-enrich-model').value;
   const modelLabel = model === 'opus' ? 'Opus' : 'Sonnet';
   const prompt = _buildEnrichPrompt(row, awardsLines);
+  // Sonnet は日本語が硬くなりやすいため、書いた後に校正工程を1回はさむ
+  const polishPrompt = model === 'sonnet' ? _buildPolishPrompt(row) : null;
   // 前の依頼が処理中なら、その分も待ち時間に含める
   const est = ((usage.estSec && usage.estSec[model]) || 60) * (usage.busy ? 2 : 1);
   const isCurrent = () => genId === g_genId;
@@ -10735,10 +10765,10 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
     renderAiUsage(u, note);
   };
   try {
-    let { res, data } = await _requestEnrich(model, prompt, false);
+    let { res, data } = await _requestEnrich(model, prompt, false, polishPrompt);
     // 保存済みの結果が事実確認で不採用なら、1回だけ調べ直す
     if (data.cached && data.retsuden && _enrichedTextHasUnverifiedAward(String(data.retsuden), allAwards)) {
-      ({ res, data } = await _requestEnrich(model, prompt, true));
+      ({ res, data } = await _requestEnrich(model, prompt, true, polishPrompt));
     }
     if (data.limited) { done(data.usage); return; }
     if (!res.ok || !data.retsuden) {
