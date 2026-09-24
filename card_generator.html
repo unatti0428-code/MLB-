@@ -87,6 +87,41 @@
   .btn-generate:hover { transform: translateY(-2px); box-shadow: 0 6px 28px #ffd70055; }
   .btn-generate:active { transform: translateY(0); }
 
+  /* ── AI列伝強化バー（Claude Code 連携） ── */
+  #ai-enrich-bar {
+    background: rgba(140,90,255,0.08);
+    border: 1px solid rgba(160,120,255,0.28);
+    border-radius: 12px;
+    padding: 10px 18px;
+    margin-bottom: 12px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+    font-size: 13px;
+  }
+  #ai-enrich-bar .ai-title { font-weight: 900; color: #d9c8ff; }
+  .ai-switch { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }
+  .ai-switch input { opacity: 0; width: 0; height: 0; }
+  .ai-slider {
+    position: absolute; inset: 0; cursor: pointer; border-radius: 24px;
+    background: #4a4060; transition: background .2s;
+  }
+  .ai-slider::before {
+    content: ''; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px;
+    border-radius: 50%; background: #fff; transition: transform .2s;
+  }
+  .ai-switch input:checked + .ai-slider { background: #8a5cff; }
+  .ai-switch input:checked + .ai-slider::before { transform: translateX(20px); }
+  .ai-switch input:focus-visible + .ai-slider { outline: 2px solid #d9c8ff; outline-offset: 2px; }
+  #ai-enrich-model {
+    background: #221638; color: #fff; border: 1px solid rgba(160,120,255,0.4);
+    border-radius: 6px; padding: 4px 6px; font-size: 12px;
+  }
+  #ai-usage-status { color: #bbb; font-size: 12px; flex: 1 1 260px; }
+  #ai-usage-status b { color: #fff; }
+  #ai-enrich-bar .ai-refresh {
+    background: none; border: 1px solid rgba(160,120,255,0.4); color: #d9c8ff;
+    border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 12px;
+  }
+
   /* ── 年代選択パネル ── */
   #year-selector-section {
     background: rgba(255,215,0,0.06);
@@ -325,6 +360,21 @@
       <input type="file" id="photo-file" accept="image/*">
     </div>
     <button class="btn-generate" onclick="generateCard()">カード生成</button>
+  </div>
+
+  <!-- AI列伝強化（Claude Code 連携）: ON のとき、プロプランの枠内で列伝のエピソードを充実させる -->
+  <div id="ai-enrich-bar">
+    <label class="ai-switch" title="AI列伝強化 ON/OFF">
+      <input type="checkbox" id="ai-enrich-toggle" onchange="onAiEnrichSettingChange()">
+      <span class="ai-slider"></span>
+    </label>
+    <span class="ai-title">✨ AI列伝強化（Claude Code）</span>
+    <select id="ai-enrich-model" onchange="onAiEnrichSettingChange()" title="使用するモデル">
+      <option value="opus">Opus（高品質）</option>
+      <option value="sonnet">Sonnet（軽量・枠の節約）</option>
+    </select>
+    <span id="ai-usage-status">使用状況を確認中…</span>
+    <button class="ai-refresh" onclick="refreshAiUsage()" title="使用状況を更新">↻ 更新</button>
   </div>
 
   <!-- MLB 選手検索パネル（省略可） -->
@@ -10463,10 +10513,12 @@ async function _doGenerate(photoInput) {
     area.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     // AI列伝生成（非同期）― JSON形式で retsuden / cardType / pitchNicknames / awardsJa を取得
+    const _retGenId = g_genId;
     fetchRetsudenFromAPI(selectedRow)
       .then(result => {
         updateRetsuden(result.retsuden || result);
         updateCardExtras(result.cardType || null, result.pitchNicknames || {}, result.awardsJa || [], !!result.isCareer);
+        if (isAiEnrichOn()) enrichRetsudenWithClaude(selectedRow, result.retsuden || result, _retGenId);
       })
       .catch(err => {
         console.warn('AI列伝エラー（統計テキストで代替）:', err.message);
@@ -10481,6 +10533,167 @@ async function _doGenerate(photoInput) {
     console.error(err);
   }
 }
+
+// ===== AI列伝強化（Claude Code 連携：claude_bridge.js 経由） =====
+const AI_BRIDGE_URL = 'http://localhost:3950';
+const AI_ENRICH_PREF_KEY = 'aiEnrichPrefs';
+let g_aiEnrichBusy = false;
+
+function isAiEnrichOn() {
+  const el = document.getElementById('ai-enrich-toggle');
+  return !!(el && el.checked);
+}
+
+function onAiEnrichSettingChange() {
+  try {
+    localStorage.setItem(AI_ENRICH_PREF_KEY, JSON.stringify({
+      on: isAiEnrichOn(),
+      model: document.getElementById('ai-enrich-model').value,
+    }));
+  } catch (e) {}
+  if (isAiEnrichOn()) refreshAiUsage();
+}
+
+function _fmtTokens(n) {
+  if (!n) return '0';
+  return n >= 10000 ? `${(n / 10000).toFixed(1)}万` : String(n);
+}
+
+function _fmtTime(ms) {
+  const d = new Date(ms);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function renderAiUsage(u, note) {
+  const el = document.getElementById('ai-usage-status');
+  if (!el) return;
+  const official = '<a href="https://claude.ai/settings/usage" target="_blank" rel="noopener" style="color:#b9a4ff">公式の残り枠</a>';
+  if (!u) {
+    el.innerHTML = `⚪ 中継サーバー未起動（<b>claude_bridge.bat</b> を起動してください）｜${official}`;
+    return;
+  }
+  let head;
+  if (note) head = note;
+  else if (u.limitedNow) {
+    const until = u.lastLimit && u.lastLimit.resetAt ? `（解除予定 ${_fmtTime(u.lastLimit.resetAt)}）` : '';
+    head = `🔴 プロプラン上限到達中${until}— 通常の列伝で生成します`;
+  } else if (u.busy || g_aiEnrichBusy) head = '🟣 Claude がエピソードを調査中…';
+  else head = '🟢 利用可能';
+  const s5 = u.last5h, td = u.today, w = u.last7d;
+  el.innerHTML = `${head}｜直近5時間 <b>${s5.calls}</b>回（${_fmtTokens(s5.tokens)}トークン）` +
+    `｜今日 <b>${td.calls}</b>回｜7日間 <b>${w.calls}</b>回（${_fmtTokens(w.tokens)}トークン）｜${official}`;
+}
+
+async function refreshAiUsage(note) {
+  try {
+    const res = await fetch(`${AI_BRIDGE_URL}/usage`);
+    const u = await res.json();
+    renderAiUsage(u, note);
+    return u;
+  } catch (e) {
+    renderAiUsage(null);
+    return null;
+  }
+}
+
+// 公式データにない主要タイトルが本文に含まれていれば採用しない（事実誤認の防止）
+function _enrichedTextHasUnverifiedAward(text, allAwardsJa) {
+  const has = (kw) => allAwardsJa.some(a => a.includes(kw));
+  const hasLeagueMvp = allAwardsJa.some(a => a === 'AL MVP' || a === 'NL MVP' || a === 'MVP');
+  // シリーズMVPと、公式データにある球団の年間最優秀選手賞を除いた上でリーグMVPの記述を判定
+  let rest = text.replace(/ワールドシリーズMVP|WS\s?MVP|リーグ優勝シリーズMVP/g, '');
+  allAwardsJa.filter(a => a.includes('年間最優秀選手賞')).forEach(a => { rest = rest.split(a).join(''); });
+  if (/MVP|最優秀選手賞/.test(rest) && !hasLeagueMvp) return true;
+  if (/ワールドシリーズMVP|WS\s?MVP/.test(text) && !has('ワールドシリーズMVP')) return true;
+  if (/サイ・?ヤング/.test(text) && !has('サイ・ヤング')) return true;
+  if (/新人王/.test(text) && !has('新人王')) return true;
+  return false;
+}
+
+function _buildEnrichPrompt(row, baseText, awardsLines) {
+  const nameJa = String(row[0] || '');
+  const nameEn = g_mlbNameEn || (g_brefId && _brefCache[g_brefId]?.nameEn) || '';
+  const yearKey = String(row[1] || '');
+  const isCareer = !/^\d{4}$/.test(yearKey);
+  const infoEl = document.getElementById('year-info');
+  const statsLine = infoEl ? infoEl.innerText.replace(/★\s*PEAK/g, '').replace(/\s+/g, ' ').trim() : '';
+  const target = isCareer ? 'MLB通算（キャリア全体）' : `${yearKey}年シーズン（所属: ${row[2] || '不明'}）`;
+  return [
+    'あなたはMLBの歴史に詳しいライターです。野球カードの「列伝」欄に載せる紹介文を日本語で書いてください。',
+    '',
+    `【選手】${nameJa}（英語名: ${nameEn || '不明'}）／${g_isPitcher ? '投手' : '野手'}${g_mlbPos ? '（' + g_mlbPos + '）' : ''}`,
+    `【対象】${target}`,
+    `【確定成績】${statsLine || '（なし）'}`,
+    `【MLB公式データで確認済みの受賞歴】${awardsLines.length ? '\n' + awardsLines.join('\n') : 'なし'}`,
+    `【現在の列伝（参考）】${String(baseText || '').replace(/\\n|\n/g, ' ')}`,
+    '',
+    '手順:',
+    `1. Web検索で Baseball-Reference、MLB.com、英語版Wikipedia など信頼できる情報源を調べ、この選手の${isCareer ? '経歴全体' : yearKey + '年'}の具体的なエピソード（印象的な試合や記録、転機、チーム内での役割、プレースタイルなど）を集める。`,
+    '2. 信頼できる情報源で確認できた事実だけを使う。確認できないことは書かない。',
+    '',
+    '厳守事項:',
+    '- 受賞歴・タイトルは【確認済みの受賞歴】と【確定成績】にあるものだけを書く。MVP投票の順位、ノミネート、候補、噂は書かない。',
+    '- 成績の数字は【確定成績】と一致させる。',
+    '- 選手や監督の発言（「」付きのセリフ）を創作しない。',
+    '- 3〜4文、合計180〜260字。1文ごとに改行で区切る。',
+    '- 最初の文はシーズン（または通算）成績の要約から始める。',
+    '',
+    '出力は次のJSONだけにしてください（前後に説明文を付けない）:',
+    '{"retsuden":"本文（文ごとに\\nで改行）","sources":["参照したURL"]}',
+  ].join('\n');
+}
+
+async function enrichRetsudenWithClaude(row, baseText, genId) {
+  const usage = await refreshAiUsage();
+  if (!usage || usage.limitedNow) return;
+
+  // 通算・単年を問わず、全キャリアの公式受賞歴を事実確認用に渡す
+  if (g_mlbId) await _fetchAndCacheAllAwards(g_mlbId);
+  const awardYears = Object.keys(_awardsJaByYear).sort();
+  const awardsLines = awardYears.map(y => `${y}年: ${_awardsJaByYear[y].join('、')}`);
+  const allAwards = awardYears.flatMap(y => _awardsJaByYear[y]);
+
+  const model = document.getElementById('ai-enrich-model').value;
+  g_aiEnrichBusy = true;
+  renderAiUsage(usage, `🟣 Claude（${model === 'opus' ? 'Opus' : 'Sonnet'}）がエピソードを調査中…（1〜3分）`);
+  try {
+    const res = await fetch(`${AI_BRIDGE_URL}/retsuden`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, prompt: _buildEnrichPrompt(row, baseText, awardsLines) }),
+    });
+    const data = await res.json();
+    g_aiEnrichBusy = false;
+    if (data.limited) { renderAiUsage(data.usage); return; }
+    if (!res.ok || !data.retsuden) {
+      const msg = data.authError ? `🔑 ${data.error}` : `⚠️ AI列伝強化に失敗（通常の列伝のまま）: ${String(data.error || res.status).slice(0, 120)}`;
+      renderAiUsage(data.usage || usage, escapeHtml(msg));
+      return;
+    }
+    if (genId !== g_genId) { renderAiUsage(data.usage); return; } // 別カード生成済み → 反映しない
+    const text = String(data.retsuden).trim();
+    if (_enrichedTextHasUnverifiedAward(text, allAwards)) {
+      console.warn('[AI列伝] 公式データにない受賞歴を含むため不採用:', text);
+      renderAiUsage(data.usage, '⚠️ 公式データと合わない受賞歴が含まれたため、通常の列伝のままにしました');
+      return;
+    }
+    console.log('[AI列伝] 採用（参照元）:', data.sources);
+    updateRetsuden(text);
+    renderAiUsage(data.usage, `✨ AI列伝を反映しました（${model === 'opus' ? 'Opus' : 'Sonnet'}）`);
+  } catch (e) {
+    g_aiEnrichBusy = false;
+    renderAiUsage(null);
+  }
+}
+
+(function initAiEnrichBar() {
+  try {
+    const p = JSON.parse(localStorage.getItem(AI_ENRICH_PREF_KEY) || '{}');
+    if (p.model) document.getElementById('ai-enrich-model').value = p.model;
+    if (p.on) document.getElementById('ai-enrich-toggle').checked = true;
+  } catch (e) {}
+  refreshAiUsage();
+})();
 
 // ===== テスト用ヘルパー（開発時のみ使用） =====
 window._injectTestData = function(rows, isPitcher, isCatcher, peakYear) {
