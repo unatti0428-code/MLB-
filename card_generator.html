@@ -10723,7 +10723,7 @@ function _retsudenTargetLength() {
   return { lines, min, max };
 }
 
-function _buildEnrichPrompt(row, awardsLines) {
+function _buildEnrichPrompt(row, awardsLines, birthPlace) {
   const len = _retsudenTargetLength();
   const nameJa = String(row[0] || '');
   const nameEn = g_mlbNameEn || (g_brefId && _brefCache[g_brefId]?.nameEn) || '';
@@ -10738,6 +10738,7 @@ function _buildEnrichPrompt(row, awardsLines) {
     `【選手】${nameJa}（英語名: ${nameEn || '不明'}）／${g_isPitcher ? '投手' : '野手'}${g_mlbPos ? '（' + g_mlbPos + '）' : ''}`,
     `【対象】${target}`,
     `【確定成績】${statsLine || '（なし）'}`,
+    `【出身地（MLB公式データ）】${birthPlace || '不明'}`,
     `【MLB公式データで確認済みの受賞歴】${awardsLines.length ? '\n' + awardsLines.join('\n') : 'なし'}`,
     '',
     '手順:',
@@ -10752,7 +10753,13 @@ function _buildEnrichPrompt(row, awardsLines) {
     '- 成績の要約だけで終わらせず、具体的なエピソード（印象に残った試合・場面、記録の達成、転機、チームでの役割、人柄など）を2つ以上盛り込む。',
     `- ${Math.max(4, len.lines - 2)}〜${len.lines}文。1文ごとに改行で区切る。`,
     `- 書き上げたら字数を数え、${len.min}字に足りなければエピソードを1文加えてから出力する。`,
-    '- 最初の文はシーズン（または通算）成績の要約から始める。',
+    `- 最初の文はシーズン（または通算）成績の要約にする${birthPlace ? '（出身地で選手を紹介する文から始める場合は、2文目を成績の要約にする）' : ''}。`,
+    '- 球場名・飛距離・日付・対戦相手などの細かい情報は、情報源で確認できたものだけを書く。記憶や推測で補わない。',
+    ...(birthPlace ? [
+      `- 出身地の文を必ず1文だけ入れる。地名は「${birthPlace}」とそのまま書く（言い換えや英語表記にしない）。`,
+      '- 出身地の文は冒頭（選手紹介として）・2文目・最後の文のいずれかに置き、経歴の流れにつなげて書く（例：「〇〇出身の右腕は、この年〜」「〇〇出身で、△△を経てメジャーの舞台に立った。」）。シーズン中の出来事の文と文の間に唐突に挟まない。',
+      '- 出身地にまつわる逸話（地元の高校・大学、家族など）は情報源で確認できた場合だけ添える。確認できなければ地名だけにとどめる。',
+    ] : []),
     `- ${isCareer ? '経歴全体' : yearKey + '年'}の出来事を中心に書く。他の年に触れるときは必ず「◯◯年に」と年を明記し、1文以内にとどめる。`,
     '- リーグ内の順位（「上位」「リーグ最多」「歴代◯位」など）は、情報源で数字を確認できた場合だけ書く。',
     '',
@@ -10787,6 +10794,7 @@ function _buildPolishPrompt(row) {
     `- 別の年の出来事を、${target}の活躍の結果のように結び付けている文は、事実だけを述べる形に直す。`,
     '- 文末は「〜した。」「〜だった。」でそろえる。1文は60字程度まで。長すぎる文は2文に分ける。',
     '- 新しい事実は加えない。エピソードは削らず、分量をできるだけ減らさない（意味があいまいで直せない文だけは削ってよい）。',
+    '- 出身地の文は削らず、地名も変えない。前後の文と自然につながっていなければ、つなぎの言葉や置く位置を直す。',
     `- 全体で${len.min}〜${len.max}字、${Math.max(4, len.lines - 2)}〜${len.lines}文、1文ごとに改行する。`,
     '',
     '出力は次のJSONだけにしてください（前後に説明文を付けない）:',
@@ -10837,7 +10845,10 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
 
   const model = document.getElementById('ai-enrich-model').value;
   const modelLabel = model === 'opus' ? 'Opus' : 'Sonnet';
-  const prompt = _buildEnrichPrompt(row, awardsLines);
+  // 出身地はMLB公式データを日本語化したものだけを渡す（Claudeに推測させない）
+  const birthLine = g_mlbId ? _birthLineFromBirthInfo(await _fetchMlbBirthInfo(g_mlbId)) : null;
+  const birthPlace = birthLine ? birthLine.split('出身。')[0] : null;
+  const prompt = _buildEnrichPrompt(row, awardsLines, birthPlace);
   // Sonnet は日本語が硬くなりやすいため、書いた後に校正工程を1回はさむ
   const polishPrompt = model === 'sonnet' ? _buildPolishPrompt(row) : null;
   // 前の依頼が処理中なら、その分も待ち時間に含める
