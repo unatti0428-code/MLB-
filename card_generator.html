@@ -10756,7 +10756,9 @@ function _buildEnrichPrompt(row, awardsLines, birthPlace) {
     `- 最初の文はシーズン（または通算）成績の要約にする${birthPlace ? '（出身地で選手を紹介する文から始める場合は、2文目を成績の要約にする）' : ''}。`,
     '- 球場名・飛距離・日付・対戦相手などの細かい情報は、情報源で確認できたものだけを書く。記憶や推測で補わない。',
     ...(birthPlace ? [
-      `- 出身地の文を必ず1文だけ入れる。地名は「${birthPlace}」とそのまま書く（言い換えや英語表記にしない）。`,
+      /[A-Za-z]/.test(birthPlace)
+        ? `- 出身地の文を必ず1文だけ入れる。地名は「${birthPlace}」をもとに、英字の部分だけを一般的な日本語表記に直して書く（例：日本・Oshu → 日本・岩手県奥州市）。国名は必ず残す。`
+        : `- 出身地の文を必ず1文だけ入れる。地名は国名を含めて「${birthPlace}」とそのまま書く（言い換えや英語表記にしない）。`,
       '- 出身地の文は冒頭（選手紹介として）・2文目・最後の文のいずれかに置き、経歴の流れにつなげて書く（例：「〇〇出身の右腕は、この年〜」「〇〇出身で、△△を経てメジャーの舞台に立った。」）。シーズン中の出来事の文と文の間に唐突に挟まない。',
       '- 出身地にまつわる逸話（地元の高校・大学、家族など）は情報源で確認できた場合だけ添える。確認できなければ地名だけにとどめる。',
     ] : []),
@@ -10846,8 +10848,15 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
   const model = document.getElementById('ai-enrich-model').value;
   const modelLabel = model === 'opus' ? 'Opus' : 'Sonnet';
   // 出身地はMLB公式データを日本語化したものだけを渡す（Claudeに推測させない）
-  const birthLine = g_mlbId ? _birthLineFromBirthInfo(await _fetchMlbBirthInfo(g_mlbId)) : null;
-  const birthPlace = birthLine ? birthLine.split('出身。')[0] : null;
+  const birthInfo = g_mlbId ? await _fetchMlbBirthInfo(g_mlbId) : null;
+  const birthLine = _birthLineFromBirthInfo(birthInfo);
+  let birthPlace = birthLine ? birthLine.split('出身。')[0] : null;
+  // 国名を先頭に付ける（例：アメリカ・フロリダ州マイアミ、日本・岩手県）
+  if (birthPlace && birthInfo) {
+    const c = birthInfo.country;
+    const countryJa = /^(usa|united states)$/i.test(c) ? 'アメリカ' : /^japan$/i.test(c) ? '日本' : (_STATE_JA_MAP[c] || c);
+    if (countryJa && !birthPlace.startsWith(countryJa)) birthPlace = `${countryJa}・${birthPlace}`;
+  }
   const prompt = _buildEnrichPrompt(row, awardsLines, birthPlace);
   // Sonnet は日本語が硬くなりやすいため、書いた後に校正工程を1回はさむ
   const polishPrompt = model === 'sonnet' ? _buildPolishPrompt(row) : null;
