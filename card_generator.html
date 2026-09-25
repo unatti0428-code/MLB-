@@ -4274,6 +4274,11 @@ function awardToJa(award) {
   }
   if (n.includes('all-star') || n.includes('allstar'))  return null; // オールスター選出は表示しない
 
+  // ④-a 球団が選ぶ最優秀選手賞（例: "Orioles Most Valuable Award"）→ リーグMVPと区別できるよう球団名付きで返す
+  if (n.includes('most valuable') && awardTeamJa && !isAL && !isNL && !n.includes('bbwaa')) {
+    return `${awardTeamJa}最優秀選手賞`;
+  }
+
   // ④ リーグMVP（シーズンMVPのみ）
   // AL/NLまたはBBWAAの明記がないMVPはチーム賞・球団賞として除外する
   if (n.includes('most valuable player') || n.includes('mvp')) {
@@ -10667,12 +10672,22 @@ async function refreshAiUsage(note) {
 }
 
 // 公式データにない主要タイトルが本文に含まれていれば採用しない（事実誤認の防止）
+// 文単位に分け、公式データにない受賞歴を含む文を除く（改行と「。」で区切る）
+function _dropUnverifiedAwardSentences(text, allAwardsJa) {
+  const sentences = text.split('\n').flatMap(line => line.match(/[^。]+。?/g) || []).map(s => s.trim()).filter(Boolean);
+  const removed = sentences.filter(s => _enrichedTextHasUnverifiedAward(s, allAwardsJa));
+  const keptList = sentences.filter(s => !removed.includes(s));
+  return { text: keptList.join('\n'), removed, kept: keptList.length };
+}
+
 function _enrichedTextHasUnverifiedAward(text, allAwardsJa) {
   const has = (kw) => allAwardsJa.some(a => a.includes(kw));
   const hasLeagueMvp = allAwardsJa.some(a => a === 'AL MVP' || a === 'NL MVP' || a === 'MVP');
   // シリーズMVPと、公式データにある球団の年間最優秀選手賞を除いた上でリーグMVPの記述を判定
   let rest = text.replace(/ワールドシリーズMVP|WS\s?MVP|リーグ優勝シリーズMVP/g, '');
-  allAwardsJa.filter(a => a.includes('年間最優秀選手賞')).forEach(a => { rest = rest.split(a).join(''); });
+  const teamMvps = allAwardsJa.filter(a => a.includes('最優秀選手賞'));
+  teamMvps.forEach(a => { rest = rest.split(a).join(''); });
+  if (teamMvps.length) rest = rest.replace(/(球団|チーム)(MVP|最優秀選手賞?)/g, '');
   if (/MVP|最優秀選手賞/.test(rest) && !hasLeagueMvp) return true;
   if (/ワールドシリーズMVP|WS\s?MVP/.test(text) && !has('ワールドシリーズMVP')) return true;
   if (/サイ・?ヤング/.test(text) && !has('サイ・ヤング')) return true;
@@ -10730,7 +10745,7 @@ function _buildEnrichPrompt(row, awardsLines) {
     '2. 信頼できる情報源で確認できた事実だけを使う。確認できないことは書かない。',
     '',
     '厳守事項:',
-    '- 受賞歴・タイトルは【確認済みの受賞歴】と【確定成績】にあるものだけを書く。MVP投票の順位、ノミネート、候補、噂は書かない。',
+    '- 受賞歴・タイトルは【確認済みの受賞歴】と【確定成績】にあるものだけを書く。球団が選ぶ賞（球団MVP・球団最優秀選手など）や雑誌・メディアの賞も、【確認済みの受賞歴】にない限り書かない。MVP投票の順位、ノミネート、候補、噂は書かない。',
     '- 成績の数字は【確定成績】と一致させる。',
     '- 選手や監督の発言（「」付きのセリフ）を創作しない。',
     `- 本文は${len.min}〜${len.max}字（カードの列伝欄 約${len.lines}行分）。${len.min}字未満は不可。${len.max}字を超えると末尾の文が削られるので超えないこと。`,
@@ -10837,28 +10852,28 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
     renderAiUsage(u, note);
   };
   try {
-    let { res, data } = await _requestEnrich(model, prompt, false, polishPrompt);
-    // 保存済みの結果が事実確認で不採用なら、1回だけ調べ直す
-    if (data.cached && data.retsuden && _enrichedTextHasUnverifiedAward(String(data.retsuden), allAwards)) {
-      ({ res, data } = await _requestEnrich(model, prompt, true, polishPrompt));
-    }
+    const { res, data } = await _requestEnrich(model, prompt, false, polishPrompt);
     if (data.limited) { done(data.usage); return; }
     if (!res.ok || !data.retsuden) {
       const msg = data.authError ? `🔑 ${data.error}` : `⚠️ AI列伝強化に失敗（通常の列伝のまま）: ${String(data.error || res.status).slice(0, 120)}`;
       done(data.usage || usage, escapeHtml(msg));
       return;
     }
-    const text = String(data.retsuden).trim().replace(/\bERA\s?(?=\d)/g, '防御率');
-    if (_enrichedTextHasUnverifiedAward(text, allAwards)) {
-      console.warn('[AI列伝] 公式データにない受賞歴を含むため不採用:', text);
-      done(data.usage, '⚠️ 公式データと合わない受賞歴が含まれたため、通常の列伝のままにしました');
+    const raw = String(data.retsuden).trim().replace(/\bERA\s?(?=\d)/g, '防御率');
+    // 公式データにない受賞歴を含む文だけを取り除き、残りを採用する
+    const { text, removed, kept } = _dropUnverifiedAwardSentences(raw, allAwards);
+    if (kept < 3) {
+      console.warn('[AI列伝] 公式データにない受賞歴が多いため不採用:', raw);
+      done(data.usage, '⚠️ 公式データと合わない受賞歴が多かったため、通常の列伝のままにしました');
       return;
     }
+    if (removed.length) console.warn('[AI列伝] 公式データにない受賞歴の文を除外:', removed);
     await baseShown; // 通常の列伝が表示されてから差し替える
     if (!isCurrent()) return; // 別カード生成済み → 反映しない
     console.log('[AI列伝] 採用（参照元）:', data.sources);
     updateRetsuden(text);
-    done(data.usage, data.cached ? `⚡ 保存済みのAI列伝を反映しました（${modelLabel}・即時）` : `✨ AI列伝を反映しました（${modelLabel}）`);
+    const note = removed.length ? `（公式データと合わない受賞歴の${removed.length}文を除外）` : '';
+    done(data.usage, (data.cached ? `⚡ 保存済みのAI列伝を反映しました（${modelLabel}・即時）` : `✨ AI列伝を反映しました（${modelLabel}）`) + note);
   } catch (e) {
     done(null);
   }
