@@ -4,5 +4,6 @@ node_modules/
 mlb_create_tool_log.txt
 claude_bridge_usage.json
 claude_bridge_cache.json
+claude_bridge_errors.log
 .env
 .env.local

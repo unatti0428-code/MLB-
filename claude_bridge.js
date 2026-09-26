@@ -108,6 +108,61 @@ function extractJson(text) {
   try { return JSON.parse(text.slice(s, e + 1)); } catch { return null; }
 }
 
+// Claudeの回答から {"retsuden": ...} を頑丈に取り出す。
+// 前後の説明文・コードブロック・下書きと清書の2つのJSON・本文中の半角"による崩れに対応する。
+function parseRetsudenJson(text) {
+  if (!text) return null;
+  const t = String(text).replace(/```(?:json)?/gi, '');
+  // ① 括弧の対応で {...} の候補をすべて拾い、後ろ（清書）から順に試す
+  const cands = [];
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] !== '{') continue;
+    let depth = 0, inStr = false, esc = false;
+    for (let j = i; j < t.length; j++) {
+      const ch = t[j];
+      if (inStr) {
+        if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === '{') depth++;
+      else if (ch === '}' && --depth === 0) { cands.push(t.slice(i, j + 1)); break; }
+    }
+  }
+  for (const c of cands.reverse()) {
+    try { const o = JSON.parse(c); if (o && typeof o.retsuden === 'string' && o.retsuden.trim()) return o; } catch {}
+  }
+  // ② JSONとして読めない場合：最後の "retsuden": "..." を直接取り出す（本文中の改行・半角"にも対応）
+  const re = /"retsuden"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"sources"|\}\s*(?:$|[^"]))/g;
+  let m, last = null;
+  while ((m = re.exec(t)) !== null) last = m;
+  if (last) {
+    const body = last[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\').trim();
+    if (body) return { retsuden: body, sources: [] };
+  }
+  return null;
+}
+
+// 追加の呼び出し（校正・整形）のトークン量を集計に加える
+function addUsage(entry, meta) {
+  if (!meta || !meta.usage) return;
+  const u = meta.usage;
+  entry.inTok = (entry.inTok || 0) + (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+  entry.outTok = (entry.outTok || 0) + (u.output_tokens || 0);
+}
+
+// 読み取れなかった回答を後から原因調査できるよう記録する（直近20件）
+const ERROR_LOG = path.join(__dirname, 'claude_bridge_errors.log');
+function logBadResponse(kind, text) {
+  try {
+    const entry = `=== ${new Date().toLocaleString()} ${kind} ===\n${String(text).slice(0, 20000)}\n`;
+    let old = '';
+    try { old = fs.readFileSync(ERROR_LOG, 'utf8'); } catch {}
+    const parts = (old + entry).split(/(?==== )/).slice(-20);
+    fs.writeFileSync(ERROR_LOG, parts.join(''));
+  } catch {}
+}
+
 // ── 結果の保存（同じ依頼は即時に返し、プロプラン枠を使わない） ──
 function cacheKey(model, prompt) {
   return crypto.createHash('sha1').update(model + '\n' + prompt).digest('hex');
@@ -159,8 +214,29 @@ async function enrich(body) {
     if (isAuth) return { status: 401, json: { authError: true, error: AUTH_MSG, usage: summarize(usage) } };
     return { status: 502, json: { error: (resultText || r.err || 'unknown error').slice(0, 300), usage: summarize(usage) } };
   }
-  const parsed = extractJson(resultText);
-  entry.ok = !!(parsed && typeof parsed.retsuden === 'string');
+  let parsed = parseRetsudenJson(resultText);
+  if (!parsed) {
+    // 形式が崩れて読み取れない場合：回答を記録し、本文だけをJSONに整え直す依頼を1回だけ行う（Webなし・短時間）
+    logBadResponse(`draft-unparsable (${model})`, resultText);
+    const f0 = Date.now();
+    const fixPrompt = [
+      '次の文章は、野球カードの「列伝」（選手紹介文）を書くよう依頼したときの回答です。',
+      'この中から完成した列伝の本文だけを取り出し、次のJSONだけを出力してください（前後に説明文を付けない）。',
+      '本文の内容・表現は変えない。本文中の半角の " は「」に置き換える。説明文・調査メモ・下書きは含めない。',
+      '{"retsuden":"本文（文ごとに\\nで改行）","sources":[]}',
+      '',
+      '回答:',
+      String(resultText).slice(0, 12000),
+    ].join('\n');
+    const fr = await runClaude(fixPrompt, model, false);
+    const fm = extractJson(fr.out || '') || {};
+    addUsage(entry, fm);
+    entry.durMs += Date.now() - f0;
+    parsed = typeof fm.result === 'string' ? parseRetsudenJson(fm.result) : null;
+    if (parsed) entry.repaired = true;
+    else logBadResponse(`repair-failed (${model})`, fm.result || fr.out || fr.err);
+  }
+  entry.ok = !!parsed;
   let text = entry.ok ? parsed.retsuden : '';
 
   // 校正工程（依頼があるときのみ）：事実を変えずに日本語だけを整える。失敗したら下書きをそのまま使う
@@ -168,12 +244,9 @@ async function enrich(body) {
     const p0 = Date.now();
     const pr = await runClaude(body.polishPrompt.replace('{{TEXT}}', text), model, false);
     const pm = extractJson(pr.out || '') || {};
-    if (pm.usage) {
-      entry.inTok = (entry.inTok || 0) + (pm.usage.input_tokens || 0) + (pm.usage.cache_creation_input_tokens || 0) + (pm.usage.cache_read_input_tokens || 0);
-      entry.outTok = (entry.outTok || 0) + (pm.usage.output_tokens || 0);
-    }
+    addUsage(entry, pm);
     entry.durMs += Date.now() - p0;
-    const pj = typeof pm.result === 'string' ? extractJson(pm.result) : null;
+    const pj = typeof pm.result === 'string' ? parseRetsudenJson(pm.result) : null;
     const len = s => s.replace(/\s/g, '').length;
     if (pr.code === 0 && !pm.is_error && pj && typeof pj.retsuden === 'string' && len(pj.retsuden) >= len(text) * 0.9) {
       text = pj.retsuden;

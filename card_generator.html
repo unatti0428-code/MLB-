@@ -10821,7 +10821,7 @@ function _buildEnrichPrompt(row, awardsLines, birthPlace, knownNicks = []) {
     '- 良い例：「2015年はオリオールズの抑えとして36セーブ、防御率1.92を記録した。」「沈む速球を武器に打者を圧倒し、初めてオールスターゲームに選ばれた。」',
     '- 書き終えたら全文を読み直し、意味の通らない文や不自然な言い回しがあれば直してから出力する。',
     '',
-    '出力は次のJSONだけにしてください（前後に説明文を付けない）:',
+    '出力は次のJSONを1つだけにしてください（前後に説明文・調査メモ・下書きを付けない）。本文中では半角の " を使わず、引用や異名は「」で囲む:',
     '{"retsuden":"本文（文ごとに\\nで改行）","sources":["参照したURL"]}',
   ].join('\n');
 }
@@ -10845,7 +10845,7 @@ function _buildPolishPrompt(row) {
     '- 出身地の文や異名（「」付きの愛称）の文は削らず、地名・異名も変えない。前後の文と自然につながっていなければ、つなぎの言葉や置く位置を直す。',
     `- 全体で${len.min}〜${len.max}字、${Math.max(4, len.lines - 2)}〜${len.lines}文、1文ごとに改行する。`,
     '',
-    '出力は次のJSONだけにしてください（前後に説明文を付けない）:',
+    '出力は次のJSONを1つだけにしてください（前後に説明文・調査メモ・下書きを付けない）。本文中では半角の " を使わず、引用や異名は「」で囲む:',
     '{"retsuden":"直した本文（文ごとに\\nで改行）"}',
     '',
     '下書き:',
@@ -10928,7 +10928,9 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
       done(data.usage || usage, escapeHtml(msg));
       return;
     }
-    const raw = String(data.retsuden).trim().replace(/\bERA\s?(?=\d)/g, '防御率');
+    const raw = String(data.retsuden).trim()
+      .replace(/\bERA\s?(?=\d)/g, '防御率')
+      .replace(/"([^"\n]{1,40})"/g, '「$1」'); // 半角の"…"は日本語の「」にそろえる
     // 公式データにない受賞歴を含む文だけを取り除き、残りを採用する
     const { text, removed, kept } = _dropUnverifiedAwardSentences(raw, allAwards);
     if (kept < 3) {
