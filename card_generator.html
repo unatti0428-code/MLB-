@@ -7184,6 +7184,7 @@ function _cityEngToKana(city) {
     // 中南米・カリブ海
     'santo domingo':'サントドミンゴ','santiago':'サンティアゴ',
     // オランダ領カリブ（キュラソー・アルバ）
+    'navojoa':'ナボホア',
     'willemstad':'ウィレムスタッド','oranjestad':'オラニエスタッド','san nicolaas':'サン・ニコラス',
     'san pedro de macoris':'サンペドロ・デ・マコリス',
     'la romana':'ラロマナ','san cristobal':'サンクリストバル',
@@ -10725,7 +10726,7 @@ function _retsudenTargetLength() {
   return { lines, min, max };
 }
 
-function _buildEnrichPrompt(row, awardsLines, birthPlace) {
+function _buildEnrichPrompt(row, awardsLines, birthPlace, knownNicks = []) {
   const len = _retsudenTargetLength();
   const nameJa = String(row[0] || '');
   const nameEn = g_mlbNameEn || (g_brefId && _brefCache[g_brefId]?.nameEn) || '';
@@ -10741,6 +10742,7 @@ function _buildEnrichPrompt(row, awardsLines, birthPlace) {
     `【対象】${target}`,
     `【確定成績】${statsLine || '（なし）'}`,
     `【出身地（MLB公式データ）】${birthPlace || '不明'}`,
+    `【確認済みの異名】${knownNicks.length ? knownNicks.map(n => `「${n}」`).join('、') : 'なし（下の手順で確認できた場合のみ使う）'}`,
     `【MLB公式データで確認済みの受賞歴】${awardsLines.length ? '\n' + awardsLines.join('\n') : 'なし'}`,
     '',
     '手順:',
@@ -10757,6 +10759,10 @@ function _buildEnrichPrompt(row, awardsLines, birthPlace) {
     `- 書き上げたら字数を数え、${len.min}字に足りなければエピソードを1文加えてから出力する。`,
     `- 最初の文はシーズン（または通算）成績の要約にする${birthPlace ? '（出身地で選手を紹介する文から始める場合は、2文目を成績の要約にする）' : ''}。`,
     '- 球場名・飛距離・日付・対戦相手などの細かい情報は、情報源で確認できたものだけを書く。記憶や推測で補わない。',
+    knownNicks.length
+      ? '- 【確認済みの異名】を紹介する文を1文入れる。どんな意味・由来の異名かが読者に分かるように短く添える。'
+      : '- 広く知られた異名・愛称（例：「エル・トロ」「ビッグ・ユニット」）が Baseball-Reference の Nicknames 欄や英語版Wikipediaで確認できた場合だけ、それを紹介する文を1文入れる。確認できなければ異名の文は入れない（作らない）。',
+    '- 異名はカタカナ表記にし、英語やスペイン語の異名には意味を短く添える（例：「エル・トロ（雄牛）」）。異名の文は選手紹介や出身地の文の近くか最後の文に置き、エピソードの途中に唐突に挟まない。',
     ...(birthPlace ? [
       /[A-Za-z]/.test(birthPlace)
         ? `- 出身地の文を必ず1文だけ入れる。地名は「${birthPlace}」をもとに、英字の部分だけを一般的な日本語表記に直して書く（例：日本・Oshu → 日本・岩手県奥州市）。国名は必ず残す。`
@@ -10798,7 +10804,7 @@ function _buildPolishPrompt(row) {
     `- 別の年の出来事を、${target}の活躍の結果のように結び付けている文は、事実だけを述べる形に直す。`,
     '- 文末は「〜した。」「〜だった。」でそろえる。1文は60字程度まで。長すぎる文は2文に分ける。',
     '- 新しい事実は加えない。エピソードは削らず、分量をできるだけ減らさない（意味があいまいで直せない文だけは削ってよい）。',
-    '- 出身地の文は削らず、地名も変えない。前後の文と自然につながっていなければ、つなぎの言葉や置く位置を直す。',
+    '- 出身地の文や異名（「」付きの愛称）の文は削らず、地名・異名も変えない。前後の文と自然につながっていなければ、つなぎの言葉や置く位置を直す。',
     `- 全体で${len.min}〜${len.max}字、${Math.max(4, len.lines - 2)}〜${len.lines}文、1文ごとに改行する。`,
     '',
     '出力は次のJSONだけにしてください（前後に説明文を付けない）:',
@@ -10859,7 +10865,10 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
     const countryJa = /^(usa|united states)$/i.test(c) ? 'アメリカ' : /^japan$/i.test(c) ? '日本' : (_STATE_JA_MAP[c] || c);
     if (countryJa && !birthPlace.startsWith(countryJa)) birthPlace = `${countryJa}・${birthPlace}`;
   }
-  const prompt = _buildEnrichPrompt(row, awardsLines, birthPlace);
+  // 異名はツール内の異名データにあるものを確認済みとして渡す（名字そのものは異名として扱わない）
+  const nickData = getPlayerNickname(g_mlbNameEn);
+  const knownNicks = (nickData?.nicks || []).filter(n => !String(row[0] || '').includes(n));
+  const prompt = _buildEnrichPrompt(row, awardsLines, birthPlace, knownNicks);
   // Sonnet は日本語が硬くなりやすいため、書いた後に校正工程を1回はさむ
   const polishPrompt = model === 'sonnet' ? _buildPolishPrompt(row) : null;
   // 前の依頼が処理中なら、その分も待ち時間に含める
