@@ -78,6 +78,15 @@ function detectLimit(text) {
   let resetAt = null;
   const epoch = text.match(/limit reached\|(\d{10,13})/i);
   if (epoch) resetAt = epoch[1].length === 13 ? +epoch[1] : +epoch[1] * 1000;
+  // 例: "You've hit your limit · resets 9pm (Etc/GMT-9)" / "resets 9:30am" → 次に来るその時刻（PCの現地時刻）
+  const hm = !resetAt && text.match(/resets\s+(?:[A-Za-z]{3,9}\s+\d{1,2},?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+  if (hm) {
+    let h = parseInt(hm[1], 10) % 12;
+    if (/pm/i.test(hm[3])) h += 12;
+    const d = new Date(); d.setHours(h, hm[2] ? parseInt(hm[2], 10) : 0, 0, 0);
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+    resetAt = d.getTime();
+  }
   return { at: Date.now(), resetAt, message: text.slice(0, 200) };
 }
 
