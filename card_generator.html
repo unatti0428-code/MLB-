@@ -360,7 +360,10 @@
     </div>
     <div class="input-group">
       <label class="input-label">📷 選手写真（省略可）</label>
-      <input type="file" id="photo-file" accept="image/*">
+      <div style="display:flex;gap:6px;align-items:center;">
+        <input type="file" id="photo-file" accept="image/*" onchange="updatePhotoClearBtn()" style="flex:1;min-width:0;">
+        <button id="btn-photo-clear" class="btn-mlb-clear" onclick="clearPlayerPhoto()" style="display:none;white-space:nowrap;" title="選んだ写真と、このチーム時代に保存された写真を外します">✕ 写真を外す</button>
+      </div>
     </div>
     <button class="btn-generate" onclick="generateCard()">カード生成</button>
   </div>
@@ -10308,6 +10311,40 @@ function _photoIdbPut(key, photo) {
     tx.onerror    = () => resolve(false);
   })).catch(() => false);
 }
+function _photoIdbDelete(key) {
+  return _photoOpenDB().then(db => new Promise((resolve) => {
+    const tx = db.transaction(_PHOTO_STORE, 'readwrite');
+    tx.objectStore(_PHOTO_STORE).delete(key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror    = () => resolve(false);
+  })).catch(() => false);
+}
+
+// 「写真を外す」ボタンは、写真を選んでいる時か保存済みのチーム別写真を使っている時だけ表示
+function updatePhotoClearBtn() {
+  const btn = document.getElementById('btn-photo-clear');
+  const inp = document.getElementById('photo-file');
+  if (!btn) return;
+  const hasFile = !!(inp && inp.files && inp.files[0]);
+  btn.style.display = (hasFile || g_teamPhotoLocked) ? '' : 'none';
+}
+
+// 選んだ写真ファイルと、表示中カードのチーム時代に保存された写真を外し、カードを作り直す
+async function clearPlayerPhoto() {
+  const inp = document.getElementById('photo-file');
+  if (inp) inp.value = '';
+  const row = g_selectedRow;
+  const key = row ? _teamPhotoStoreKey(row) : null;
+  if (key) {
+    await _photoIdbDelete(key);
+    try { localStorage.removeItem(key); } catch (e) {}
+    console.log('[TeamPhoto] 削除:', key);
+  }
+  g_teamPhotoLocked = false;
+  updatePhotoClearBtn();
+  if (row && document.getElementById('card-root')) generateCard();
+}
+
 // 起動時に一度だけ: 旧 localStorage の写真キャッシュを IndexedDB へ移し、localStorage を解放する
 async function _photoMigrateFromLS() {
   const keys = [];
@@ -10576,6 +10613,7 @@ async function _doGenerate(photoInput) {
     };
     document.getElementById('save-area').style.display = 'flex';
     syncQuickYearOptions();
+    updatePhotoClearBtn();
     document.getElementById('save-msg').textContent = '';
 
     area.scrollIntoView({ behavior: 'smooth', block: 'start' });
