@@ -13,6 +13,12 @@ const crypto = require('crypto');
 const USAGE_FILE = path.join(__dirname, 'claude_bridge_usage.json');
 const CACHE_FILE = path.join(__dirname, 'claude_bridge_cache.json');
 const MODELS = { opus: 'opus', sonnet: 'sonnet' };
+// Claude Code 本体（npmでグローバル導入されたcli.js）。見つからない場合は claude コマンドで代用する
+const CLI_JS = (() => {
+  const p = process.env.APPDATA && path.join(process.env.APPDATA, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
+  return p && fs.existsSync(p) ? p : null;
+})();
+const ALL_TOOLS = 'Bash,Edit,Write,Read,Glob,Grep,NotebookEdit,WebSearch,WebFetch,Task,TodoWrite';
 // ログイン情報ファイル（中身は読まず、更新日時だけで「ログインし直したか」を判定する）
 const CRED_FILE = path.join(os.homedir(), '.claude', '.credentials.json');
 function credMtime() {
@@ -21,7 +27,7 @@ function credMtime() {
 const AUTH_MSG = 'Claude Code のログインが切れています。ターミナルで「claude」を起動し「/login」でログインし直してください。';
 // 実績がまだ無いときの所要時間の目安（秒）
 const DEFAULT_EST_SEC = { opus: 75, sonnet: 50 };
-const TIMEOUT_MS = 240000;
+const TIMEOUT_MS = 300000;
 // 空の作業フォルダで実行し、プロジェクトのファイルや設定を読ませない
 const WORK_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-bridge-'));
 
@@ -95,12 +101,19 @@ function runClaude(prompt, model, allowWeb = true) {
   return new Promise((resolve) => {
     const env = { ...process.env };
     for (const k of Object.keys(env)) if (k === 'CLAUDECODE' || k.startsWith('CLAUDE_CODE_')) delete env[k];
-    // 高速化: 思考は軽め・MCP/スキル/セッション保存は読み込まない（校正工程ではWebも使わない）
-    const args = ['-p', '--model', model, '--output-format', 'json',
-      ...(allowWeb ? ['--allowedTools', 'WebSearch,WebFetch'] : []),
+    // Claudeに見せるツールを限定する（使えないツールを試して時間切れになるのを防ぐ）
+    //   調査: Web検索・Web閲覧のみ ／ 校正・整形: ツールなし
+    const toolArgs = allowWeb
+      ? ['--tools', 'WebSearch,WebFetch', '--allowedTools', 'WebSearch,WebFetch']
+      : (CLI_JS ? ['--tools', ''] : ['--disallowedTools', ALL_TOOLS]);
+    // 高速化: 思考は軽め・MCP/スキル/セッション保存は読み込まない
+    const args = ['-p', '--model', model, '--output-format', 'json', ...toolArgs,
       '--effort', 'low', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence'];
-    // Windows の claude は .cmd のため shell 経由で起動（引数は固定値のみ、プロンプトは標準入力で渡す）
-    const child = spawn('claude', args, { cwd: WORK_DIR, env, shell: process.platform === 'win32', windowsHide: true });
+    // cli.js を node で直接起動（空の引数も正しく渡せる）。見つからなければ claude.cmd を shell 経由で起動
+    // （引数は固定値のみ、プロンプトは標準入力で渡す）
+    const child = CLI_JS
+      ? spawn(process.execPath, [CLI_JS, ...args], { cwd: WORK_DIR, env, windowsHide: true })
+      : spawn('claude', args, { cwd: WORK_DIR, env, shell: process.platform === 'win32', windowsHide: true });
     let out = '', err = '';
     const timer = setTimeout(() => { child.kill(); }, TIMEOUT_MS);
     child.stdout.on('data', d => out += d);
@@ -216,12 +229,25 @@ async function enrich(body) {
     return { status: 429, json: { limited: true, message: limit.message, usage: summarize(usage) } };
   }
   if (r.code !== 0 || meta.is_error) {
-    usage.calls.push(entry);
     const isAuth = /authenticat|oauth|401|not logged in|\/login/i.test(`${resultText}\n${r.err}`);
-    if (isAuth) usage.lastAuthError = { at: Date.now(), credMtime: credMtime() };
-    saveUsage(usage);
-    if (isAuth) return { status: 401, json: { authError: true, error: AUTH_MSG, usage: summarize(usage) } };
-    return { status: 502, json: { error: (resultText || r.err || 'unknown error').slice(0, 300), usage: summarize(usage) } };
+    if (isAuth) {
+      usage.calls.push(entry);
+      usage.lastAuthError = { at: Date.now(), credMtime: credMtime() };
+      saveUsage(usage);
+      return { status: 401, json: { authError: true, error: AUTH_MSG, usage: summarize(usage) } };
+    }
+    // 回答の文章が残っていれば、下の読み取り・整形で本文の取り出しを試みる（エラーでも諦めない）
+    const hasText = typeof meta.result === 'string' && /。/.test(meta.result);
+    if (!hasText) {
+      usage.calls.push(entry);
+      saveUsage(usage);
+      const timedOut = entry.durMs >= TIMEOUT_MS - 2000;
+      const msg = timedOut
+        ? `Claudeの調査が時間切れになりました（${Math.round(TIMEOUT_MS / 60000)}分）。時間をおいてもう一度お試しください。`
+        : (resultText || r.err || 'unknown error').slice(0, 300);
+      return { status: 502, json: { error: msg, usage: summarize(usage) } };
+    }
+    logBadResponse(`error-result (${model})`, resultText);
   }
   let parsed = parseRetsudenJson(resultText);
   if (!parsed) {
