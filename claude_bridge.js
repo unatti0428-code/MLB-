@@ -294,7 +294,9 @@ async function enrich(body) {
   usage.lastAuthError = null;
   saveUsage(usage);
   if (!entry.ok) return { status: 502, json: { error: '回答の形式が不正でした', usage: summarize(usage) } };
-  const result = { retsuden: text, sources: parsed.sources || [], model, polished: !!entry.polished };
+  // 予備エピソード（受賞歴の文を除外したときの補充用）。文字列のみ・最大3文
+  const spare = Array.isArray(parsed.spare) ? parsed.spare.filter(s => typeof s === 'string' && s.trim()).slice(0, 3) : [];
+  const result = { retsuden: text, spare, sources: parsed.sources || [], model, polished: !!entry.polished };
   saveCache(cacheKey(model, prompt), result);
   return { status: 200, json: { ...result, usage: summarize(usage) } };
 }

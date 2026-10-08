@@ -10714,11 +10714,22 @@ async function refreshAiUsage(note) {
 
 // 公式データにない主要タイトルが本文に含まれていれば採用しない（事実誤認の防止）
 // 文単位に分け、公式データにない受賞歴を含む文を除く（改行と「。」で区切る）
-function _dropUnverifiedAwardSentences(text, allAwardsJa) {
-  const sentences = text.split('\n').flatMap(line => line.match(/[^。]+。?/g) || []).map(s => s.trim()).filter(Boolean);
-  const removed = sentences.filter(s => _enrichedTextHasUnverifiedAward(s, allAwardsJa));
-  const keptList = sentences.filter(s => !removed.includes(s));
-  return { text: keptList.join('\n'), removed, kept: keptList.length };
+// 除外した位置には、Claudeが用意した予備エピソード（spares）を同じ確認を通した上で差し込む
+function _dropUnverifiedAwardSentences(text, allAwardsJa, spares = []) {
+  const split = t => String(t || '').split('\n').flatMap(line => line.match(/[^。]+。?/g) || []).map(s => s.trim()).filter(Boolean);
+  const sentences = split(text);
+  const pool = (Array.isArray(spares) ? spares : [])
+    .flatMap(split)
+    .map(s => s.replace(/\bERA\s?(?=\d)/g, '防御率').replace(/"([^"\n]{1,40})"/g, '「$1」'))
+    .filter(s => /。$/.test(s) && !_enrichedTextHasUnverifiedAward(s, allAwardsJa) && !sentences.includes(s));
+  const removed = [], replaced = [], out = [];
+  for (const s of sentences) {
+    if (!_enrichedTextHasUnverifiedAward(s, allAwardsJa)) { out.push(s); continue; }
+    removed.push(s);
+    const sp = pool.shift();
+    if (sp) { out.push(sp); replaced.push(sp); }
+  }
+  return { text: out.join('\n'), removed, replaced, kept: out.length };
 }
 
 function _enrichedTextHasUnverifiedAward(text, allAwardsJa) {
@@ -10822,8 +10833,12 @@ function _buildEnrichPrompt(row, awardsLines, birthPlace, knownNicks = []) {
     '- 良い例：「2015年はオリオールズの抑えとして36セーブ、防御率1.92を記録した。」「沈む速球を武器に打者を圧倒し、初めてオールスターゲームに選ばれた。」',
     '- 書き終えたら全文を読み直し、意味の通らない文や不自然な言い回しがあれば直してから出力する。',
     '',
+    '予備エピソード:',
+    `- 本文とは別に、本文で使っていない具体的なエピソードを2文（各40〜60字）「spare」に書く。本文のどの位置に差し込んでも文脈が通じるよう、1文で完結させ、${isCareer ? '「◯◯年に」' : `「${yearKey}年」`}など時期が分かる書き方にする。`,
+    '- 予備エピソードも情報源で確認できた事実だけにし、受賞歴・タイトルには触れない。',
+    '',
     '出力は次のJSONを1つだけにしてください（前後に説明文・調査メモ・下書きを付けない）。本文中では半角の " を使わず、引用や異名は「」で囲む:',
-    '{"retsuden":"本文（文ごとに\\nで改行）","sources":["参照したURL"]}',
+    '{"retsuden":"本文（文ごとに\\nで改行）","spare":["予備エピソード1","予備エピソード2"],"sources":["参照したURL"]}',
   ].join('\n');
 }
 
@@ -10933,7 +10948,7 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
       .replace(/\bERA\s?(?=\d)/g, '防御率')
       .replace(/"([^"\n]{1,40})"/g, '「$1」'); // 半角の"…"は日本語の「」にそろえる
     // 公式データにない受賞歴を含む文だけを取り除き、残りを採用する
-    const { text, removed, kept } = _dropUnverifiedAwardSentences(raw, allAwards);
+    const { text, removed, replaced, kept } = _dropUnverifiedAwardSentences(raw, allAwards, data.spare);
     if (kept < 3) {
       console.warn('[AI列伝] 公式データにない受賞歴が多いため不採用:', raw);
       done(data.usage, '⚠️ 公式データと合わない受賞歴が多かったため、通常の列伝のままにしました');
@@ -10944,7 +10959,9 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
     if (!isCurrent()) return; // 別カード生成済み → 反映しない
     console.log('[AI列伝] 採用（参照元）:', data.sources);
     updateRetsuden(text);
-    const note = removed.length ? `（公式データと合わない受賞歴の${removed.length}文を除外）` : '';
+    const note = !removed.length ? ''
+      : replaced.length === removed.length ? `（公式データと合わない受賞歴の${removed.length}文を予備エピソードに差し替え）`
+      : `（公式データと合わない受賞歴の${removed.length}文を除外${replaced.length ? `・${replaced.length}文を予備エピソードで補充` : ''}）`;
     done(data.usage, (data.cached ? `⚡ 保存済みのAI列伝を反映しました（${modelLabel}・即時）` : `✨ AI列伝を反映しました（${modelLabel}）`) + note);
   } catch (e) {
     done(null);
