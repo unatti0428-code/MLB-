@@ -5560,6 +5560,91 @@ function _isWikiEpDuplicate(ep, lines, nickData = null) {
 }
 
 // ── 野手・列伝テキスト生成 ────────────────────────────────────
+// ── 列伝の補充文（オンライン情報が乏しい選手でも最低7文（表示6行以上）になるよう、手元の成績・能力値から作る） ──
+// 締めの文を除いて RETSUDEN_MIN_BODY 文に満たないとき、重複しない候補を順に足す
+const RETSUDEN_MIN_BODY = 6;
+
+function _fillRetsudenLines(lines, candidates) {
+  for (const c of candidates) {
+    if (lines.length >= RETSUDEN_MIN_BODY) break;
+    if (!c || !c.text) continue;
+    // 同じ話題（キーワード）が既に出ていれば足さない
+    if (c.topic && lines.some(l => l.includes(c.topic))) continue;
+    if (lines.some(l => l.slice(0, 10) === c.text.slice(0, 10))) continue;
+    lines.push(c.text);
+  }
+}
+
+// "10.2"（10回2/3）形式の投球回を実数に直す
+function _ipToNumber(ip) {
+  const n = parseFloat(ip) || 0;
+  const whole = Math.floor(n);
+  return whole + Math.round((n - whole) * 10) / 3;
+}
+
+function _pitcherFillerLines(row, { tg, gs, ip, k, isStarter, trajectory, pitches, nameOf, eraN = 99 }) {
+  const out = [];
+  const ipN = _ipToNumber(ip);
+  const ipStr = String(row[10] ?? ip);
+  if (tg > 0 && ipN > 0) {
+    out.push({ topic: '登板し', text: isStarter
+      ? `${tg}試合に登板（うち先発${gs}試合）し、${ipStr}イニングを投げ${eraN < 4.5 && ipN >= 50 ? 'てローテーションの一角を担った' : 'た'}。`
+      : `${tg}試合にリリーフとして登板し、${ipStr}イニングを投げ${eraN < 4.5 && tg >= 20 ? 'てブルペンを支えた' : 'た'}。` });
+  }
+  if (ipN >= 5 && k > 0) {
+    const k9 = k * 9 / ipN;
+    if (k9 >= 10)     out.push({ topic: '三振を奪', text: `9イニングあたり${k9.toFixed(1)}個の三振を奪い、高い奪三振力を示した。` });
+    else if (k9 >= 8) out.push({ topic: '三振を奪', text: `9イニングあたり${k9.toFixed(1)}個のペースで三振を奪った。` });
+  }
+  const abil = [
+    { v: safeNum(row[52]) || 0, topic: '緩急',   text: v => `緩急（${v}）を生かした投球で、打者のタイミングを外した。` },
+    { v: safeNum(row[51]) || 0, topic: '制球',   text: v => `制球力（${v}）を武器に、四球で崩れない投球を心がけた。` },
+    { v: safeNum(row[53]) || 0, topic: '精神',   text: v => `ピンチでも動じない精神力（${v}）で、重要な場面のマウンドを任された。` },
+    { v: safeNum(row[54]) || 0, topic: '三振を奪', text: v => `奪三振能力（${v}）を武器に、要所で三振を奪った。` },
+    { v: safeNum(row[55]) || 0, topic: '球質',   text: v => `重い球質（${v}）で、打者に長打を許さない投球を見せた。` },
+  ].filter(a => a.v >= 60).sort((a, b) => b.v - a.v);
+  abil.slice(0, 2).forEach(a => out.push({ topic: a.topic, text: a.text(a.v) }));
+  const left = safeNum(row[56]);
+  if (left != null && left >= 15) out.push({ topic: '左打者', text: `左打者を得意とし（対左+${left}）、左の強打者を迎える場面で起用された。` });
+  else if (left != null && left <= -15) out.push({ topic: '左打者', text: `右打者には強さを見せた一方、左打者の攻略に苦しんだ。` });
+  if (pitches && pitches.length >= 3) {
+    const sub = pitches.slice(1, 4).map(nameOf).join('・');
+    out.push({ topic: sub.split('・')[0], text: `ほかに${sub}も交えて、投球の幅を広げた。` });
+  }
+  const yrs = trajectory && trajectory.yearsInLeague;
+  if (yrs >= 8) out.push({ topic: '年目', text: `メジャー${yrs}年目のベテランとして、${isStarter ? '投手陣' : 'ブルペン'}に経験をもたらした。` });
+  else if (yrs >= 2 && yrs <= 4) out.push({ topic: '年目', text: `メジャー${yrs}年目のシーズンで、経験を重ねながらマウンドに上がった。` });
+  return out;
+}
+
+function _hitterFillerLines(row, { games, obp, sb, trajectory }) {
+  const out = [];
+  if (games > 0 && obp && obp !== '--') {
+    const good = games >= 30 && (parseFloat(obp) || 0) >= 0.320;
+    out.push({ topic: '試合に出場', text: good
+      ? `${games}試合に出場し、出塁率${obp}で打線の一角を担った。`
+      : `${games}試合に出場し、出塁率${obp}を記録した。` });
+  }
+  const abil = [
+    { v: safeNum(row[44]) || 0, topic: 'ミート',   text: v => `ミート力（${v}）の高い打撃で、安打を積み重ねた。` },
+    { v: safeNum(row[45]) || 0, topic: 'パワー',   text: v => `パワー（${v}）を生かした長打で、打線に迫力をもたらした。` },
+    { v: safeNum(row[47]) || 0, topic: 'チャンス', text: v => `チャンス（${v}）に強い打撃で、得点圏で存在感を示した。` },
+    { v: safeNum(row[48]) || 0, topic: '選球眼',   text: v => `選球眼（${v}）の良さで四球を選び、出塁を重ねた。` },
+    { v: safeNum(row[46]) || 0, topic: 'スピード', text: v => `スピード（${v}）を生かし、塁上でも相手に重圧をかけた。` },
+  ].filter(a => a.v >= 60).sort((a, b) => b.v - a.v);
+  abil.slice(0, 2).forEach(a => out.push({ topic: a.topic, text: a.text(a.v) }));
+  const left = safeNum(row[52]);
+  if (left != null && left >= 10) out.push({ topic: '左投手', text: `左投手を得意とし（対左+${left}）、左腕との対戦で結果を残した。` });
+  else if (left != null && left <= -10) out.push({ topic: '左投手', text: `左投手には苦しんだ一方、右投手との対戦で持ち味を発揮した。` });
+  if (sb >= 10) out.push({ topic: '盗塁', text: `${sb}盗塁を決め、足でもチームに貢献した。` });
+  const posJa = (typeof _getPrimaryPosJa === 'function') ? _getPrimaryPosJa(row) : '';
+  if (posJa) out.push({ topic: posJa, text: `${posJa}として試合に出続け、守備でもチームを支えた。` });
+  const yrs = trajectory && trajectory.yearsInLeague;
+  if (yrs >= 8) out.push({ topic: '年目', text: `メジャー${yrs}年目のベテランとして、チームに経験と落ち着きをもたらした。` });
+  else if (yrs >= 2 && yrs <= 4) out.push({ topic: '年目', text: `メジャー${yrs}年目のシーズンで、経験を積みながら出場を重ねた。` });
+  return out;
+}
+
 function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajectory = {}, wikiEpisodes = []) {
   const hr    = parseInt(apiSt.homeRuns    ?? row[9])  || 0;
   const rbi   = parseInt(apiSt.rbi         ?? row[10]) || 0;
@@ -5949,6 +6034,9 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     }
   }
 
+  // 手元の成績・能力値から補充し、締めを含めて最低7文にする
+  _fillRetsudenLines(lines, _hitterFillerLines(row, { games, obp, sb, trajectory }));
+
   // 行6（最終）：総評
   if (!isSparsePA && (hr >= 70 || opsN >= 1.3)) {
     lines.push(`野球史上最高峰の打者の一人として、その活躍は永く語り継がれている。`);
@@ -6316,6 +6404,9 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
       lines.push(ep);
     }
   }
+
+  // 手元の成績・能力値から補充し、締めを含めて最低7文にする
+  _fillRetsudenLines(lines, _pitcherFillerLines(row, { tg, gs, ip, k, isStarter, trajectory, pitches, nameOf: pName, eraN }));
 
   // 行6（最終）：締め
   if (awardsJa.some(a => a.includes('サイ・ヤング'))) {
