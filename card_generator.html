@@ -5000,7 +5000,8 @@ function buildCardType(row, awardsJa) {
     // ⑧ タイトルなし → マイナー/ウィンターの年間タイトル級称号があれば優先
     //   それも無く弱い「N勝右腕」級（10勝以下）に留まる場合、対盗塁20以上なら「走者釘付」を採用
     if (!g_milbTitleJa && _baseAbl >= 20 && wins <= 10) return `走者釘付${hand}`;
-    return g_milbTitleJa || `${wins}勝${hand}投手`;
+    // 0勝で「0勝右腕投手」とならないよう、勝ち星がない年は役割で表す
+    return g_milbTitleJa || (wins > 0 ? `${wins}勝${hand}投手` : `${isStarter ? '先発' : '救援'}${hand}`);
   }
 }
 
@@ -5597,6 +5598,8 @@ function _ipToNumber(ip) {
 
 function _pitcherFillerLines(row, { tg, gs, ip, k, isStarter, trajectory, pitches, nameOf, eraN = 99 }) {
   const out = [];
+  // 20イニング未満は能力値・奪三振ペースが当てにならないため、評価を含む文は使わない
+  const sparse = _ipToNumber(ip) < 20;
   const ipN = _ipToNumber(ip);
   const ipStr = String(row[10] ?? ip);
   if (tg > 0 && ipN > 0) {
@@ -5604,7 +5607,7 @@ function _pitcherFillerLines(row, { tg, gs, ip, k, isStarter, trajectory, pitche
       ? `${tg}試合に登板（うち先発${gs}試合）し、${ipStr}イニングを投げ${eraN < 4.5 && ipN >= 50 ? 'てローテーションの一角を担った' : 'た'}。`
       : `${tg}試合にリリーフとして登板し、${ipStr}イニングを投げ${eraN < 4.5 && tg >= 20 ? 'てブルペンを支えた' : 'た'}。` });
   }
-  if (ipN >= 5 && k > 0) {
+  if (!sparse && ipN >= 5 && k > 0) {
     const k9 = k * 9 / ipN;
     if (k9 >= 10)     out.push({ topic: '三振を奪', text: `9イニングあたり${k9.toFixed(1)}個の三振を奪い、高い奪三振力を示した。` });
     else if (k9 >= 8) out.push({ topic: '三振を奪', text: `9イニングあたり${k9.toFixed(1)}個のペースで三振を奪った。` });
@@ -5616,14 +5619,20 @@ function _pitcherFillerLines(row, { tg, gs, ip, k, isStarter, trajectory, pitche
     { v: safeNum(row[54]) || 0, topic: '三振を奪', text: v => `奪三振能力（${v}）を武器に、要所で三振を奪った。` },
     { v: safeNum(row[55]) || 0, topic: '球質',   text: v => `重い球質（${v}）で、打者に長打を許さない投球を見せた。` },
   ].filter(a => a.v >= 60).sort((a, b) => b.v - a.v);
-  abil.slice(0, 2).forEach(a => out.push({ topic: a.topic, text: a.text(a.v) }));
+  if (!sparse) abil.slice(0, 2).forEach(a => out.push({ topic: a.topic, text: a.text(a.v) }));
   const left = safeNum(row[56]);
-  if (left != null && left >= 15) out.push({ topic: '左打者', text: `左打者を得意とし（対左+${left}）、左の強打者を迎える場面で起用された。` });
+  if (sparse) { /* 対左の評価も行わない */ }
+  else if (left != null && left >= 15) out.push({ topic: '左打者', text: `左打者を得意とし（対左+${left}）、左の強打者を迎える場面で起用された。` });
   else if (left != null && left <= -15) out.push({ topic: '左打者', text: `右打者には強さを見せた一方、左打者の攻略に苦しんだ。` });
   if (pitches && pitches.length >= 3) {
     const sub = pitches.slice(1, 4).map(nameOf).join('・');
     out.push({ topic: sub.split('・')[0], text: `ほかに${sub}も交えて、投球の幅を広げた。` });
   }
+  if (pitches && pitches.length >= 2 && pitches[0].rate > 0) {
+    out.push({ topic: '%', text: `投球の${Math.round(pitches[0].rate)}%を${nameOf(pitches[0])}が占め、${nameOf(pitches[1])}（${Math.round(pitches[1].rate)}%）がこれに続いた。` });
+  }
+  const teamJaP = _teamCodeToJa(String(row[2] || '').replace(/\d+$/, ''));
+  if (teamJaP && /^\d{4}$/.test(String(row[1]))) out.push({ topic: teamJaP, text: `${row[1]}年は${teamJaP}の一員としてマウンドに上がった。` });
   const yrs = trajectory && trajectory.yearsInLeague;
   if (yrs >= 8) out.push({ topic: '年目', text: `メジャー${yrs}年目のベテランとして、${isStarter ? '投手陣' : 'ブルペン'}に経験をもたらした。` });
   else if (yrs >= 2 && yrs <= 4) out.push({ topic: '年目', text: `メジャー${yrs}年目のシーズンで、経験を重ねながらマウンドに上がった。` });
@@ -5632,6 +5641,8 @@ function _pitcherFillerLines(row, { tg, gs, ip, k, isStarter, trajectory, pitche
 
 function _hitterFillerLines(row, { games, obp, sb, trajectory }) {
   const out = [];
+  // 30試合未満は能力値が当てにならないため、評価を含む文は使わない
+  const sparse = games > 0 && games < 30;
   if (games > 0 && obp && obp !== '--') {
     const good = games >= 30 && (parseFloat(obp) || 0) >= 0.320;
     out.push({ topic: '試合に出場', text: good
@@ -5645,13 +5656,18 @@ function _hitterFillerLines(row, { games, obp, sb, trajectory }) {
     { v: safeNum(row[48]) || 0, topic: '選球眼',   text: v => `選球眼（${v}）の良さで四球を選び、出塁を重ねた。` },
     { v: safeNum(row[46]) || 0, topic: 'スピード', text: v => `スピード（${v}）を生かし、塁上でも相手に重圧をかけた。` },
   ].filter(a => a.v >= 60).sort((a, b) => b.v - a.v);
-  abil.slice(0, 2).forEach(a => out.push({ topic: a.topic, text: a.text(a.v) }));
+  if (!sparse) abil.slice(0, 2).forEach(a => out.push({ topic: a.topic, text: a.text(a.v) }));
   const left = safeNum(row[52]);
-  if (left != null && left >= 10) out.push({ topic: '左投手', text: `左投手を得意とし（対左+${left}）、左腕との対戦で結果を残した。` });
+  if (sparse) { /* 対左の評価も行わない */ }
+  else if (left != null && left >= 10) out.push({ topic: '左投手', text: `左投手を得意とし（対左+${left}）、左腕との対戦で結果を残した。` });
   else if (left != null && left <= -10) out.push({ topic: '左投手', text: `左投手には苦しんだ一方、右投手との対戦で持ち味を発揮した。` });
   if (sb >= 10) out.push({ topic: '盗塁', text: `${sb}盗塁を決め、足でもチームに貢献した。` });
   const posJa = (typeof _getPrimaryPosJa === 'function') ? _getPrimaryPosJa(row) : '';
-  if (posJa) out.push({ topic: posJa, text: `${posJa}として試合に出続け、守備でもチームを支えた。` });
+  if (posJa) out.push({ topic: posJa, text: games >= 60
+    ? `${posJa}として試合に出続け、守備でもチームを支えた。`
+    : `${posJa}として出場機会を得た。` });
+  const teamJaH = _teamCodeToJa(String(row[2] || '').replace(/\d+$/, ''));
+  if (teamJaH && /^\d{4}$/.test(String(row[1]))) out.push({ topic: teamJaH, text: `${row[1]}年は${teamJaH}の一員としてプレーした。` });
   const yrs = trajectory && trajectory.yearsInLeague;
   if (yrs >= 8) out.push({ topic: '年目', text: `メジャー${yrs}年目のベテランとして、チームに経験と落ち着きをもたらした。` });
   else if (yrs >= 2 && yrs <= 4) out.push({ topic: '年目', text: `メジャー${yrs}年目のシーズンで、経験を積みながら出場を重ねた。` });
@@ -6077,7 +6093,7 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
   } else if (awardsJa.some(a => a.includes('MVP'))) {
     lines.push(`リーグ最高選手の称号を手にし、チームの核として球団史に刻まれた。`);
   } else if (isSparsePA) {
-    lines.push(`限られた出場でも実力を見せつけ、次シーズンへの大きな期待を残した。`);
+    lines.push(`限られた出場機会の中で、メジャーの舞台で貴重な経験を積んだ。`);
   } else {
     const closings = [
       `そのバットはファンに夢と興奮を与え続け、球場に何度も歓声をもたらした。`,
@@ -6315,6 +6331,12 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
 
   const lines = [];
 
+  // 成績に見合った表現にするための目安（登板が少ない・防御率が悪い年は称賛を控える）
+  const isSparseP = ip < 20;                 // 20イニング未満：サンプルが少なく評価できない
+  const isPoorP   = eraN >= 5.0;             // 防御率5点以上：結果が出なかった年
+  const modestP   = isSparseP || isPoorP;
+  const isGoodP   = !modestP && ((eraN < 3.5 && ip >= 60) || sv >= 20 || hld >= 20 || wins >= 12 || awardsJa.length > 0);
+
   // 行1：主要成績
   const p = [];
   if (wins > 0) p.push(`${wins}勝${loss}敗`);
@@ -6322,8 +6344,12 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   if (k > 0) p.push(`奪三振${k}`);
   if (sv > 0) p.push(`${sv}セーブ`);
   p.push(`WHIP${whip}`);
-  const eraDesc = eraN < 2.5 ? '圧倒的な' : eraN < 3.5 ? '安定した' : '';
-  lines.push(`${year}年、${p.join('・')}という${eraDesc}成績でマウンドに立ち続けた。`);
+  const eraDesc = (ip >= 50 && eraN < 2.5) ? '圧倒的な' : (ip >= 50 && eraN < 3.5) ? '安定した' : '';
+  lines.push(isSparseP
+    ? `${year}年は${tg}試合に登板し、${p.join('・')}という成績を残した。`
+    : isPoorP
+    ? `${year}年は${p.join('・')}と、苦しい投球が続いた。`
+    : `${year}年、${p.join('・')}という${eraDesc}成績でマウンドに立ち続けた。`);
 
   // 行2：受賞歴 OR 特筆成績（確実なデータのみ使用・APIリーグ順位は使わない）
   {
@@ -6378,7 +6404,12 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   }
 
   // 行3：球種・スタイル（球速付きで具体的に・数値は品質表現に変換）
-  if (primaryPitch && powerPitch) {
+  // 登板が少ない・防御率が悪い年は「打者をねじ伏せた」等の評価を付けず、持ち球だけを書く
+  if (modestP && primaryPitch) {
+    const others = pitches.slice(1, 3).map(pName).join('・');
+    const sp0 = spdTxt(primaryPitch.speed);
+    lines.push(others ? `${sp0}${pName(primaryPitch)}を主軸に、${others}を交えて投げた。` : `${sp0}${pName(primaryPitch)}を主軸に投げた。`);
+  } else if (primaryPitch && powerPitch) {
     const sp = spdTxt(primaryPitch.speed);
     const sw = spdTxt(powerPitch.speed);
     if (primaryPitch.name !== powerPitch.name && powerPitch.power >= 85) {
@@ -6427,15 +6458,20 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     const isNotableYearP = traj.isPeakSeason || traj.isBreakthrough ||
       awardsJa.some(a => a.includes('サイ・ヤング') || a.includes('MVP') || a.includes('新人王') ||
                          a.includes('最優秀防御率') || a.includes('奪三振王') || a.includes('最多勝'));
-    if (traj.isBreakthrough && traj.prevMetric != null) {
-      lines.push(`前年防御率${traj.prevMetric.toFixed(2)}から大幅に改善し、制球力を磨き上げて覚醒した転機のシーズン。`);
-    } else if (traj.isImprovement && traj.prevMetric != null) {
+    if (!modestP && traj.isBreakthrough && traj.prevMetric != null) {
+      lines.push(`前年防御率${traj.prevMetric.toFixed(2)}から大幅に改善し、飛躍を遂げた転機のシーズン。`);
+    } else if (!modestP && traj.isImprovement && traj.prevMetric != null) {
       const diff = (traj.prevMetric - traj.curMetric).toFixed(2);
-      lines.push(`前年比ERA${diff}向上という急成長で、球界屈指のエースへと変貌を遂げたシーズン。`);
-    } else if (traj.isPeakSeason && (traj.yearsInLeague ?? 0) > 1) {
-      lines.push(`キャリアを通じてのベストシーズンであり、真のエースとして球界に君臨した一年。`);
+      lines.push(`前年から防御率を${diff}改善し、大きく成長したシーズン。`);
+    } else if (!modestP && traj.isPeakSeason && (traj.yearsInLeague ?? 0) > 1) {
+      lines.push(isGoodP && isStarter
+        ? `キャリアを通じてのベストシーズンであり、真のエースとして球界に君臨した一年。`
+        : `キャリアで最も良い成績を残したシーズン。`);
     } else if (traj.isFirstYear) {
-      lines.push(`メジャー${traj.yearsInLeague ? traj.yearsInLeague + '年目' : '初年度'}にして即戦力として台頭し、将来のエース候補として球界を驚かせた。`);
+      const yTxt = traj.yearsInLeague ? traj.yearsInLeague + '年目' : '初年度';
+      lines.push(isGoodP
+        ? `メジャー${yTxt}にして即戦力として台頭し、将来のエース候補として球界を驚かせた。`
+        : `メジャー${yTxt}のシーズンで、初めての大舞台に挑んだ。`);
     } else if (isNotableYearP && nickPS) {
       lines.push(nickPS.line);
     } else if (lorePS) {
@@ -6469,8 +6505,26 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
   // 行6（最終）：締め
   if (awardsJa.some(a => a.includes('サイ・ヤング'))) {
     lines.push(`投手の最高栄誉サイ・ヤング賞を手にし、MLB投手史に燦然と名を刻んだ。`);
-  } else if (k >= 300 || eraN < 2.0) {
+  } else if (k >= 300 || (eraN < 2.0 && ip >= 100)) {
     lines.push(`歴代屈指の投手としてその活躍はMLBの歴史に永く輝き続けるシーズン。`);
+  } else if (isSparseP) {
+    const closings = [
+      `限られた登板機会の中で、メジャーのマウンドで貴重な経験を積んだ。`,
+      `少ない登板の中でも、次のチャンスにつながる経験を重ねたシーズン。`,
+    ];
+    lines.push(closings[tg % closings.length]);
+  } else if (isPoorP) {
+    const closings = [
+      `結果が出ない時期も、マウンドに上がり続けて巻き返しを期した。`,
+      `苦しいシーズンとなったが、その経験を次の舞台へとつなげた。`,
+    ];
+    lines.push(closings[tg % closings.length]);
+  } else if (!isGoodP) {
+    const closings = [
+      `与えられた役割の中で、チームのために腕を振り続けた。`,
+      `${isStarter ? '先発' : 'リリーフ'}としてマウンドに上がり、チームの戦いを支えた。`,
+    ];
+    lines.push(closings[tg % closings.length]);
   } else {
     const closings = [
       `チームの大黒柱として勝利を手繰り寄せ、ファンに愛され続けたシーズン。`,
