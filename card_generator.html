@@ -3763,6 +3763,13 @@ const _NON_MLB_LEAGUE_CODES = new Set([
  * @param {{name?:string,id?:string}} award
  * @returns {boolean}
  */
+/** メジャーのオールスター選出か（AL/NL All-Star のみ。マイナー・雑誌選出のAll-Starは除く） */
+function _isMlbAllStarAward(award) {
+  const id = String(award.id || '').trim().toUpperCase();
+  const name = String(award.name || '').trim();
+  return id === 'ALAS' || id === 'NLAS' || /^(AL|NL|American League|National League) All-Star$/i.test(name);
+}
+
 function _isNonMlbLeagueAward(award) {
   const rawName = String(award.name || '').trim();
   const rawId   = String(award.id || '').trim().toUpperCase();
@@ -3879,15 +3886,17 @@ function _milbAwardEpisode(info, isPitcher, yearStr = '') {
   const lbl = _milbLeagueLabel(info);
   const playerWord = isPitcher ? '投手' : '選手';
   const pre = yearStr ? `${yearStr}に` : '';   // 例:「2018年に」（エリート選手の若手時代を判別できるよう年度を明記）
+  // メジャーの実績と誤解されないよう、マイナー／ウィンター／フォールリーグであることを文中で明示する
+  const tier = info.fall ? 'アリゾナ・フォールリーグ' : info.winter ? 'ウインターリーグ' : 'マイナーリーグ';
   switch (info.kind) {
-    case 'roy':     return `${pre}${lbl}で新人王に輝くなど、若くしてその才能を高く評価された逸材。`;
-    case 'mvp':     return `${pre}${lbl}でMVPを受賞するなど、同リーグ屈指の実力で頭角を現した。`;
+    case 'roy':     return `${pre}${tier}の${lbl}で新人王に選ばれ、若手有望株として評価された。`;
+    case 'mvp':     return `${pre}${tier}の${lbl}でMVPを受賞し、メジャー昇格に向けて頭角を現した。`;
     case 'poy_pit': return `${pre}${lbl}で最優秀投手に選ばれるなど、メジャー昇格を期待される好投手として評価を高めた。`;
     case 'poy_bat': return `${pre}${lbl}で最優秀${playerWord}に選ばれるなど、打棒を高く評価された有望株。`;
     case 'def':     return `${pre}${lbl}で最優秀守備${playerWord}に選ばれるなど、堅実な守備で評価を集めた。`;
     case 'champ':   return `${pre}${lbl}で首位打者を獲得するなど、確かな打撃技術で結果を残した。`;
-    case 'prospect':return `${pre}${lbl}で有望株として選抜されるなど、将来を嘱望される存在として注目を集めた。`;
-    case 'allstar': return `${pre}${lbl}でオールスターに選出されるなど、同リーグを代表する${playerWord}として活躍した。`;
+    case 'prospect':return `${pre}${tier}の${lbl}で有望株として選ばれ、将来を期待された。`;
+    case 'allstar': return `${pre}${tier}の${lbl}でオールスターに選ばれ、メジャー昇格を目指して力をつけた。`;
     default:        return null;
   }
 }
@@ -4051,7 +4060,11 @@ async function _fetchCareerAwardHighlights(mlbId) {
       else if (/gold glove/.test(n))                            add('gg','ゴールドグラブ賞','受賞',7,season);
       else if (/hank aaron/.test(n))                            add('haa','ハンク・アーロン賞','受賞',8,season);
       else if (/batting (title|champion)|batting champ/.test(n))add('bat','首位打者','獲得',5,season);
-      else if (/all-star|allstar/.test(n) && !/game mvp/.test(n)) add('as','オールスター','選出',9,season);
+      else if (/all-star|allstar/.test(n) && !/game mvp/.test(n)) {
+        // メジャーのオールスターは公式データ上「AL All-Star」「NL All-Star」(ALAS/NLAS)のみ。
+        // 「Baseball America High Class A All-Star」「Topps Class A All-Star」等はマイナーの選出なので数えない
+        if (_isMlbAllStarAward(a)) add('as','オールスター','選出',9,season);
+      }
     }
 
     const episodes = [];
@@ -7866,12 +7879,12 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
     const draftM = s.match(/drafted\s+by\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25}?)\s+(?:in\s+)?(?:the\s+)?(\d{4})/i);
     if (draftM) {
       const team = teamJa(draftM[1].trim());
-      results.push(`${draftM[2]}年に${team}からドラフト指名されてメジャーへの扉を開き、着実に実力を磨いて一流選手へと成長した。`);
+      results.push(`${draftM[2]}年に${team}からドラフト指名を受け、プロの道へ進んだ。`);
       continue;
     }
     const debutM = s.match(/(?:made his|MLB)\s*debut\s*(?:in\s+)?(\d{4})/i);
     if (debutM) {
-      results.push(`${debutM[1]}年にMLBデビューを果たし、以来一貫してトップレベルのパフォーマンスを披露し続けた。`);
+      results.push(`${debutM[1]}年にメジャーデビューを果たし、念願の大舞台に立った。`);
       continue;
     }
 
