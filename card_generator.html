@@ -4243,7 +4243,7 @@ async function _fetchMlbStatRankHighlights(mlbId, isPitcher, excludeYear = '') {
       }
       return `${g.bestYear}年の${g.lg}${catJa[g.cat]}${g.bestRank}位`;
     });
-    const sentence = `${frags.join('、')}など、MLBの第一線で輝かしい実績を残した名選手。`;
+    const sentence = `${frags.join('、')}など、リーグ上位の成績も残した。`;
     _statRankCache[ckey] = [sentence];
     console.log('[StatRank]', mlbId, '→', sentence);
     return _statRankCache[ckey];
@@ -5697,6 +5697,10 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     const loreH = getPlayerLore(g_mlbNameEn);
     const isObscure = games > 0 && games < 400 && opsN < 0.750
                    && !awardsJa.length && !nickH && !loreH;
+    // 名選手：主要タイトル受賞・有名な異名/逸話・長いキャリアでの好成績。それ以外（中堅）は称賛を控えめにする
+    const _careerAwardsH = [...awardsJa, ...Object.values(_awardsJaByYear || {}).flat()];
+    const hasMajorH = _careerAwardsH.some(a => /MVP|首位打者|本塁打王|打点王|盗塁王|シルバースラッガー|ゴールドグラブ|新人王|ハンク・アーロン/.test(a));
+    const isEliteH = hasMajorH || !!nickH || !!loreH || hr >= 300 || (games >= 1200 && opsN >= 0.800);
 
     // 行1: 主要スタッツ要約
     const sp = [];
@@ -5707,12 +5711,16 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     if (isObscure) {
       lines.push(`メジャーでは通算${games}試合に出場し、${sp.join('・')}・OPS${ops}という成績を残した。`);
     } else {
-      lines.push(`${span}で${sp.join('・')}・OPS${ops}を積み上げた、リーグを代表し続けた強打者。`);
+      lines.push(isEliteH
+        ? `${span}で${sp.join('・')}・OPS${ops}を積み上げた、リーグを代表し続けた強打者。`
+        : `${span}で${sp.join('・')}・OPS${ops}を記録し、長くメジャーの舞台で戦い続けた。`);
     }
 
     // 行2: 受賞歴 OR 主要マイルストーン（obscureは条件を満たさないためスキップされる）
     if (awardsJa.length > 0) {
-      lines.push(`${awardsJa.slice(0, 3).join('・')}など栄誉を手にし、時代を代表するスターとして球史に名を刻んだ。`);
+      lines.push(hasMajorH
+        ? `${awardsJa.slice(0, 3).join('・')}など栄誉を手にし、時代を代表するスターとして球史に名を刻んだ。`
+        : `${awardsJa.slice(0, 2).join('・')}を受賞した経歴を持つ。`);
     } else if (hr >= 500) {
       lines.push(`通算${hr}本塁打は球史に残る真の長距離砲の証明であり、偉業として永く語り継がれる。`);
     } else if (hr >= 300) {
@@ -5788,7 +5796,9 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
         const y1 = seasonRows[0][1];
         const y2 = seasonRows[seasonRows.length - 1][1];
         const teamStr = g_careerTeam ? `${g_careerTeam}など` : '複数球団';
-        lines.push(`${y1}〜${y2}年の${seasonRows.length}シーズンにわたるMLBキャリアを${teamStr}で戦い抜き、長きにわたって一線のグラウンドに立ち続けた。`);
+        lines.push(isEliteH
+          ? `${y1}〜${y2}年の${seasonRows.length}シーズンにわたるMLBキャリアを${teamStr}で戦い抜き、長きにわたって一線のグラウンドに立ち続けた。`
+          : `${y1}〜${y2}年の${seasonRows.length}シーズンにわたり、${teamStr}でメジャーの試合に出場した。`);
       } else if (g_careerTeam) {
         lines.push(`${g_careerTeam}での活躍を中心に、その打棒でチームの勝利に貢献し続けたプロフェッショナルな野球人生を送った。`);
       }
@@ -5819,18 +5829,29 @@ function buildHitterRetsuden(row, year, awardsJa, apiSt, rankData = {}, trajecto
     if (lines.length < 4 && !isObscure) {
       const posJaC = _getPrimaryPosJa(row);
       if (posJaC) {
-        lines.push(`${posJaC}として長年にわたり高い水準のプレーを維持し、チームに安定感と勝利をもたらした信頼の存在だった。`);
+        lines.push(isEliteH
+          ? `${posJaC}として長年にわたり高い水準のプレーを維持し、チームに安定感と勝利をもたらした信頼の存在だった。`
+          : `${posJaC}として出場を重ね、チームの戦力として役割を果たした。`);
       } else if (opsN >= 0.700) {
-        lines.push(`長年にわたり攻守両面でチームを支え、プロフェッショナルとしての高い姿勢でファンに感動を与え続けた。`);
+        lines.push(isEliteH
+          ? `長年にわたり攻守両面でチームを支え、プロフェッショナルとしての高い姿勢でファンに感動を与え続けた。`
+          : `攻守両面でチームの戦力として出場を重ねた。`);
       }
     }
 
     // 最終行: 締め（常に1行）
+    // 出場が少ない選手：事実に沿った落ち着いた締め（現役の可能性があるため引退を前提にしない）
     const closings = isObscure
       ? [
-          `メジャーという夢の舞台に立ち続けた野球人生は、ファンの記憶にその名を確かに刻んでいる。`,
-          `短いながらも頂点の舞台でプレーした誇りは、引退後もその野球人生を彩り続けている。`,
-          `アマチュア時代の輝かしい才能を胸にメジャーへ挑んだ姿は、今なお語り継がれている。`,
+          `限られた出場機会の中でも、メジャーの舞台で一打席一打席に挑み続けた。`,
+          `厳しい競争の中でメジャーのグラウンドに立ち、自らの居場所をつかもうと戦い続けた。`,
+          `メジャーの舞台に立つまでの努力と、つかんだ出場機会がその野球人生を形づくっている。`,
+        ]
+      : !isEliteH
+      ? [
+          `長年メジャーの舞台でプレーし、チームの勝利のために力を尽くした。`,
+          `与えられた役割を全うし、チームに欠かせない戦力として戦い続けた。`,
+          `${games}試合の出場を重ねたキャリアは、チームを支えた確かな足跡として残っている。`,
         ]
       : [
           `ファンに愛され、長年チームの顔として球団史に刻まれた不朽の名選手。`,
@@ -6095,6 +6116,12 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     // ── 通算カード向けコメント（最大5行） ──
     const lines = [];
     const roleStr = isStarter ? '先発' : 'リリーフ';
+    // 名投手：主要タイトル受賞・有名な異名/逸話・長いキャリアでの好成績。出場が少ない投手・中堅は称賛を控えめにする
+    const _careerAwardsP = [...awardsJa, ...Object.values(_awardsJaByYear || {}).flat()];
+    const hasMajorP = _careerAwardsP.some(a => /サイ・ヤング|MVP|最多勝|最優秀防御率|奪三振王|最多セーブ|新人王|ゴールドグラブ|リリーバー/.test(a));
+    const famousP = !!getPlayerNickname(g_mlbNameEn) || !!getPlayerLore(g_mlbNameEn);
+    const isEliteP = hasMajorP || famousP || wins >= 150 || sv >= 250 || (ip >= 1500 && eraN < 3.8);
+    const isObscureP = !isEliteP && !awardsJa.length && ip < 300 && wins < 30 && sv < 50;
 
     // 行1: 主要スタッツ要約
     const sp = [];
@@ -6103,12 +6130,18 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     if (wins > 0) sp.push(`${wins}勝`);
     if (sv   > 0) sp.push(`${sv}セーブ`);
     if (hld  > 0) sp.push(`${hld}ホールド`);
-    lines.push(`通算${sp.join('・')}・防御率${era}を記録した、${roleStr}の柱として時代を支えた名投手。`);
+    lines.push(isEliteP
+      ? `通算${sp.join('・')}・防御率${era}を記録した、${roleStr}の柱として時代を支えた名投手。`
+      : isObscureP
+      ? `メジャーでは通算${sp.join('・')}・防御率${era}を記録した。`
+      : `通算${sp.join('・')}・防御率${era}を記録し、${roleStr}として長くメジャーのマウンドに上がった。`);
 
     // 行2: 受賞歴 OR 主要マイルストーン
     let _eraLineAdded = false;
     if (awardsJa.length > 0) {
-      lines.push(`${awardsJa.slice(0, 3).join('・')}など栄誉を手にし、MLB投手史に名を刻んだ。`);
+      lines.push(hasMajorP
+        ? `${awardsJa.slice(0, 3).join('・')}など栄誉を手にし、MLB投手史に名を刻んだ。`
+        : `${awardsJa.slice(0, 2).join('・')}を受賞した経歴を持つ。`);
     } else if (k >= 3000) {
       lines.push(`通算${k}奪三振はMLB史に刻まれる偉業であり、世紀の奪三振マシンとして球史に燦然と輝く。`);
     } else if (wins >= 300) {
@@ -6185,7 +6218,9 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
       if (_sigPitch && !lines.some(l => l.includes(_sigPitch.name))) {
         const _pa = _sigPitch.power >= 100 ? '球界最高水準の' : _sigPitch.power >= 90 ? '圧倒的な威力を誇る' : '強力な';
         const _spdStr = (!isNaN(_sigPitch.speed) && _sigPitch.speed >= 100) ? `（${Math.round(_sigPitch.speed)}km/h）` : '';
-        lines.push(`${_pa}${_sigPitch.name}${_spdStr}を代名詞とし、その一球で試合の流れを変えるほどの圧倒的な武器として打者を封じ続けた。`);
+        lines.push(isEliteP
+          ? `${_pa}${_sigPitch.name}${_spdStr}を代名詞とし、その一球で試合の流れを変えるほどの圧倒的な武器として打者を封じ続けた。`
+          : `${_sigPitch.name}${_spdStr}を持ち球の柱とし、打者を打ち取った。`);
       }
     }
 
@@ -6196,7 +6231,9 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
         const y1P = seasonRowsP[0][1];
         const y2P = seasonRowsP[seasonRowsP.length - 1][1];
         const teamStrP = g_careerTeam ? `${g_careerTeam}など` : '複数球団';
-        lines.push(`${y1P}〜${y2P}年の${seasonRowsP.length}シーズンにわたるMLBキャリアを${teamStrP}で戦い続け、投手としての存在感を示し続けた。`);
+        lines.push(isEliteP
+          ? `${y1P}〜${y2P}年の${seasonRowsP.length}シーズンにわたるMLBキャリアを${teamStrP}で戦い続け、投手としての存在感を示し続けた。`
+          : `${y1P}〜${y2P}年の${seasonRowsP.length}シーズンにわたり、${teamStrP}でメジャーのマウンドに上がった。`);
       } else if (g_careerTeam) {
         lines.push(`${g_careerTeam}での登板を中心に、${roleStr}として長年にわたりチームの投手陣を支え続けた。`);
       }
@@ -6222,7 +6259,15 @@ function buildPitcherRetsuden(row, year, awardsJa, apiSt, rankData = {}, traject
     }
 
     // 最終行: 締め（常に1行）
-    const closings = [
+    const closings = isObscureP ? [
+      `限られた登板機会の中でも、メジャーのマウンドで打者に立ち向かい続けた。`,
+      `厳しい競争の中でメジャーのマウンドに上がり、自らの居場所をつかもうと腕を振り続けた。`,
+      `メジャーのマウンドに立つまでの努力と、つかんだ登板機会がその野球人生を形づくっている。`,
+    ] : !isEliteP ? [
+      `長年メジャーのマウンドに上がり、チームの勝利のために腕を振り続けた。`,
+      `与えられた役割を全うし、投手陣に欠かせない戦力として投げ続けた。`,
+      `${tg}試合の登板を重ねたキャリアは、チームを支えた確かな足跡として残っている。`,
+    ] : [
       `長年にわたりマウンドに立ち続けた姿は、ファンにとって球団の象徴そのものだった。`,
       `チームの勝利を手繰り寄せ続けた投球は、後進の手本として今も語り継がれている。`,
       `その闘志と技術はチームメイトを鼓舞し、ファンに数え切れない感動をもたらした。`,
