@@ -5539,7 +5539,39 @@ function analyzeCareerTrajectory(currentRow) {
  * @param {object|null} nickData - getPlayerNickname() の戻り値（null 可）
  * @returns {boolean} true = 重複なのでスキップすべき
  */
+// Wikipedia 本文の記法（見出し「== 経歴 ==」、太字'''、リンク[[ ]]、テンプレート{{ }}、脚注<ref>）を取り除く
+function _cleanWikiText(t) {
+  return String(t || '')
+    .replace(/<ref[^>]*\/>|<ref[^>]*>[\s\S]*?<\/ref>/gi, '')
+    .replace(/\{\{[^{}]*\}\}/g, '')
+    .replace(/={2,}[^=\n]*={2,}/g, '\n')      // 見出し行
+    .replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, '$1')
+    .replace(/'{2,}/g, '')
+    .replace(/^\s*=+\s*|\s*=+\s*$/gm, '')    // 取り残しの = 記号
+    .replace(/[ \t]{2,}/g, ' ');
+}
+
+// ドラフトの文は指名順位に見合った表現にする（下位指名を「高評価」と書かない）
+function _draftEpisode(yr, team, pick) {
+  const n = parseInt(pick, 10) || 0;
+  const when = yr ? `${yr}年ドラフトで` : 'ドラフトで';
+  const from = team ? `${team}から` : '';
+  if (n > 0 && n <= 30)  return `${when}${from}1巡目（全体${n}位）で指名を受け、高い評価を受けてプロの道へ進んだ。`;
+  if (n > 0 && n <= 100) return `${when}${from}全体${n}位の上位指名を受け、プロの道へ進んだ。`;
+  return `${when}${from}全体${n}位で指名を受け、プロの道へ進んだ。`;
+}
+
+// 同じ話題（ドラフト・デビュー・出身地）の文がすでにあるか
+function _sameTopicExists(ep, lines) {
+  const topics = [/ドラフト|巡目|指名を受け|指名され/, /デビュー/, /出身/];
+  return topics.some(re => re.test(ep) && lines.some(l => re.test(l)));
+}
+
 function _isWikiEpDuplicate(ep, lines, nickData = null) {
+  // ⓪ 同じ話題（ドラフト・デビュー・出身地）が既にある
+  if (_sameTopicExists(ep, lines)) return true;
+  // ⓪-b 年の書かれていない成績の文（例: Wikipediaのマイナー時代の成績）はカードの年の成績と誤解されるため使わない
+  if (/\d+試合|打率\.?\d{3}|防御率\d|\d+本塁打|\d+打点|\d+盗塁|\d+勝/.test(ep) && !/\d{4}年/.test(ep)) return true;
   // ① 引用符ニックネームが既存行に含まれるか（英語 "" 内テキスト）
   const epNick = ep.match(/"([^"]{3,30})"/);
   if (epNick && lines.some(l => l.toLowerCase().includes(epNick[1].toLowerCase()))) return true;
@@ -6979,6 +7011,7 @@ async function _wikidataJaTitle(playerNameEn) {
 // ── 日本語Wikipedia テキスト解析 ─────────────────────────────────
 function _parseJaWikiEpisodes(text, isPitcher) {
   if (!text) return [];
+  text = _cleanWikiText(text);
   const results = [];
   // 「。」「！」「？」で文を分割
   const sentences = text.split(/[。！？]/).filter(s => s.trim().length > 6);
@@ -7024,13 +7057,7 @@ function _parseJaWikiEpisodes(text, isPitcher) {
       // チーム名: 全カタカナ範囲（゠-ヿ）で球団名を抽出
       const teamM = s.match(/([゠-ヿ]{3,15})(?:から|に(?:より)?指名)/);
       const team  = teamM ? teamM[1] : null;
-      if (yr && team) {
-        results.push(`${yr}年ドラフトで${team}から全体${pick}位という高評価で指名を受け、メジャーへの扉を開いた。`);
-      } else if (yr) {
-        results.push(`${yr}年ドラフト全体${pick}位という高順位での指名は、当時から球界が将来の大物と見込んでいた証。`);
-      } else {
-        results.push(`ドラフト全体${pick}位という高評価での指名は、アマチュア時代の傑出した才能が広く認められていた証。`);
-      }
+      results.push(_draftEpisode(yr, team, pick));
       continue;
     }
 
@@ -7560,6 +7587,7 @@ function _jakenFromRomaji(name) {
 
 function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
   if (!text) return [];
+  text = _cleanWikiText(text);
   // 日本語テキストは専用パーサーへ
   if (isJapanese) return _parseJaWikiEpisodes(text, isPitcher);
   const results = [];
@@ -7930,13 +7958,7 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
       const teamOM = s.match(/(?:the\s+)?([A-Z][a-zA-Z ]{3,25})\s+(?:selected|drafted)\s+(?:him|her)\b/i)
         || s.match(/(?:by|from)\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25})\b/i);
       const teamO = teamOM ? teamJa(teamOM[1].trim()) : null;
-      if (yr2 && teamO) {
-        results.push(`${yr2}年ドラフトで${teamO}から全体${pick}位という高評価で指名を受け、メジャーへの扉を開いた。`);
-      } else if (yr2) {
-        results.push(`${yr2}年ドラフト全体${pick}位という高順位での指名は、当時から球界が将来の大物と見込んでいた証。`);
-      } else {
-        results.push(`ドラフト全体${pick}位という高評価での指名は、アマチュア時代の傑出した才能が広く認められていた証。`);
-      }
+      results.push(_draftEpisode(yr2, teamO, pick));
       continue;
     }
 
@@ -8187,11 +8209,10 @@ function _parseWikiEpisodes(text, isPitcher, isJapanese = false) {
       const teamDM2 = s.match(/by\s+(?:the\s+)?([A-Z][a-zA-Z ]{3,25}?)(?:\s+in|\s*[,.])/i);
       const teamStr2 = teamDM2 ? `${teamJa(teamDM2[1].trim())}に` : '';
       if (round === 1) {
-        results.push(`ドラフト1巡目で${teamStr2}指名される高評価を受けてプロ入りし、その才能をメジャーの舞台で存分に発揮した。`);
-      } else if (round <= 3) {
-        results.push(`ドラフト${round}巡目から這い上がり、努力と才能でメジャーのトッププレーヤーへと成長した。`);
+        results.push(`ドラフト1巡目で${teamStr2}指名され、高い評価を受けてプロの道へ進んだ。`);
       } else {
-        results.push('下位指名からメジャーの第一線へと登り詰めた努力の人として、多くの選手たちの手本となった。');
+        // 2巡目以降は実績に関係なく使われるため、「トッププレーヤーへ成長」等の評価は付けない
+        results.push(`ドラフト${round}巡目で${teamStr2}指名を受け、プロの道へ進んだ。`);
       }
       continue;
     }
@@ -8753,7 +8774,8 @@ function updateRetsuden(text) {
   const el = document.getElementById('retsuden-area');
   if (!el) return;
 
-  const normalized = (text || '').replace(/\\n/g, '\n');
+  // Wikipedia由来の見出し記号（== 経歴 == 等）が残っていても表示しない
+  const normalized = _cleanWikiText((text || '').replace(/\\n/g, '\n'));
   let segments = normalized.split('\n').map(l => l.trim()).filter(l => l);
 
   // ── 内部レンダリングヘルパー ──
