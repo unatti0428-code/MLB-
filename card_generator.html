@@ -5058,48 +5058,44 @@ function _pwrAdj(power) {
 
 // ── 変化球異名DB（英語名小文字キー → { 球種名: 異名 }）────────────────────
 // 球種名はExcelに記録される日本語名と一致させること
+// 球種の異名：実際に広く知られた名前、または握り・球種そのものを表す名前だけを登録する。
+// 選手名から付けた名前（例:「セールのスライダー」「カーショウ曲線」）や作った名前（例:「必殺〜」「魔球〜」）は登録しない。
 const _PITCH_NICKNAMES = {
-  // チェンジアップ系
-  'devin williams':    { 'チェンジアップ': 'エアベンダー' },
-  'trevor hoffman':    { 'チェンジアップ': '消える魔球' },
-  'pedro martinez':    { 'チェンジアップ': '必殺チェンジ' },
-  'cole hamels':       { 'チェンジアップ': 'ハメルズ・チェンジ' },
-  'felix hernandez':   { 'チェンジアップ': 'エル・カンビオ' },
-  'johan santana':     { 'チェンジアップ': 'サンタナ魔球' },
-  // カーブ系
+  // 実際に知られている異名
+  'devin williams':    { 'チェンジアップ': 'エアベンダー' },                    // "Airbender"
+  'clayton kershaw':   { 'カーブ': 'パブリック・エネミー・ナンバーワン' },      // 実況ビン・スカリーの "Public Enemy No. 1"
+  'randy johnson':     { 'スライダー': 'ミスター・スナッピー' },                // "Mr. Snappy"
+  'dwight gooden':     { 'カーブ': 'ロード・チャールズ' },                      // "Lord Charles"
+  // 球種・握りそのものを表す名前
   'barry zito':        { 'カーブ': '12-6カーブ' },
-  'sandy koufax':      { 'カーブ': '神のカーブ' },
   'bert blyleven':     { 'カーブ': '縦割れカーブ' },
-  'clayton kershaw':   { 'カーブ': 'カーショウ曲線' },
-  'rich hill':         { 'カーブ': 'ヒルのカーブ' },
-  'mike mussina':      { 'カーブ': 'ムーシのナックルカーブ' },
-  // スライダー系
-  'randy johnson':     { 'スライダー': '必殺スライダー' },
-  'steve carlton':     { 'スライダー': 'カールトン・スライダー' },
-  'chris sale':        { 'スライダー': 'セールのスライダー' },
-  'dylan cease':       { 'スライダー': '超高速スライダー' },
-  // カットボール系
-  'mariano rivera':    { 'カットボール': '魔球カッター' },
-  'kenley jansen':     { 'カットボール': '必殺カッター' },
-  // フォーシーム系
-  'nolan ryan':        { 'フォーシーム': 'エクスプレス砲' },
-  'randy johnson':     { 'フォーシーム': 'ビッグユニット砲' },
-  'bob gibson':        { 'フォーシーム': 'ギブソン砲' },
-  // スプリット/フォーク系
-  'hideo nomo':        { 'スプリット': 'トルネード落球' },
-  'john smoltz':       { 'スプリット': 'スモルツのスプリット' },
-  'shohei ohtani':     { 'スプリット': '魔球スプリット' },
-  'koji uehara':       { 'スプリット': 'コウジ落球' },
-  // ツーシーム系
-  'greg maddux':       { 'ツーシーム': 'マダックス・ムービング' },
-  // ナックル
+  'mike mussina':      { 'カーブ': 'ナックルカーブ' },
+  // 主な持ち球の種類の補正（ナックルボーラー・スクリューボーラー）
   'tim wakefield':     { 'フォーシーム': 'ナックルボール' },
   'ra dickey':         { 'フォーシーム': 'ナックルボール' },
-  'phil niekro':       { 'フォーシーム': 'ニークロのナックル' },
-  // スクリューボール
+  'phil niekro':       { 'フォーシーム': 'ナックルボール' },
   'fernando valenzuela': { 'チェンジアップ': 'スクリューボール' },
   'carl hubbell':        { 'チェンジアップ': 'スクリューボール' },
 };
+
+// 使ってはいけない球種の異名（選手名から付けた名前・作った名前）。以前登録されていたもの
+const _PITCH_NICKNAME_BLOCKLIST = new Set([
+  'セールのスライダー', 'カーショウ曲線', 'ヒルのカーブ', 'ムーシのナックルカーブ', 'ハメルズ・チェンジ',
+  'サンタナ魔球', 'カールトン・スライダー', 'スモルツのスプリット', 'ニークロのナックル', 'マダックス・ムービング',
+  'ギブソン砲', 'ビッグユニット砲', 'エクスプレス砲', 'コウジ落球', 'トルネード落球',
+  '消える魔球', '必殺チェンジ', 'エル・カンビオ', '神のカーブ', '必殺スライダー', '超高速スライダー',
+  '魔球カッター', '必殺カッター', '魔球スプリット',
+]);
+
+// 異名として不適切な形（ブロックリスト外でも判定）：「〇〇の(球種)」「〜曲線」「〜砲」「〜落球」「必殺〜」「魔球〜」
+function _isBadPitchNickname(nick) {
+  if (!nick || _PITCH_NICKNAME_BLOCKLIST.has(nick)) return true;
+  return /^[ァ-ヶー・]+の(スライダー|カーブ|チェンジアップ|チェンジ|カッター|カットボール|スプリット|フォーク|シンカー|ナックル|ツーシーム|フォーシーム)$/.test(nick)
+    || /曲線$|砲$|落球$/.test(nick)
+    || /^(必殺|魔球)/.test(nick)
+    || /^[ァ-ヶー]+・(スライダー|カーブ|チェンジ|カッター|スプリット|ムービング)$/.test(nick);
+}
+
 
 /**
  * 選手名から変化球異名マップを返す
@@ -5108,11 +5104,16 @@ const _PITCH_NICKNAMES = {
 function getPitchNicknames(nameEn) {
   if (!nameEn) return null;
   const key = nameEn.toLowerCase().trim();
-  if (_PITCH_NICKNAMES[key]) return _PITCH_NICKNAMES[key];
-  for (const [k, v] of Object.entries(_PITCH_NICKNAMES)) {
-    if (key.includes(k) || k.includes(key)) return v;
+  let map = _PITCH_NICKNAMES[key] || null;
+  if (!map) {
+    for (const [k, v] of Object.entries(_PITCH_NICKNAMES)) {
+      if (key.includes(k) || k.includes(key)) { map = v; break; }
+    }
   }
-  return null;
+  if (!map) return null;
+  // 選手名から付けた名前・作った名前は表示しない
+  const ok = Object.fromEntries(Object.entries(map).filter(([, nick]) => !_isBadPitchNickname(nick)));
+  return Object.keys(ok).length ? ok : null;
 }
 
 // ── 選手固有エピソードDB（英語名小文字キー）────────────────────
@@ -11038,6 +11039,7 @@ function _buildEnrichPrompt(row, awardsLines, birthPlace, knownNicks = []) {
       ? '- 【確認済みの異名】を紹介する文を1文入れる。どんな意味・由来の異名かが読者に分かるように短く添える。'
       : '- 広く知られた異名・愛称（例：「エル・トロ」「ビッグ・ユニット」）が Baseball-Reference の Nicknames 欄や英語版Wikipediaで確認できた場合だけ、それを紹介する文を1文入れる。確認できなければ異名の文は入れない（作らない）。',
     '- 異名はカタカナ表記にし、英語やスペイン語の異名には意味を短く添える（例：「エル・トロ（雄牛）」）。異名の文は選手紹介や出身地の文の近くか最後の文に置き、エピソードの途中に唐突に挟まない。',
+    '- 球種に名前を付けるのは「エアベンダー」のように実際に広く知られた呼び名がある場合だけ。「〇〇（選手名）のスライダー」「〇〇曲線」「必殺〜」「魔球〜」のような名前は作らない。',
     ...(birthPlace ? [
       /[A-Za-z]/.test(birthPlace)
         ? `- 出身地の文を必ず1文だけ入れる。地名は「${birthPlace}」をもとに、英字の部分だけを一般的な日本語表記に直して書く（例：日本・Oshu → 日本・岩手県奥州市）。国名は必ず残す。`
