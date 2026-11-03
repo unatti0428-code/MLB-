@@ -5068,6 +5068,7 @@ const _PITCH_NICKNAMES = {
   'kodai senga':       { 'スプリット': 'ゴーストフォーク', 'フォーク': 'ゴーストフォーク' }, // "ghost fork"
   'randy johnson':     { 'スライダー': 'ミスター・スナッピー' },                // "Mr. Snappy"
   'dwight gooden':     { 'カーブ': 'ロード・チャールズ' },                      // "Lord Charles"
+  'cy young':          { 'フォーシーム': 'サイクロン', 'ストレート': 'サイクロン' }, // 速球で壊したフェンスが「サイクロンに襲われたよう」→愛称「サイ」の由来
   // 球種・握りそのものを表す名前
   'barry zito':        { 'カーブ': '12-6カーブ' },
   'bert blyleven':     { 'カーブ': '縦割れカーブ' },
@@ -5104,19 +5105,41 @@ function _isBadPitchNickname(nick) {
  * 選手名から変化球異名マップを返す
  * @returns {{ pitchName: nickname } | null}
  */
+// アクセント記号を外した小文字の英語名（例: "Éric Gagné" → "eric gagne"）
+function _pitchNickKey(nameEn) {
+  return String(nameEn || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim();
+}
+
+// ── AI列伝強化で見つけた球種の呼び名（出典付き）をブラウザに覚えておく ──
+// { "選手キー": { "球種名": { name: "呼び名", source: "URL" } } }
+const _LEARNED_PITCH_NICK_KEY = 'mlbcard_learnedPitchNicks';
+function _loadLearnedPitchNicks() {
+  try { return JSON.parse(localStorage.getItem(_LEARNED_PITCH_NICK_KEY) || '{}') || {}; } catch (e) { return {}; }
+}
+function _saveLearnedPitchNick(nameEn, pitch, name, source) {
+  try {
+    const all = _loadLearnedPitchNicks();
+    const k = _pitchNickKey(nameEn);
+    all[k] = all[k] || {};
+    all[k][pitch] = { name, source };
+    localStorage.setItem(_LEARNED_PITCH_NICK_KEY, JSON.stringify(all));
+  } catch (e) {}
+}
+
 function getPitchNicknames(nameEn) {
   if (!nameEn) return null;
-  // アクセント記号を外して照合（例: "Éric Gagné" → "eric gagne"）
-  const key = nameEn.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim();
+  const key = _pitchNickKey(nameEn);
   let map = _PITCH_NICKNAMES[key] || null;
   if (!map) {
     for (const [k, v] of Object.entries(_PITCH_NICKNAMES)) {
       if (key.includes(k) || k.includes(key)) { map = v; break; }
     }
   }
-  if (!map) return null;
-  // 選手名から付けた名前・作った名前は表示しない
-  const ok = Object.fromEntries(Object.entries(map).filter(([, nick]) => !_isBadPitchNickname(nick)));
+  // 登録データにない球種は、AI列伝強化で出典付きで見つけた呼び名で補う（登録データを優先）
+  const learned = _loadLearnedPitchNicks()[key] || {};
+  const merged = { ...Object.fromEntries(Object.entries(learned).map(([p, v]) => [p, v && v.name])), ...(map || {}) };
+  // 選手名から付けた名前・作った名前・長すぎる名前は表示しない
+  const ok = Object.fromEntries(Object.entries(merged).filter(([, nick]) => !_isBadPitchNickname(nick)));
   return Object.keys(ok).length ? ok : null;
 }
 
@@ -8542,7 +8565,17 @@ function updateCardExtras(cardType, pitchNicknames, awardsJa, isCareer) {
     if (el) el.textContent = cardType;
   }
   // ② 変化球ニックネームを球種名セルに追記
-  // 球種名は通常フォント(12px)のまま、異名は次行に小さく黄色ボールドで表示
+  _applyPitchNicknamesToTable(pitchNicknames);
+  // ③ バナーのアワード略称を更新
+  const bannerEl = document.querySelector('#card-root .banner-awards');
+  _setBannerText(bannerEl, _bannerAwardsText(awardsJa || [], !!isCareer));
+
+  // ④ タイトル加点（基本スコアが100未満の場合のみ）
+  _applyTitleBonus(awardsJa || [], !!isCareer);
+}
+
+// 球種表の球種名セルに異名を表示（球種名は通常フォント、異名は同じ行に小さく黄色ボールド）
+function _applyPitchNicknamesToTable(pitchNicknames) {
   if (pitchNicknames && typeof pitchNicknames === 'object') {
     Object.entries(pitchNicknames).forEach(([pitchName, nickname]) => {
       if (!nickname) return;
@@ -8564,12 +8597,6 @@ function updateCardExtras(cardType, pitchNicknames, awardsJa, isCareer) {
       });
     });
   }
-  // ③ バナーのアワード略称を更新
-  const bannerEl = document.querySelector('#card-root .banner-awards');
-  _setBannerText(bannerEl, _bannerAwardsText(awardsJa || [], !!isCareer));
-
-  // ④ タイトル加点（基本スコアが100未満の場合のみ）
-  _applyTitleBonus(awardsJa || [], !!isCareer);
 }
 
 /**
@@ -11005,7 +11032,7 @@ function _retsudenTargetLength() {
   return { lines, min, max };
 }
 
-function _buildEnrichPrompt(row, awardsLines, birthPlace, knownNicks = []) {
+function _buildEnrichPrompt(row, awardsLines, birthPlace, knownNicks = [], cardPitches = []) {
   const len = _retsudenTargetLength();
   const nameJa = String(row[0] || '');
   const nameEn = g_mlbNameEn || (g_brefId && _brefCache[g_brefId]?.nameEn) || '';
@@ -11068,9 +11095,32 @@ function _buildEnrichPrompt(row, awardsLines, birthPlace, knownNicks = []) {
     `- 本文とは別に、本文で使っていない具体的なエピソードを2文（各40〜60字）「spare」に書く。本文のどの位置に差し込んでも文脈が通じるよう、1文で完結させ、${isCareer ? '「◯◯年に」' : `「${yearKey}年」`}など時期が分かる書き方にする。`,
     '- 予備エピソードも情報源で確認できた事実だけにし、受賞歴・タイトルには触れない。',
     '',
+    ...(cardPitches.length ? [
+      `球種の呼び名（見つかった場合だけ）: カードの球種は「${cardPitches.join('、')}」。`,
+      '- 調べた情報源に、この選手のその球種の「呼び名」がはっきり書かれている場合だけ「pitchNicknames」に入れる（例：Vulcan changeup → バルカンチェンジ、ghost fork → ゴーストフォーク）。',
+      '- 「速い速球」「鋭いスライダー」「hard slider」のような説明は呼び名ではないので入れない。選手名から作った名前、10文字を超える名前も入れない。迷ったら入れない。',
+      '- 呼び名はカタカナなど10文字以内にし、出典URLを必ず付ける。見つからなければ空の配列にする（無理に探さなくてよい）。',
+      '',
+    ] : []),
     '出力は次のJSONを1つだけにしてください（前後に説明文・調査メモ・下書きを付けない）。本文中では半角の " を使わず、引用や異名は「」で囲む:',
-    '{"retsuden":"本文（文ごとに\\nで改行）","spare":["予備エピソード1","予備エピソード2"],"sources":["参照したURL"]}',
+    cardPitches.length
+      ? '{"retsuden":"本文（文ごとに\\nで改行）","spare":["予備エピソード1","予備エピソード2"],"pitchNicknames":[{"pitch":"カードの球種名","name":"呼び名","source":"出典URL"}],"sources":["参照したURL"]}'
+      : '{"retsuden":"本文（文ごとに\\nで改行）","spare":["予備エピソード1","予備エピソード2"],"sources":["参照したURL"]}',
   ].join('\n');
+}
+
+// AIが見つけた球種の呼び名を、出典・長さ・形・カードの球種と照らして採用するものだけ返す（むやみに採用しない）
+function _acceptAiPitchNicknames(list, cardPitches, row) {
+  if (!Array.isArray(list)) return [];
+  const surname = String(row[0] || '').replace(/^[A-Za-z]+/, '');
+  return list.filter(x => x && typeof x === 'object')
+    .map(x => ({ pitch: String(x.pitch || '').trim(), name: String(x.name || '').trim(), source: String(x.source || '').trim() }))
+    .filter(x => cardPitches.includes(x.pitch)
+      && x.name && x.name.length <= 10
+      && /^https?:\/\//.test(x.source)
+      && !_isBadPitchNickname(x.name)
+      && !(surname.length >= 2 && x.name.includes(surname))      // 選手名入りは不可
+      && !/[A-Za-z]{3,}/.test(x.name));                          // 英語のままは不可（カタカナ等で表記）
 }
 
 // Sonnet 用の校正工程の指示（{{TEXT}} に下書きが入る）。事実は変えず日本語だけを整える
@@ -11153,7 +11203,12 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
   // 異名はツール内の異名データにあるものを確認済みとして渡す（名字そのものは異名として扱わない）
   const nickData = getPlayerNickname(g_mlbNameEn);
   const knownNicks = (nickData?.nicks || []).filter(n => !String(row[0] || '').includes(n));
-  const prompt = _buildEnrichPrompt(row, awardsLines, birthPlace, knownNicks);
+  // 投手カードの球種（まだ異名のない球種だけ、AIに呼び名を探してもらう）
+  const _knownPitchNicks = getPitchNicknames(g_mlbNameEn) || {};
+  const cardPitches = g_isPitcher
+    ? [...document.querySelectorAll('#card-root td.pn[data-pitch]')].map(td => td.dataset.pitch).filter(p => p && !_knownPitchNicks[p])
+    : [];
+  const prompt = _buildEnrichPrompt(row, awardsLines, birthPlace, knownNicks, cardPitches);
   // Sonnet は日本語が硬くなりやすいため、書いた後に校正工程を1回はさむ
   const polishPrompt = model === 'sonnet' ? _buildPolishPrompt(row) : null;
   // 前の依頼が処理中なら、その分も待ち時間に含める
@@ -11190,10 +11245,20 @@ async function enrichRetsudenWithClaude(row, genId, baseShown) {
     if (!isCurrent()) return; // 別カード生成済み → 反映しない
     console.log('[AI列伝] 採用（参照元）:', data.sources);
     updateRetsuden(text);
+    // 球種の呼び名：出典付きで条件を満たすものだけ採用し、ブラウザに覚えて球種表に表示
+    const pitchNicks = _acceptAiPitchNicknames(data.pitchNicknames, cardPitches, row);
+    pitchNicks.forEach(x => _saveLearnedPitchNick(g_mlbNameEn, x.pitch, x.name, x.source));
+    if (pitchNicks.length) {
+      console.log('[AI列伝] 球種の呼び名を採用:', pitchNicks);
+      const merged = getPitchNicknames(g_mlbNameEn) || {};
+      _applyPitchNicknamesToTable(merged);
+      if (g_lastCardExtras) g_lastCardExtras.pitchNicknames = merged;
+    }
+    const pnNote = pitchNicks.length ? `（球種の呼び名：${pitchNicks.map(x => `${x.pitch}＝${x.name}`).join('、')}）` : '';
     const note = !removed.length ? ''
       : replaced.length === removed.length ? `（公式データと合わない受賞歴の${removed.length}文を予備エピソードに差し替え）`
       : `（公式データと合わない受賞歴の${removed.length}文を除外${replaced.length ? `・${replaced.length}文を予備エピソードで補充` : ''}）`;
-    done(data.usage, (data.cached ? `⚡ 保存済みのAI列伝を反映しました（${modelLabel}・即時）` : `✨ AI列伝を反映しました（${modelLabel}）`) + note);
+    done(data.usage, (data.cached ? `⚡ 保存済みのAI列伝を反映しました（${modelLabel}・即時）` : `✨ AI列伝を反映しました（${modelLabel}）`) + note + escapeHtml(pnNote));
   } catch (e) {
     done(null);
   }

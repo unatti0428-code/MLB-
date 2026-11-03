@@ -296,7 +296,11 @@ async function enrich(body) {
   if (!entry.ok) return { status: 502, json: { error: '回答の形式が不正でした', usage: summarize(usage) } };
   // 予備エピソード（受賞歴の文を除外したときの補充用）。文字列のみ・最大3文
   const spare = Array.isArray(parsed.spare) ? parsed.spare.filter(s => typeof s === 'string' && s.trim()).slice(0, 3) : [];
-  const result = { retsuden: text, spare, sources: parsed.sources || [], model, polished: !!entry.polished };
+  // 球種の呼び名（出典付き・最大5件）。採用するかはカード生成ツール側で確認する
+  const pitchNicknames = Array.isArray(parsed.pitchNicknames)
+    ? parsed.pitchNicknames.filter(x => x && typeof x === 'object' && typeof x.name === 'string').slice(0, 5)
+    : [];
+  const result = { retsuden: text, spare, pitchNicknames, sources: parsed.sources || [], model, polished: !!entry.polished };
   saveCache(cacheKey(model, prompt), result);
   return { status: 200, json: { ...result, usage: summarize(usage) } };
 }
