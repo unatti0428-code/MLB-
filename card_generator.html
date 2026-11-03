@@ -5058,12 +5058,14 @@ function _pwrAdj(power) {
 
 // ── 変化球異名DB（英語名小文字キー → { 球種名: 異名 }）────────────────────
 // 球種名はExcelに記録される日本語名と一致させること
-// 球種の異名：実際に広く知られた名前、または握り・球種そのものを表す名前だけを登録する。
+// 球種の異名：実際に広く知られた名前（ネット上の情報で確認できるもの）、または握り・球種そのものを表す名前だけを登録する。
+// 長すぎる名前（10文字超、例:「パブリック・エネミー・ナンバーワン」）は表示しない。
 // 選手名から付けた名前（例:「セールのスライダー」「カーショウ曲線」）や作った名前（例:「必殺〜」「魔球〜」）は登録しない。
 const _PITCH_NICKNAMES = {
   // 実際に知られている異名
   'devin williams':    { 'チェンジアップ': 'エアベンダー' },                    // "Airbender"
-  'clayton kershaw':   { 'カーブ': 'パブリック・エネミー・ナンバーワン' },      // 実況ビン・スカリーの "Public Enemy No. 1"
+  'eric gagne':        { 'チェンジアップ': 'バルカンチェンジ' },              // "Vulcan changeup"
+  'kodai senga':       { 'スプリット': 'ゴーストフォーク', 'フォーク': 'ゴーストフォーク' }, // "ghost fork"
   'randy johnson':     { 'スライダー': 'ミスター・スナッピー' },                // "Mr. Snappy"
   'dwight gooden':     { 'カーブ': 'ロード・チャールズ' },                      // "Lord Charles"
   // 球種・握りそのものを表す名前
@@ -5080,7 +5082,7 @@ const _PITCH_NICKNAMES = {
 
 // 使ってはいけない球種の異名（選手名から付けた名前・作った名前）。以前登録されていたもの
 const _PITCH_NICKNAME_BLOCKLIST = new Set([
-  'セールのスライダー', 'カーショウ曲線', 'ヒルのカーブ', 'ムーシのナックルカーブ', 'ハメルズ・チェンジ',
+  'セールのスライダー', 'カーショウ曲線', 'パブリック・エネミー・ナンバーワン', 'ヒルのカーブ', 'ムーシのナックルカーブ', 'ハメルズ・チェンジ',
   'サンタナ魔球', 'カールトン・スライダー', 'スモルツのスプリット', 'ニークロのナックル', 'マダックス・ムービング',
   'ギブソン砲', 'ビッグユニット砲', 'エクスプレス砲', 'コウジ落球', 'トルネード落球',
   '消える魔球', '必殺チェンジ', 'エル・カンビオ', '神のカーブ', '必殺スライダー', '超高速スライダー',
@@ -5090,6 +5092,7 @@ const _PITCH_NICKNAME_BLOCKLIST = new Set([
 // 異名として不適切な形（ブロックリスト外でも判定）：「〇〇の(球種)」「〜曲線」「〜砲」「〜落球」「必殺〜」「魔球〜」
 function _isBadPitchNickname(nick) {
   if (!nick || _PITCH_NICKNAME_BLOCKLIST.has(nick)) return true;
+  if (nick.length > 10) return true; // 長すぎる名前はカードに収まらず読みにくい
   return /^[ァ-ヶー・]+の(スライダー|カーブ|チェンジアップ|チェンジ|カッター|カットボール|スプリット|フォーク|シンカー|ナックル|ツーシーム|フォーシーム)$/.test(nick)
     || /曲線$|砲$|落球$/.test(nick)
     || /^(必殺|魔球)/.test(nick)
@@ -5103,7 +5106,8 @@ function _isBadPitchNickname(nick) {
  */
 function getPitchNicknames(nameEn) {
   if (!nameEn) return null;
-  const key = nameEn.toLowerCase().trim();
+  // アクセント記号を外して照合（例: "Éric Gagné" → "eric gagne"）
+  const key = nameEn.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim();
   let map = _PITCH_NICKNAMES[key] || null;
   if (!map) {
     for (const [k, v] of Object.entries(_PITCH_NICKNAMES)) {
